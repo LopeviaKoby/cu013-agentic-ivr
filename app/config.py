@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
     # Firestore
     firestore_database_id: str = "(default)"
-    firestore_collection: str = "cu013v2_sessions"
+    firestore_collection: str = "conversations"
 
 
 @lru_cache
