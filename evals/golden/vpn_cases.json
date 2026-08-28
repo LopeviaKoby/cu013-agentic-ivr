@@ -1,0 +1,99 @@
+{
+  "version": "0.2.0",
+  "suite": "vpn_golden_specs",
+  "description": "Declarative golden evaluation test specifications for VPN troubleshooting multi-turn voice conversations.",
+  "cases": [
+    {
+      "id": "vpn_01_simple",
+      "name": "Simple Problem Statement",
+      "dialogue": [
+        {
+          "role": "user",
+          "text": "Mi VPN no funciona."
+        }
+      ],
+      "expected_properties": {
+        "intent": "vpn_troubleshooting",
+        "route": "CONTINUE",
+        "behavior": "Acknowledge issue and prompt for missing diagnostic context (location, client, or internet status)."
+      }
+    },
+    {
+      "id": "vpn_02_multifact",
+      "name": "Multi-Fact Extraction in Single Utterance",
+      "dialogue": [
+        {
+          "role": "user",
+          "text": "Estoy en Perú, tengo FortiClient y sí tengo internet."
+        }
+      ],
+      "expected_properties": {
+        "extracted_facts": {
+          "location": "Peru",
+          "vpn_client": "FortiClient",
+          "has_internet": true
+        },
+        "route": "CONTINUE",
+        "behavior": "Consume all facts in a single inference without asking redundant questions about location, client, or internet."
+      }
+    },
+    {
+      "id": "vpn_03_clarification",
+      "name": "Contextual Clarification Question",
+      "dialogue": [
+        {
+          "role": "assistant",
+          "text": "¿Qué cliente de VPN tienes instalado en tu equipo?"
+        },
+        {
+          "role": "user",
+          "text": "¿Qué significa cliente?"
+        }
+      ],
+      "expected_properties": {
+        "route": "CONTINUE",
+        "behavior": "Explain the technical term 'cliente' naturally as software/program (e.g. FortiClient, Cisco), preserve context, and do not mechanically repeat the previous question."
+      }
+    },
+    {
+      "id": "vpn_04_correction",
+      "name": "Fact Correction by User",
+      "dialogue": [
+        {
+          "role": "user",
+          "text": "Estoy en Perú y uso FortiClient."
+        },
+        {
+          "role": "assistant",
+          "text": "Entendido, estás en Perú con FortiClient. ¿Tienes conexión a internet?"
+        },
+        {
+          "role": "user",
+          "text": "Perdón, no estoy en Perú. Estoy en Chile."
+        }
+      ],
+      "expected_properties": {
+        "extracted_facts": {
+          "location": "Chile",
+          "vpn_client": "FortiClient"
+        },
+        "route": "CONTINUE",
+        "behavior": "Seamlessly update the location to Chile without losing previously confirmed facts (FortiClient) or restarting the protocol."
+      }
+    },
+    {
+      "id": "vpn_05_technical_explanation",
+      "name": "Technical Explanation on Terminology",
+      "dialogue": [
+        {
+          "role": "user",
+          "text": "No sé qué es gateway ni qué significa puerto 443."
+        }
+      ],
+      "expected_properties": {
+        "route": "CONTINUE",
+        "behavior": "Explain gateway and port 443 in simple, non-jargon spoken Spanish tailored for telephony audio pacing."
+      }
+    }
+  ]
+}
