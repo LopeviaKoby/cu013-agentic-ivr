@@ -12,6 +12,15 @@ class Route(StrEnum):
     ESCALATE = "ESCALATE"
 
 
+class ModelTurnOutput(BaseModel):
+    """Structured output contract returned by Gemini for a conversational turn."""
+
+    response_text: str = Field(
+        ...,
+        description="Natural language response text for the caller.",
+    )
+
+
 class TurnRequest(BaseModel):
     """Input contract for POST /turn."""
 

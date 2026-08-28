@@ -66,3 +66,30 @@ async def test_firestore_get_nonexistent_session_returns_none(
     """Querying a non-existent conversation_id returns None."""
     loaded = await get_session("nonexistent-conv-id", client=mock_firestore)  # type: ignore[arg-type]
     assert loaded is None
+
+
+@pytest.mark.asyncio
+async def test_firestore_upsert_preserves_and_updates_state(
+    mock_firestore: InMemoryFirestoreMock,
+) -> None:
+    """Updating an existing session correctly updates turn_count, turns, and updated_at."""
+    session = SessionData(
+        conversation_id="conv-upsert-test",
+        turn_count=1,
+        turns=[{"turn_id": "t-1", "user_text": "Primer turno"}],
+    )
+    await save_session(session, client=mock_firestore)  # type: ignore[arg-type]
+
+    # Load and update
+    existing = await get_session("conv-upsert-test", client=mock_firestore)  # type: ignore[arg-type]
+    assert existing is not None
+    existing.turn_count += 1
+    existing.turns.append({"turn_id": "t-2", "user_text": "Segundo turno"})
+    await save_session(existing, client=mock_firestore)  # type: ignore[arg-type]
+
+    reloaded = await get_session("conv-upsert-test", client=mock_firestore)  # type: ignore[arg-type]
+    assert reloaded is not None
+    assert reloaded.turn_count == 2
+    assert len(reloaded.turns) == 2
+    assert reloaded.turns[0]["user_text"] == "Primer turno"
+    assert reloaded.turns[1]["user_text"] == "Segundo turno"

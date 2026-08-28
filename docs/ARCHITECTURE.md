@@ -1,6 +1,6 @@
-# v0.2.0 Architecture (Increment 1)
+# v0.2.0 Architecture
 
-This document reflects exclusively the architecture that exists in Increment 1.
+This document reflects the minimal real conversational turn architecture.
 
 ## System Boundary
 
@@ -12,19 +12,39 @@ This document reflects exclusively the architecture that exists in Increment 1.
        │ (HTTP POST /turn)
        ▼
   FastAPI Application (`app.main`)
-  ├── Pydantic Input Validation (`app.contracts`)
-  ├── Session Store Boundary (`app.firestore` -> Firestore Native)
-  ├── Orchestration Boundary (`app.graph` -> LangGraph StateGraph)
-  ├── Model Boundary (`app.gemini` -> Vertex AI / Gemini 3.5 Flash-Lite)
-  └── Structured Logging (`app.logging` -> JSON stdout -> Cloud Logging)
+  ├── 1. Pydantic Request Validation (`app.contracts.TurnRequest`)
+  ├── 2. Session Repository (`app.firestore` -> Firestore Native)
+  ├── 3. Orchestration Engine (`app.graph` -> LangGraph StateGraph)
+  │      └── Single Turn Node (`process_turn`)
+  │          └── Model Boundary (`app.gemini` -> Vertex AI / Gemini 3.5 Flash-Lite)
+  │              └── Native Structured Output (`ModelTurnOutput`)
+  ├── 4. Session Persistence (`app.firestore` -> save updated history)
+  └── 5. Structured Observability (`app.logging` -> JSON stdout -> Cloud Logging)
+```
+
+## Turn Request Lifecycle
+
+```text
+POST /turn
+→ Validate request (conversation_id, text)
+→ Load session document from Firestore (or initialize empty SessionData)
+→ Build minimal LangGraph state (bounded recent turn history)
+→ Execute compiled LangGraph workflow
+→ Exactly 1 async Gemini request to Vertex AI
+→ Validate structured model result (ModelTurnOutput)
+→ Update conversational history (turn_count, turns, updated_at)
+→ Persist session document in Firestore
+→ Emit structured JSON log record with latency breakdown
+→ Return validated TurnResponse (turn_id, route, text)
 ```
 
 ## Component Roles
 
-- **`app/main.py`**: Entry point exposing `GET /health` and `POST /turn`. Orchestrates request lifecycle: validate -> load session -> invoke graph -> save session -> emit structured log -> return response.
-- **`app/contracts.py`**: Strict Pydantic models for HTTP requests and responses. Validates against empty/whitespace fields.
-- **`app/graph.py`**: Minimal compiled LangGraph `StateGraph` containing a single `process_turn` node and typed `ConversationState`.
-- **`app/firestore.py`**: Async Firestore session repository managing minimal `SessionData` persistence.
-- **`app/gemini.py`**: Async Google GenAI SDK boundary managing process-level `genai.Client` lifecycle and Vertex AI calls with ADC authentication.
+- **`app/main.py`**: Exposes `GET /health` and `POST /turn`. Coordinates the request lifecycle, latency metrics, and error logging.
+- **`app/contracts.py`**: Strict Pydantic models for HTTP requests (`TurnRequest`), responses (`TurnResponse`), route enums (`Route`), and model structured outputs (`ModelTurnOutput`).
+- **`app/graph.py`**: Minimal compiled LangGraph `StateGraph` containing typed `ConversationState`, multi-turn content builder, and `process_turn_node`.
+- **`app/gemini.py`**: Async Google GenAI SDK boundary managing process-level `genai.Client` singleton, Latin American Spanish IT system instructions, and structured JSON output validation.
+- **`app/firestore.py`**: Async Firestore session repository managing minimal, bounded `SessionData` persistence.
 - **`app/logging.py`**: Structured JSON formatter with built-in PII redaction suitable for Google Cloud Logging.
 - **`app/config.py`**: Environment configuration via Pydantic `BaseSettings`.
+

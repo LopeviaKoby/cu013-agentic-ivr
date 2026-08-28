@@ -84,8 +84,16 @@ async def async_client(
 
         await save_session(session, client=mock_firestore)  # type: ignore[arg-type]
 
+    async def mock_gemini_turn(
+        contents: Any, system_instruction: Any = None, client: Any = None
+    ) -> tuple[Any, float]:
+        from app.contracts import ModelTurnOutput
+
+        return ModelTurnOutput(response_text="Entendido, te puedo ayudar con tu solicitud."), 45.0
+
     monkeypatch.setattr("app.main.get_session", mock_get_session)
     monkeypatch.setattr("app.main.save_session", mock_save_session)
+    monkeypatch.setattr("app.graph.generate_turn_response_async", mock_gemini_turn)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
