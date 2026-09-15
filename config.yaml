@@ -1,0 +1,25 @@
+# NO secrets in this file.
+# Local provisional secrets belong in .env (gitignored).
+# Cloud runtime secrets must come from Secret Manager when they exist.
+
+gcp:
+  project_id: cu013-xcally-agentic
+  region: us-east1
+
+firestore:
+  database: "(default)"
+
+artifact_registry:
+  repository: cu013-containers-dev
+  location: us-east1
+
+vertex:
+  location: us-east1
+  # El modelo baseline pertenece a la configuración de runtime/evaluación
+  # y sigue sujeto a benchmark antes de producción.
+
+cloud_run:
+  service: cu013-runtime-dev
+  region: us-east1
+  min_instances: 0
+  max_instances: 1
