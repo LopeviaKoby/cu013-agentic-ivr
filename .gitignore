@@ -17,7 +17,11 @@ build/
 .DS_Store
 Thumbs.db
 skills-lock.json
-.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/iteration-closeout/
+!.agents/skills/iteration-closeout/**
 .codegraph/
 docs/iop/*
 !docs/iop/README.md
