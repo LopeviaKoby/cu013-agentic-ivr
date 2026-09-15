@@ -1,85 +1,171 @@
-# CU013 Agentic IVR — Operational Constitution
+# CU013 v0.2.0 — Agent Instructions
 
-This document defines the binding operational and architectural rules for the `cu013-agentic-IVR` repository.
+CU013 builds the Help Desk telephone conversational backend for XCALLY Motion and Cally Square.
 
-## IMMUTABLE BASELINE
+## Authority
 
-- XCALLY Motion + Cally Square are immutable.
-- This is a conversational agent, not a spoken form.
-- The repository is brand new; legacy code is not architecture.
-- Gemini owns natural-language conversational behavior.
-- Runtime owns business legality and truth.
-- Firestore is the durable session store.
-- LangGraph is the orchestration framework; use only required features.
-- No keyword/regex semantic routing.
-- Tools represent external capabilities, never internal state mutation.
-- Normal turns target one model request.
-- >2 sequential model requests require STOP & REPORT.
-- No large conversational FSM.
-- No new infrastructure without demonstrated benefit and approval.
-- Accepted conversational changes require DEV voice validation.
-- Accepted changes must be committed before the next iteration.
-- Normal Git workflow uses dev and main only.
+Apply this precedence:
 
-## Source Precedence
+1. the owner's current explicit instructions;
+2. corporate IOPs supplied in `docs/iop/` for authoritative business procedures;
+3. the current [system specification](docs/specs/system.md) and [account-actions specification](docs/specs/account-actions.md) for CU013 behavior and invariants;
+4. decisions with `Status: Accepted`;
+5. code and configuration for implemented behavior;
+6. tests and traces for validated behavior;
+7. this file;
+8. skills.
 
-When resolving architectural, technical, or behavioral questions, adhere strictly to this precedence hierarchy:
+IOPs define business procedure. XCALLY/Cally Square and Orchestrator/TIVIT define the currently authorized execution mechanism. The CU013 specs combine both without rewriting the IOPs. The PDFs under `docs/iop/` are owner-supplied, local, read-only for agents and Git-ignored; their `README.md` manifest is versioned.
 
-1. **Actual live-call behavior** (telephony observations, real caller interactions)
-2. **Runtime logs** (structured Cloud Logging traces, latency metrics)
-3. **Source-code contracts** (FastAPI endpoints, Pydantic schemas, LangGraph state)
-4. **Version-matched official documentation** (Google GenAI SDK, LangGraph, Firestore)
-5. **Official general documentation** (GCP, Python 3.12, FastAPI)
-6. **Engineering case studies** (benchmarks, postmortems)
-7. **Inference** (hypotheses must be validated against higher levels)
+Context7, technical documentation and analysis tools are not sources of CU013 business requirements.
 
-## Engineering & Architectural Principles
+## Repository tools
 
-### Separation of Concerns
-- **LLM Responsibility**: Natural language comprehension, multi-fact extraction, contextual clarifications, handling caller corrections, formulating conversational explanations, steering multi-turn dialogue.
-- **Runtime Responsibility**: Business invariant enforcement, tool authorization, external side-effects, session persistence, latency boundaries, security and PII redaction.
+Use CodeGraph by default for structure, relationships, symbols, dependencies and impact:
 
-### Minimalism & Anti-Abstraction Rules
-- Before adding any file, class, interface, dependency, state field, graph node, or abstraction layer, ask: *What concrete failure does this solve?*
-- Do not add speculative layers (e.g., Manager, Resolver, Strategy, Factory, Registry, Coordinator, Ports/Adapters) when a simple function or flat module is sufficient.
-- Keep the module hierarchy shallow and explicit.
+1. run `codegraph status`;
+2. run `codegraph init` only when no configuration exists;
+3. run `codegraph index` to create or update the index;
+4. use `codegraph files` and `codegraph context` when they help narrow inspection;
+5. always verify details against the actual files;
+6. reindex after relevant structural changes.
 
-### Model Call Budget
-- **Target**: Exactly 1 async Gemini request per normal conversational turn.
-- **Hard Limit**: If an interaction requires >2 sequential model calls within a single turn, the system must **STOP & REPORT**.
+A missing index does not justify skipping CodeGraph when a task requires codebase relationships. If cleanup leaves zero symbols, or CodeGraph cannot represent relevant content, record that fact and use filesystem inspection.
 
-### Logging & Observability
-- All logs must be structured JSON, PII-safe, and compatible with Google Cloud Logging.
-- Never log raw credentials, full caller transcripts, passwords, tokens, or unredacted personal data.
-- Capture: `conversation_id`, `turn_id`, `route`, `latency_ms`, `model_call_count`, `error_class`.
+CodeGraph versus literal search applies both to its CLI and to the `codegraph_*` MCP tools exposed through `opencode.json`:
 
-## STOP & REPORT Rules
+| Question | Command |
+|---|---|
+| Where is X defined? / Symbol named X | `codegraph query <name>` |
+| What calls Y? | `codegraph callers <symbol>` |
+| What does Y call? | `codegraph callees <symbol>` |
+| What would changing Z affect? | `codegraph impact <symbol>` |
+| Signature/source/docstring of Y | `codegraph node <symbol>` |
+| Focused context for a task | `codegraph context <task>` |
+| Explore an unfamiliar module | `codegraph explore <topic>` |
+| Which files are under a path? | `codegraph files` |
+| Is the index healthy? | `codegraph status` |
 
-Halt execution and report immediately before creating speculative solutions if you encounter:
-- Unknown XCALLY / telephony behavior required for implementation.
-- Ambiguous business rule required for current code.
-- Unknown external API contract.
-- Need for a new framework, database, vector store, or RAG infrastructure.
-- Need for a secondary LLM provider.
-- >2 sequential model calls in a turn.
-- Need for a large conversational FSM.
-- Need for new IAM roles, Service Accounts, or Artifact Registry repositories.
-- Need to modify Spanner schema or migrate GCP regions.
-- Conflict with the `IMMUTABLE BASELINE`.
+Rules:
 
-## Acceptance & Quality Gates
+- CodeGraph answers structural questions: definitions, calls, impact and signatures. Use filesystem search/read for literal text such as strings, comments and logs, or when the exact file is already known.
+- Prefer one focused `context` or `explore` call over a chain of `query` and `node` calls.
+- `explore` can return substantial source. Keep broad exploration bounded so it does not overwhelm the working context.
+- The watcher may take about 500 ms to observe writes. Run `codegraph sync` before querying newly edited structure in the same turn.
+- CodeGraph results originate from AST parsing. They are a starting point; the actual files remain authoritative.
 
-Every code iteration must pass:
-1. `ruff check app tests` (no lint errors)
-2. `ruff format --check app tests` (consistent formatting)
-3. `mypy app` (strict type check, no global ignores)
-4. `pytest tests/` (focused unit tests passing)
-5. `docker build` (clean non-root container image build)
-6. Real voice validation on DEV before conversational behavior changes are merged.
+`.codegraph/` is local to each machine and is never committed; `codegraph init` recreates it. The `codegraph` MCP server (`codegraph serve --mcp`) is configured through the repository's `opencode.json`. Do not introduce Claude-specific artifacts such as `.claude/` or `.claude.json`; this repository uses OpenCode.
 
-## Git Rules
+Use Context7 for current syntax, versions and capabilities of libraries, SDKs, APIs and CLIs. Resolve the library ID first and query it with the full question. If it does not resolve the uncertainty, use only current or version-matched official documentation.
 
-- Work on `dev`.
-- `main` tracks accepted releases.
-- Never commit broken tests, failed lints, or untyped code.
-- Commit clean, validated increments with descriptive messages.
+Use the filesystem for exact Markdown, YAML, JSON, TOML, XML, script and configuration content.
+
+## Engineering authority
+
+- [`pyproject.toml`](pyproject.toml) governs executable Ruff, MyPy and pytest configuration.
+- [Python standards](docs/engineering/python.md), [reliability standards](docs/engineering/reliability.md) and [testing standards](docs/engineering/testing.md) govern conventions that tooling cannot express.
+- The current specs and Accepted ADRs always prevail over engineering standards.
+
+Active implementation gaps live in [`docs/gaps.md`](docs/gaps.md) and must be reconciled at every iteration close. Move a resolved outcome to the applicable spec, ADR, experiment, runbook or `CONTEXT.md`, then remove the gap. Never use `docs/gaps.md` as a second spec or general backlog.
+
+## Invariants
+
+- Do not replace XCALLY Motion or Cally Square.
+- The LLM owns language and conversation; runtime owns legality, truth, authorization, state and side effects.
+- Firestore is the only durable store and LangGraph is the orchestration framework.
+- Do not use keyword/regex semantic routing, a large FSM, multi-agent orchestration, RAG/vector databases or a custom orchestrator.
+- Tools represent external capabilities, not internal state mutation.
+- A normal turn targets one model call; more than two sequential model calls requires STOP & REPORT.
+- Do not add infrastructure, dependencies or abstractions without an evidenced problem and approval.
+- GitHub Actions is the CI/CD platform.
+
+## Account actions and security
+
+The first slice is `RESET_PASSWORD` plus `UNLOCK_ACCOUNT`, with no mandatory priority. Initial identity validation uses DTMF for document ID and date of birth.
+
+Raw DTMF values must not enter the LLM, logs or durable state beyond the strict validation need. A validated identity does not mean that an account operation succeeded.
+
+XCALLY/Cally Square initially mediates Orchestrator/TIVIT/AD. This route is experimental and may be reevaluated. SendMail integration is deferred; when implemented, Cally Square delivers any temporary password and CU013 receives only delivery status. CU013 never retains the password in the LLM, Firestore, logs, telemetry or fixtures.
+
+Do not store secrets in `config.yaml`. `.env` is local and Git-ignored; Secret Manager will provide cloud secrets when they exist. Never use service-account JSON keys.
+
+## Workflow
+
+- Normally work on `dev`; `main` represents accepted releases.
+- Inspect remote, branch, HEAD, status, tags and local changes before acting.
+- Preserve unrelated local changes; never discard work silently.
+- Define observable properties before concrete contracts.
+- Run only gates applicable to artifacts that exist.
+- Validate accepted conversational changes with DEV voice calls.
+- Update [CONTEXT.md](CONTEXT.md) after an iteration is accepted and before integration.
+- Do not commit, push, deploy or run mutating cloud actions without explicit authorization.
+
+When Python code and the applicable targets exist, the canonical gates are:
+
+```powershell
+python -m pytest
+python -m ruff check .
+python -m ruff format --check .
+python -m mypy app
+```
+
+Do not run or create nonexistent targets merely to make gates pass.
+
+## Commit discipline
+
+- Commit after one completed logical unit or task; do not mix unrelated changes.
+- Stage by path or hunk when needed, and never hide unrelated modifications inside a convenient commit.
+- Use Conventional Commits 1.0.0: `<type>[optional scope]: <imperative description>`.
+- Use imperative wording such as `add`, `fix`, `change` or `remove`.
+- Limit the title to 50 characters; do not end it with punctuation or an ellipsis.
+- Start an optional body after one blank line and wrap it at 72 characters per line.
+- Use the body for context and rationale, not a line-by-line account of implementation.
+- Use `feat` for product capability and `fix` for bug fixes. Use `docs`, `chore`, `refactor`, `test`, `build`, `ci` or `perf` when semantically appropriate.
+- Add a scope only when it improves precision.
+- Never commit secrets, local `.env` files, IOP PDFs, credentials or experimental cloud data.
+- Before every commit inspect both `git diff` and `git diff --cached`.
+- After every commit verify `git status --short` and `git log -1 --format="%h %s"`.
+
+[Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) is the structural reference. The 50/72 limits and imperative wording are CU013 repository policy, not requirements of that specification.
+
+## Documentation lifecycle
+
+Canonical artifacts are Documentation as Code:
+
+| Artifact | Update when | Lifecycle rule |
+|---|---|---|
+| Specs | Accepted behavior, contract or invariant changes | Normative current state; replace obsolete requirements and do not preserve historical variants inside the spec. |
+| ADRs | An architectural decision is accepted or revoked | Accepted ADRs are historical records; supersede or deprecate instead of silently rewriting decision history. |
+| Experiments | A spike is planned, executed or concluded | The same record evolves through `Planned`, `Running`, and `Completed` / `Failed` / `Inconclusive`, and remains as evidence. |
+| `CONTEXT.md` | After an iteration is accepted, before commit or integration | Replace the current snapshot and keep only two or three brief previous checkpoints. |
+| `CHANGELOG.md` | An accepted change is relevant to the project or version | Update `[Unreleased]`; never duplicate the Git log. |
+| `README.md` | Entry points, purpose or navigation materially change | Keep it concise and aligned with current authority. |
+| `AGENTS.md` | Agent workflow, tools, gates or repository operating rules change | Keep it operational; do not duplicate specs or ADRs. |
+| Skills | A recurrent procedure is added, changed or removed | Update the procedure and remove obsolete skills instead of retaining legacy guidance. |
+| Runbooks and scripts | An operational procedure or managed infrastructure changes | Keep the runbook and automation synchronized. |
+
+Before an accepted iteration is committed or integrated:
+
+1. determine which canonical artifacts became stale;
+2. update them in the same iteration;
+3. validate cross-links and contradictions;
+4. update `CONTEXT.md` last, using only accepted and verified state;
+5. update `CHANGELOG.md` when the change is version-relevant.
+
+Do not preserve obsolete documentation merely for history. Git, ADRs and experiment records provide history. Current specs, runbooks, `AGENTS.md` and skills must describe the current system and workflow.
+
+## Artifact language
+
+- Write `AGENTS.md`, `CHANGELOG.md` and every future `.agents/skills/**/SKILL.md` in English.
+- Write `README.md`, `CONTEXT.md` and `docs/decisions/*.md` in Spanish. Keep the canonical ADR status values in English.
+- Preserve the current language of other artifacts unless the owner explicitly defines a different policy.
+
+## STOP & REPORT
+
+Stop when required XCALLY behavior is unknown, a required business rule or external contract is ambiguous, an Accepted decision conflicts with the work, a turn needs more than two sequential model calls, or the task requires another database, framework, provider, RAG, multi-agent architecture, large FSM or unapproved infrastructure.
+
+## Decisions and skills
+
+Decisions live in `docs/decisions/`, use `NNNN-short-kebab-title.md`, and use the status values `Proposed`, `Accepted`, `Deprecated` or `Superseded`.
+
+There are no active CU013 skills. A future skill requires an explicit owner instruction and must represent a recurrent procedure, not a technology component, person, isolated bug or copy of a spec, ADR or `AGENTS.md`.
