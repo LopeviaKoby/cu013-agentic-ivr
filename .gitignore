@@ -11,11 +11,13 @@ build/
 *.egg-info/
 .env
 .env.*
-!.env.example
 *.log
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
-.agents/
 skills-lock.json
+.agents/
+.codegraph/
+docs/iop/*
+!docs/iop/README.md

@@ -1,101 +1,40 @@
 # CU013 Conversational Backend v0.2.0
 
-Conversational IT-support backend for CU013 and XCALLY Motion / Cally Square.
+Backend conversacional telefónico de Mesa de Ayuda integrado con XCALLY Motion y Cally Square.
 
-> **Notice**: V1 is reference material only and is not architecture to preserve. This repository is a clean, minimal reimplementation for v0.2.0.
+CU013 v0.2.0 es una reconstrucción arquitectónica nueva. El runtime anterior permanece sólo en Git como evidencia; no define la arquitectura actual.
 
-## Overview
+## Estado actual
 
-CU013 provides a natural, intelligent, and expected low-latency voice conversational agent for IT-support phone calls (VPN/VDI troubleshooting, account unlock, password reset).
+El repositorio contiene autoridad documental, configuración no sensible y tooling operativo reproducible para la base GCP DEV/SPIKE. Todavía no existe runtime, servicio Cloud Run ni implementación del spike Firestore/LangGraph.
 
-- **LLM owns the conversation**: Natural-language understanding, multi-fact extraction, clarification, and conversation progression via Gemini.
-- **Code owns what is legal and true**: Business truth, validation, side effects, authorization, and persistence.
+La infraestructura confirmada usa el proyecto `cu013-xcally-agentic` y la región primaria `us-east1`, con Firestore `(default)`, Artifact Registry y service accounts separadas para spike, runtime y despliegue.
 
-## Tech Stack
+## Autoridad
 
-- **Python 3.12**
-- **FastAPI** + **Pydantic 2**
-- **LangGraph** (StateGraph orchestration)
-- **google-genai** (Vertex AI / Gemini 3.5 Flash-Lite)
-- **Google Cloud Firestore** (Durable session store)
-- **Cloud Run** / **Cloud Build** / **Artifact Registry**
-- **pytest**, **Ruff**, **MyPy**, **Docker**
+- [Specs](docs/specs/) → requisitos vigentes.
+- [Decisions](docs/decisions/) → decisiones arquitectónicas.
+- [Experiments](docs/experiments/) → evidencia experimental.
+- [Runbooks](docs/runbooks/) → operación.
+- [Estándares de ingeniería](docs/engineering/) → convenciones de implementación.
+- [Manifiesto de IOP locales](docs/iop/README.md) → fuentes empresariales esperadas.
+- [CONTEXT](CONTEXT.md) → estado actual.
+- [CHANGELOG](CHANGELOG.md) → cambios por versión.
+- [AGENTS](AGENTS.md) → reglas para agentes.
 
-## Quick Start (Local Development)
+El primer slice incluye `RESET_PASSWORD` y `UNLOCK_ACCOUNT`. VPN queda para una capacidad posterior.
 
-### 1. Prerequisites
+## Operación GCP
 
-- Python 3.12 (`py -3.12` or `python3.12`)
-- Google Cloud SDK (`gcloud`) with ADC configured
+- [Runbook de bootstrap GCP DEV](docs/runbooks/gcp-dev-bootstrap.md)
+- [`bootstrap-dev.ps1`](ops/gcp/bootstrap-dev.ps1)
+- [`verify-dev.ps1`](ops/gcp/verify-dev.ps1)
+- [Configuración no sensible](config.yaml)
 
-### 2. Environment Setup
+El bootstrap no crea Cloud Run, secretos, WIF o Terraform. La autenticación local del spike usa ADC impersonation y nunca claves JSON de service account.
 
-```powershell
-# Create virtual environment
-py -3.12 -m venv .venv
+## Experimento siguiente
 
-# Activate (Windows PowerShell)
-.\.venv\Scripts\Activate.ps1
+El plan y registro durable del experimento está en [checkpointer Firestore/LangGraph](docs/experiments/0001-firestore-langgraph-checkpointer.md). Está en estado `Planned`; su ejecución pertenece a un encargo separado y a un worktree efímero.
 
-# Activate (Linux/macOS)
-# source .venv/bin/activate
-
-# Upgrade pip and install package with dev dependencies
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
-```
-
-### 3. Configure Environment
-
-Copy `.env.example` to `.env` and adjust if needed:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-### 4. Run Locally
-
-```powershell
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
-```
-
-- Health check: `GET http://localhost:8080/health`
-- Turn endpoint: `POST http://localhost:8080/turn`
-
-### 5. Quality Gates
-
-```powershell
-# Linting & Formatting checks
-python -m ruff check app tests
-python -m ruff format --check app tests
-
-# Type checking
-python -m mypy app
-
-# Unit tests
-python -m pytest tests/ -v
-```
-
-## Docker
-
-```powershell
-# Build image
-docker build -t cu013-agentic-ivr:latest .
-
-# Run container
-docker run -p 8080:8080 -e PORT=8080 cu013-agentic-ivr:latest
-```
-
-## Git Workflow
-
-- **`main`**: Latest accepted release/baseline.
-- **`dev`**: Active development branch. All work for Increment 1 is committed on `dev`.
-
-## Documentation & Constitutional Rules
-
-- [AGENTS.md](AGENTS.md) — Operational constitution and immutable baseline.
-- [docs/NORTH_STAR.md](docs/NORTH_STAR.md) — North star vision and operational context.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Current v0.2.0 technical architecture.
-- [docs/XCALLY_CONTRACT.md](docs/XCALLY_CONTRACT.md) — XCALLY / Cally Square integration contract.
-- [docs/PROTOCOLS.md](docs/PROTOCOLS.md) — Domain IT-support protocol definitions.
-- [docs/DEVELOPMENT_RULES.md](docs/DEVELOPMENT_RULES.md) — Development workflow, gates, and acceptance loop.
+Las instrucciones operativas para agentes están en [AGENTS.md](AGENTS.md). Las dependencias Python se centralizan en [pyproject.toml](pyproject.toml).
