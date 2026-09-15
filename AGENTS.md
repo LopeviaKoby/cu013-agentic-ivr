@@ -168,4 +168,4 @@ Stop when required XCALLY behavior is unknown, a required business rule or exter
 
 Decisions live in `docs/decisions/`, use `NNNN-short-kebab-title.md`, and use the status values `Proposed`, `Accepted`, `Deprecated` or `Superseded`.
 
-There are no active CU013 skills. A future skill requires an explicit owner instruction and must represent a recurrent procedure, not a technology component, person, isolated bug or copy of a spec, ADR or `AGENTS.md`.
+The only active CU013 skill is `iteration-closeout` (`.agents/skills/iteration-closeout/SKILL.md`), used to close and reconcile an iteration before commit, integration or handoff. A future skill requires an explicit owner instruction and must represent a recurrent procedure, not a technology component, person, isolated bug or copy of a spec, ADR or `AGENTS.md`.
