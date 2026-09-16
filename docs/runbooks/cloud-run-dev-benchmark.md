@@ -36,6 +36,9 @@ benchmark.**
 2. Ejecutar el cliente E2E desde la shell del owner (contiene
    `$env:CU013_API_KEY`, que el cliente lee sin imprimir):
    `python evals/cloud_run_latency.py --url <service-url>`
+   - si la sesión no conserva la variable, cargar sólo la versión fijada en
+     memoria con `. .\ops\gcp\set-dev-benchmark-api-key.ps1`; el script se
+     ejecuta mediante dot-sourcing, no imprime ni persiste el valor;
    - conservar la salida completa sin secretos: incluye `benchmark_prefix`,
      `measured_started_at_utc` y `measured_ended_at_utc` para recuperar sólo
      las métricas server-side de las 30 requests medidas;
