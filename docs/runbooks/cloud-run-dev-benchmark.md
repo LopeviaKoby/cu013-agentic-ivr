@@ -36,6 +36,11 @@ benchmark.**
 2. Ejecutar el cliente E2E desde la shell del owner (contiene
    `$env:CU013_API_KEY`, que el cliente lee sin imprimir):
    `python evals/cloud_run_latency.py --url <service-url>`
+   - conservar la salida completa sin secretos: incluye `benchmark_prefix`,
+     `measured_started_at_utc` y `measured_ended_at_utc` para recuperar sólo
+     las métricas server-side de las 30 requests medidas;
+   - `first` es la primera request medida en orden temporal; `min` y los
+     percentiles se calculan independientemente sobre la distribución.
 3. Verificación read-only: `powershell -File ops/gcp/verify-dev-benchmark.ps1`
    (nunca imprime el valor del secret).
 4. **Apagar obligatoriamente**:

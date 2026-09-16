@@ -28,6 +28,7 @@ DEFAULT_FIRESTORE_COLLECTION = "cu013dev_sessions"
 
 def build_app(*, metrics: TurnMetrics | None = None) -> FastAPI:
     """Compose the real DEV application; clients close with the lifespan."""
+    effective_metrics = metrics if metrics is not None else StructuredLogTurnMetrics()
     baseline = GeminiBaseline.from_env()
     genai_client = Client(
         vertexai=True,
@@ -38,14 +39,14 @@ def build_app(*, metrics: TurnMetrics | None = None) -> FastAPI:
     collection = os.environ.get(FIRESTORE_COLLECTION_ENV, DEFAULT_FIRESTORE_COLLECTION)
     firestore_client = FirestoreAsyncClient(project=baseline.project)
     store = FirestoreSessionDocumentStore(firestore_client, collection)
-    model = GeminiTurnModel(genai_client, baseline, metrics=metrics)
+    model = GeminiTurnModel(genai_client, baseline, metrics=effective_metrics)
     service = TurnService(
         SessionRepository(store),
         build_turn_graph(model=model),
-        metrics=metrics,
+        metrics=effective_metrics,
     )
     app = create_app(engine=SessionConversationEngine(service))
-    app.state.turn_metrics = metrics if metrics is not None else StructuredLogTurnMetrics()
+    app.state.turn_metrics = effective_metrics
     app.state.genai_client = genai_client
     app.state.firestore_client = firestore_client
 

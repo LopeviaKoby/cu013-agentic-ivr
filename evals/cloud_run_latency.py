@@ -16,6 +16,8 @@ import math
 import os
 import sys
 import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import httpx
 
@@ -34,6 +36,21 @@ MULTI_TURN_TRANSCRIPTS = [
 TURNS_PATH = "/api/v1/conversations/{conversation_id}/turns"
 
 
+@dataclass(frozen=True)
+class LatencySummary:
+    """PII-safe summary that preserves temporal and distributional values."""
+
+    requests: int
+    errors: int
+    timeouts: int
+    statuses: dict[int, int]
+    first_ms: float | None
+    p50_ms: float | None
+    p95_ms: float | None
+    min_ms: float | None
+    max_ms: float | None
+
+
 def percentile(sorted_values: list[float], p: float) -> float | None:
     """Nearest-rank percentile (ceil(p*n)th value, 1-based)."""
     if not sorted_values:
@@ -50,36 +67,68 @@ async def run_request(
 ) -> dict[str, object]:
     """One HTTPS request; timing only, never content."""
     start = time.monotonic()
-    response = await client.post(
-        TURNS_PATH.format(conversation_id=conversation_id),
-        json={"transcript": transcript},
-        headers=headers,
+    try:
+        response = await client.post(
+            TURNS_PATH.format(conversation_id=conversation_id),
+            json={"transcript": transcript},
+            headers=headers,
+        )
+        return {
+            "status": response.status_code,
+            "round_trip_ms": (time.monotonic() - start) * 1000.0,
+            "error": response.status_code != 200,
+            "timeout": False,
+        }
+    except httpx.TimeoutException:
+        return {
+            "status": None,
+            "round_trip_ms": (time.monotonic() - start) * 1000.0,
+            "error": True,
+            "timeout": True,
+        }
+    except httpx.HTTPError:
+        return {
+            "status": None,
+            "round_trip_ms": (time.monotonic() - start) * 1000.0,
+            "error": True,
+            "timeout": False,
+        }
+
+
+def summarize(results: list[dict[str, object]]) -> LatencySummary:
+    """Summarize ordered measurements without replacing ``first`` with ``min``."""
+    statuses: dict[int, int] = {}
+    for result in results:
+        status = result["status"]
+        if isinstance(status, int):
+            statuses[status] = statuses.get(status, 0) + 1
+    values = [float(result["round_trip_ms"]) for result in results]
+    sorted_values = sorted(values)
+    return LatencySummary(
+        requests=len(results),
+        errors=sum(bool(result["error"]) for result in results),
+        timeouts=sum(bool(result.get("timeout", False)) for result in results),
+        statuses=statuses,
+        first_ms=values[0] if values else None,
+        p50_ms=percentile(sorted_values, 0.5),
+        p95_ms=percentile(sorted_values, 0.95),
+        min_ms=sorted_values[0] if sorted_values else None,
+        max_ms=sorted_values[-1] if sorted_values else None,
     )
-    round_trip_ms = (time.monotonic() - start) * 1000.0
-    return {
-        "status": response.status_code,
-        "round_trip_ms": round_trip_ms,
-        "error": response.status_code != 200,
-    }
 
 
 def aggregate(name: str, results: list[dict[str, object]]) -> None:
-    requests = len(results)
-    errors = sum(1 for r in results if r["error"])
-    statuses: dict[int, int] = {}
-    for result in results:
-        status = int(result["status"])
-        statuses[status] = statuses.get(status, 0) + 1
-    values = sorted(float(r["round_trip_ms"]) for r in results)
+    summary = summarize(results)
     print(f"=== {name} ===")
-    print(f"requests={requests} errors={errors} statuses={statuses}")
-    if values:
-        p50 = percentile(values, 0.5)
-        p95 = percentile(values, 0.95)
+    print(
+        f"requests={summary.requests} errors={summary.errors} "
+        f"timeouts={summary.timeouts} statuses={summary.statuses}"
+    )
+    if summary.first_ms is not None:
         print(f"{'round_trip_ms':<16}{'first':>9}{'p50':>9}{'p95':>9}{'min':>9}{'max':>9}")
         print(
-            f"{'client_total':<16}{values[0]:>9.1f}{p50:>9.1f}{p95:>9.1f}"
-            f"{values[0]:>9.1f}{values[-1]:>9.1f}"
+            f"{'client_total':<16}{summary.first_ms:>9.1f}{summary.p50_ms:>9.1f}"
+            f"{summary.p95_ms:>9.1f}{summary.min_ms:>9.1f}{summary.max_ms:>9.1f}"
         )
     print()
 
@@ -97,7 +146,7 @@ async def run() -> int:
     base_url = args.url.rstrip("/")
     prefix = f"cu013benchcr_{int(time.time())}"
     print(f"service_url={base_url}")
-    print(f"conversation_prefix={prefix}")
+    print(f"benchmark_prefix={prefix}")
 
     timeout = httpx.Timeout(args.timeout)
     async with httpx.AsyncClient(base_url=base_url, timeout=timeout) as client:
@@ -127,6 +176,7 @@ async def run() -> int:
         for i in range(WARMUPS):
             await run_request(client, f"{prefix}-warmup-{i}", RESET_TRANSCRIPT, headers)
 
+        measured_started_at_utc = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         scenarios: dict[str, list[dict[str, object]]] = {}
         for i in range(10):
             result = await run_request(client, f"{prefix}-reset-{i}", RESET_TRANSCRIPT, headers)
@@ -146,6 +196,9 @@ async def run() -> int:
         scenarios["MULTI_TURN"] = multi_results
 
         all_results = [r for results in scenarios.values() for r in results]
+        measured_ended_at_utc = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        print(f"measured_started_at_utc={measured_started_at_utc}")
+        print(f"measured_ended_at_utc={measured_ended_at_utc}")
         print(f"warmups={WARMUPS} measured={len(all_results)} sequential")
         print()
         for name, results in scenarios.items():
@@ -154,7 +207,7 @@ async def run() -> int:
         print(f"multi_turn_conversation={multi_id}")
         print(
             "server-side segments: query Cloud Logging with the PII-safe"
-            " 'turn_metric' lines for this conversation prefix."
+            " 'turn_metric' lines for this benchmark prefix and measured window."
         )
     return 0
 
