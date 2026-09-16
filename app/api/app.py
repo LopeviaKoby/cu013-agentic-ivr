@@ -7,6 +7,7 @@ identity-validation integration exists.
 """
 
 import logging
+import time
 from typing import Annotated
 from uuid import uuid4
 
@@ -17,6 +18,8 @@ from app.api.contracts import ErrorResponse, IdentityDataTurn, TurnRequest, Turn
 from app.api.errors import (
     ApiError,
     ConversationEngineUnavailableError,
+    DependencyTimeoutError,
+    DependencyUnavailableError,
     IdentityValidationUnavailableError,
     api_error_handler,
     unhandled_error_handler,
@@ -24,6 +27,8 @@ from app.api.errors import (
 )
 from app.api.security import require_api_key
 from app.conversation.engine import ConversationEngine, ConversationTurn, TurnOutcome
+from app.conversation.errors import ModelTimeoutError, ModelUnavailableError
+from app.session.metrics import TurnMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +42,8 @@ router = APIRouter(prefix="/api/v1")
         401: {"model": ErrorResponse, "description": "Missing or invalid X-API-Key."},
         422: {"model": ErrorResponse, "description": "Invalid request payload."},
         500: {"model": ErrorResponse, "description": "Unexpected failure or unconfigured API key."},
-        503: {"model": ErrorResponse, "description": "Dependency not available yet."},
+        503: {"model": ErrorResponse, "description": "Dependency not available."},
+        504: {"model": ErrorResponse, "description": "Dependency timed out."},
     },
 )
 async def handle_turn(
@@ -47,15 +53,21 @@ async def handle_turn(
     _authorized: Annotated[None, Depends(require_api_key)],
 ) -> TurnResponse:
     """Run one Cally Square turn after authentication and validation."""
-    turn_id = uuid4().hex
-    outcome = await _converse(request, conversation_id, turn)
-    logger.info(
-        "turn handled conversation_id=%s turn_id=%s route=%s",
-        conversation_id,
-        turn_id,
-        outcome.route.value,
-    )
-    return TurnResponse(message=outcome.message, route=outcome.route, turn_id=turn_id)
+    metrics: TurnMetrics | None = getattr(request.app.state, "turn_metrics", None)
+    start = time.monotonic()
+    try:
+        turn_id = uuid4().hex
+        outcome = await _converse(request, conversation_id, turn)
+        logger.info(
+            "turn handled conversation_id=%s turn_id=%s route=%s",
+            conversation_id,
+            turn_id,
+            outcome.route.value,
+        )
+        return TurnResponse(message=outcome.message, route=outcome.route, turn_id=turn_id)
+    finally:
+        if metrics is not None:
+            metrics.record_segment("handler", (time.monotonic() - start) * 1000.0)
 
 
 async def _converse(request: Request, conversation_id: str, turn: TurnRequest) -> TurnOutcome:
@@ -70,13 +82,18 @@ async def _converse(request: Request, conversation_id: str, turn: TurnRequest) -
     engine: ConversationEngine | None = request.app.state.conversation_engine
     if engine is None:
         raise ConversationEngineUnavailableError()
-    return await engine.handle_turn(
-        ConversationTurn(
-            conversation_id=conversation_id,
-            transcript=turn.transcript,
-            asr_confidence=turn.asr_confidence,
+    try:
+        return await engine.handle_turn(
+            ConversationTurn(
+                conversation_id=conversation_id,
+                transcript=turn.transcript,
+                asr_confidence=turn.asr_confidence,
+            )
         )
-    )
+    except ModelTimeoutError as exc:
+        raise DependencyTimeoutError() from exc
+    except ModelUnavailableError as exc:
+        raise DependencyUnavailableError() from exc
 
 
 def create_app(engine: ConversationEngine | None = None) -> FastAPI:

@@ -46,6 +46,22 @@ class IdentityValidationUnavailableError(ApiError):
     public_message = "identity validation is not available"
 
 
+class DependencyTimeoutError(ApiError):
+    """An external dependency exceeded its deadline."""
+
+    code = ErrorCode.DEPENDENCY_TIMEOUT
+    status_code = 504
+    public_message = "dependency timed out"
+
+
+class DependencyUnavailableError(ApiError):
+    """An external dependency failed or could not be reached."""
+
+    code = ErrorCode.DEPENDENCY_UNAVAILABLE
+    status_code = 503
+    public_message = "dependency is not available"
+
+
 class ConversationEngineUnavailableError(ApiError):
     """No conversational engine is wired into this boundary yet."""
 

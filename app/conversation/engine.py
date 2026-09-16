@@ -1,23 +1,20 @@
-"""Minimal conversational seam between the HTTP boundary and the engine.
+"""Conversational seam and the real engine over the thin session turn."""
 
-No conversational logic lives here. The next iteration implements this
-protocol with Gemini; that engine owns language, while the runtime keeps
-owning legality, authorization, state and side effects.
-"""
-
-from enum import StrEnum
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.conversation.errors import InvalidModelOutputError
+from app.session.service import TurnService
+from app.session.turns import Route, TurnInput
 
-class Route(StrEnum):
-    """Route Cally Square consumes from a turn response."""
-
-    CONTINUE = "CONTINUE"
-    COLLECT_IDENTITY = "COLLECT_IDENTITY"
-    COMPLETE = "COMPLETE"
-    ESCALATE = "ESCALATE"
+__all__ = [
+    "ConversationEngine",
+    "ConversationTurn",
+    "Route",
+    "SessionConversationEngine",
+    "TurnOutcome",
+]
 
 
 class TurnOutcome(BaseModel):
@@ -40,6 +37,28 @@ class ConversationTurn(BaseModel):
 
 
 class ConversationEngine(Protocol):
-    """Seam the Gemini-backed conversational engine implements next."""
+    """Seam the conversational engine implements for the HTTP boundary."""
 
     async def handle_turn(self, turn: ConversationTurn) -> TurnOutcome: ...
+
+
+class SessionConversationEngine:
+    """Real engine: one thin-session turn that includes the model call.
+
+    The typed model decision produced inside the turn becomes the boundary
+    outcome; the runtime keeps owning legality, durable state and the truth
+    of business results.
+    """
+
+    def __init__(self, service: TurnService) -> None:
+        self._service = service
+
+    async def handle_turn(self, turn: ConversationTurn) -> TurnOutcome:
+        result = await self._service.handle_turn(
+            turn.conversation_id,
+            TurnInput(transcript=turn.transcript),
+        )
+        decision = result.decision
+        if decision is None:
+            raise InvalidModelOutputError("turn completed without a model decision")
+        return TurnOutcome(message=decision.message, route=decision.route)
