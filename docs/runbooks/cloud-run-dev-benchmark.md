@@ -41,11 +41,12 @@ benchmark.**
      las métricas server-side de las 30 requests medidas;
    - `first` es la primera request medida en orden temporal; `min` y los
      percentiles se calculan independientemente sobre la distribución.
-3. Verificación read-only: `powershell -File ops/gcp/verify-dev-benchmark.ps1`
+3. Verificación read-only durante la ventana:
+   `powershell -File ops/gcp/verify-dev-benchmark.ps1 -ExpectedMinInstances 1`
    (nunca imprime el valor del secret).
 4. **Apagar obligatoriamente**:
    `powershell -File ops/gcp/stop-dev-benchmark.ps1`
-   y verificar `min instances: 0`.
+   y verificar `min instances: 0` con `-ExpectedMinInstances 0`.
 5. Limpiar la variable sensible: `Remove-Item Env:CU013_API_KEY -ErrorAction SilentlyContinue`.
 
 ## Cost guard

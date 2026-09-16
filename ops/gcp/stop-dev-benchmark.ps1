@@ -25,13 +25,15 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "== read-only verification"
-$serviceJson = gcloud run services describe $Service `
-    --project $ProjectId --region $Region --format=json
-$service = $serviceJson | ConvertFrom-Json
-$min = $service.spec.template.scaling.minInstanceCount
-Write-Host "min instances: $min"
-if ($min -ne 0) {
-    Write-Error "min instances is $min, expected 0"
+$verifier = Join-Path $PSScriptRoot "verify-dev-benchmark.ps1"
+& $verifier `
+    -ProjectId $ProjectId `
+    -Region $Region `
+    -Service $Service `
+    -DeployerSa $DeployerSa `
+    -ExpectedMinInstances 0
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "post-stop verification failed (exit $LASTEXITCODE)"
     exit 1
 }
 Write-Host "service kept deployed with min=0 (safe idle state)."

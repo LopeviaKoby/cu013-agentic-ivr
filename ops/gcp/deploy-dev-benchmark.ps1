@@ -33,6 +33,27 @@ function Invoke-Checked {
     }
 }
 
+function Get-PublicServiceUrl {
+    param([Parameter(Mandatory)]$ServiceDescription, [Parameter(Mandatory)][string]$Region)
+
+    $urls = @([string]$ServiceDescription.status.url)
+    $annotatedUrls = [string]$ServiceDescription.metadata.annotations."run.googleapis.com/urls"
+    if (-not [string]::IsNullOrWhiteSpace($annotatedUrls)) {
+        try {
+            $urls += @($annotatedUrls | ConvertFrom-Json)
+        }
+        catch {
+            throw "service URLs annotation is not valid JSON"
+        }
+    }
+    $expected = "https://{0}-{1}.{2}.run.app" -f `
+        $ServiceDescription.metadata.name, $ServiceDescription.metadata.namespace, $Region
+    if ($urls -contains $expected) {
+        return $expected
+    }
+    return [string]$ServiceDescription.status.url
+}
+
 Write-Host "== repository state"
 Invoke-Checked { git fetch origin dev } "fetch"
 $branch = (git branch --show-current).Trim()
@@ -111,12 +132,34 @@ Invoke-Checked {
 
 Write-Host "== effective configuration"
 $serviceJson = gcloud run services describe $Service `
-    --project $ProjectId --region $Region --format=json
+    --project $ProjectId --region $Region `
+    --impersonate-service-account $DeployerSa `
+    --format=json
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "cannot describe deployed service (exit $LASTEXITCODE)"
+    exit 1
+}
 $service = $serviceJson | ConvertFrom-Json
-$digest = gcloud artifacts docker images describe $Tag --format="value(image_summary.digest)"
-Write-Host "url: $($service.status.url)"
-Write-Host "revision: $($service.status.latestReadyRevisionName)"
+$url = Get-PublicServiceUrl -ServiceDescription $service -Region $Region
+$revision = [string]$service.status.latestReadyRevisionName
+$minInstances = [string]$service.spec.template.metadata.annotations."autoscaling.knative.dev/minScale"
+if ([string]::IsNullOrWhiteSpace($url) -or [string]::IsNullOrWhiteSpace($revision)) {
+    Write-Error "deployed service did not report a ready URL and revision"
+    exit 1
+}
+$revisionJson = gcloud run revisions describe $revision `
+    --project $ProjectId --region $Region `
+    --impersonate-service-account $DeployerSa `
+    --format=json
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "cannot describe deployed revision (exit $LASTEXITCODE)"
+    exit 1
+}
+$revisionDetails = $revisionJson | ConvertFrom-Json
+$digest = [string]$revisionDetails.status.imageDigest
+Write-Host "url: $url"
+Write-Host "revision: $revision"
 Write-Host "image: $Tag"
 Write-Host "image digest: $digest"
-Write-Host "min instances: $($service.spec.template.scaling.minInstanceCount)"
+Write-Host "min instances: $minInstances"
 Write-Host "REMINDER: run ops/gcp/stop-dev-benchmark.ps1 right after the window (min=0)."
