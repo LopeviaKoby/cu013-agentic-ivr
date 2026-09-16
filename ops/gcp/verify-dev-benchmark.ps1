@@ -36,6 +36,18 @@ function Check {
     }
 }
 
+function Get-MinInstanceCount {
+    param([Parameter(Mandatory)]$Annotations, [Parameter(Mandatory)][string]$Key)
+
+    $property = $Annotations.PSObject.Properties[$Key]
+    if ($null -eq $property -or [string]::IsNullOrEmpty([string]$property.Value)) {
+        return 0  # Cloud Run's unset minimum defaults to zero.
+    }
+    $raw = [string]$property.Value
+    if ($raw -notmatch '^\d+$') { throw "invalid Cloud Run minimum instance count at $Key" }
+    return [int]$raw
+}
+
 function Get-PublicServiceUrl {
     param([Parameter(Mandatory)]$ServiceDescription, [Parameter(Mandatory)][string]$Region)
 
@@ -96,8 +108,11 @@ Check "runtime_sa" ($template.spec.serviceAccountName -eq $RuntimeSa) $template.
 Check "concurrency" ($template.spec.containerConcurrency -eq 1) $template.spec.containerConcurrency
 Check "cpu" ($container.resources.limits.cpu -eq "1") $container.resources.limits.cpu
 Check "memory" ($container.resources.limits.memory -eq "512Mi") $container.resources.limits.memory
-Check "min_instances" ([int]$annotations."autoscaling.knative.dev/minScale" -eq $ExpectedMinInstances) `
-    "min=$($annotations."autoscaling.knative.dev/minScale") (expected $ExpectedMinInstances)"
+$revisionMin = Get-MinInstanceCount -Annotations $annotations -Key "autoscaling.knative.dev/minScale"
+$serviceMin = Get-MinInstanceCount -Annotations $serviceDescription.metadata.annotations -Key "run.googleapis.com/minScale"
+$effectiveMin = [Math]::Max($revisionMin, $serviceMin)
+Check "min_instances" ($effectiveMin -eq $ExpectedMinInstances) `
+    "min=$effectiveMin (revision=$revisionMin service=$serviceMin expected $ExpectedMinInstances)"
 Check "max_instances" ([int]$annotations."autoscaling.knative.dev/maxScale" -eq 1) `
     "max=$($annotations."autoscaling.knative.dev/maxScale")"
 Check "cpu_throttling" (

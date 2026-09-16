@@ -32,6 +32,18 @@ function Get-GcloudJson {
     return ConvertFrom-Json -InputObject $jsonText
 }
 
+function Get-MinInstanceCount {
+    param([Parameter(Mandatory)]$Annotations, [Parameter(Mandatory)][string]$Key)
+
+    $property = $Annotations.PSObject.Properties[$Key]
+    if ($null -eq $property -or [string]::IsNullOrEmpty([string]$property.Value)) {
+        return 0  # Cloud Run's unset minimum defaults to zero.
+    }
+    $raw = [string]$property.Value
+    if ($raw -notmatch '^\d+$') { throw "invalid Cloud Run minimum instance count at $Key" }
+    return [int]$raw
+}
+
 Write-Host "== read-only preflight"
 $serviceDescription = Get-GcloudJson -CommandArguments @(
     "run", "services", "describe", $Service,
@@ -48,8 +60,9 @@ if ($currentRef.Count -ne 1 -or
     [string]$currentRef[0].valueFrom.secretKeyRef.key -ne "1") {
     throw "Cloud Run is not pinned to the expected secret version 1"
 }
-$minInstances = [string]$serviceDescription.spec.template.metadata.annotations."autoscaling.knative.dev/minScale"
-if ($minInstances -ne "0") {
+$revisionMin = Get-MinInstanceCount -Annotations $serviceDescription.spec.template.metadata.annotations -Key "autoscaling.knative.dev/minScale"
+$serviceMin = Get-MinInstanceCount -Annotations $serviceDescription.metadata.annotations -Key "run.googleapis.com/minScale"
+if ($revisionMin -ne 0 -or $serviceMin -ne 0) {
     throw "Cloud Run must be idle (min-instances=0) before rotating the benchmark key"
 }
 $revisionName = [string]$serviceDescription.status.latestReadyRevisionName

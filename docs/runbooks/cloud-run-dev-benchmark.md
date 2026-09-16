@@ -33,6 +33,12 @@ nueva sin reconstruir la imagen. El valor no se imprime ni se guarda en
 `.env`. La versión 1 permanece como evidencia; su deshabilitación se
 decidirá después de comprobar la nueva revisión.
 
+En el JSON de Cloud Run, los mínimos no configurados pueden estar ausentes:
+`autoscaling.knative.dev/minScale` en la plantilla de revisión y
+`run.googleapis.com/minScale` en el servicio equivalen entonces a cero.
+El verificador comprueba ambos niveles para no confundir un mínimo de
+servicio activo con una revisión aparentemente inactiva.
+
 1. `powershell -File ops/gcp/deploy-dev-benchmark.ps1`
    - valida branch dev + worktree limpio + HEAD == origin/dev;
    - comprueba Docker, gcloud y Artifact Registry;
