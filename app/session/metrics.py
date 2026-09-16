@@ -6,6 +6,7 @@ ever be recorded here.
 """
 
 import logging
+import sys
 from typing import Protocol
 
 logger = logging.getLogger("cu013.metrics")
@@ -52,10 +53,18 @@ class RecordingTurnMetrics:
 class StructuredLogTurnMetrics:
     """Emit segment timings and token counters as PII-safe log lines.
 
-    Cloud Run captures stdout into Cloud Logging, so the DEV benchmark can
+    Cloud Run captures stderr into Cloud Logging, so the DEV benchmark can
     recover the server-side segmentation without an observability platform.
     Only fixed names, durations and integer counters are ever logged.
     """
+
+    def __init__(self) -> None:
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+        if not logger.handlers:
+            handler = logging.StreamHandler(sys.stderr)
+            handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+            logger.addHandler(handler)
 
     def record_segment(self, name: str, duration_ms: float) -> None:
         logger.info("turn_metric segment=%s duration_ms=%.3f", name, duration_ms)

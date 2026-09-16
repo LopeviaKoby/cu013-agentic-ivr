@@ -64,6 +64,11 @@ servicio activo con una revisión aparentemente inactiva.
      las métricas server-side de las 30 requests medidas;
    - `first` es la primera request medida en orden temporal; `min` y los
      percentiles se calculan independientemente sobre la distribución.
+   - la instancia productiva de `StructuredLogTurnMetrics` emite líneas
+     `turn_metric` INFO al stderr capturado por Cloud Run. Recuperar
+     `handler`, `session_load`, `model`, `graph` y `session_save` del intervalo
+     medido; calcular `runtime = graph - model` por request, como en el
+     experimento 0003. No atribuir métricas si falta algún segmento.
 3. Verificación read-only durante la ventana:
    `powershell -File ops/gcp/verify-dev-benchmark.ps1 -ExpectedMinInstances 1`
    (nunca imprime el valor del secret). Tras rotar, añadir
