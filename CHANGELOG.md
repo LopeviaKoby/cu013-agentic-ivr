@@ -82,7 +82,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   minimal production implementation.
 
 - Documented reproducible `gcloud` bootstrap before Terraform.
-- Resolved the infrastructure blocker for the Firestore persistence spike.
+- Resolved the infrastructure blocker for Firestore persistence.
 - Moved the deadline for evaluating a Gemini alternative to 16-10-2026.
 - Clarified business-authority precedence, account-action paths, experiment retention and the documentation lifecycle.
 - Clarified the automated account-action and ticketing boundary.

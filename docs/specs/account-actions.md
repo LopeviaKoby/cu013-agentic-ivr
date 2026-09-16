@@ -158,7 +158,7 @@ La estrategia de idempotencia, correlación, polling, retries y resultados tard�
 ## Contraseña temporal y SendMail
 
 - Status: Deferred
-- Sequence: persistence spike → AD/TIVIT integration → log-driven debugging/caller tests → SendMail
+- Sequence: XCALLY voice baseline → AD/TIVIT integration → log-driven debugging/caller tests → SendMail
 
 La entrega aceptada es:
 
@@ -179,7 +179,7 @@ La contraseña temporal nunca debe:
 - registrarse en logs o telemetría;
 - conservarse en fixtures.
 
-El resultado exacto de SendMail permanece Deferred y fuera del alcance inmediato. No bloquea el spike de persistencia ni la primera integración AD/TIVIT.
+El resultado exacto de SendMail permanece Deferred y fuera del alcance inmediato. No bloquea el baseline de voz XCALLY aislado ni la integración AD/TIVIT posterior.
 
 ## Persistencia y concurrencia
 
@@ -204,7 +204,7 @@ Un crash mid-turn reinicia desde la última sesión durable. Last-writer-wins po
 
 El runtime debe aplicar minimización, separación de responsabilidades y autorización antes de acciones externas. No deben usarse datos personales o secretos reales en tests, fixtures o spikes.
 
-No se permite acceso directo a AD/TIVIT, correo real ni modificación del flujo XCALLY real durante experimentos de persistencia.
+No se permite acceso directo a AD/TIVIT, correo real ni modificación del flujo XCALLY real fuera de una integración autorizada.
 
 ## Criterios de aceptación
 
@@ -227,4 +227,4 @@ Los futuros goldens deben cubrir, sin fijar todavía un schema de runtime:
 
 Los gaps experimentales activos se mantienen exclusivamente en [docs/gaps.md](../gaps.md). Antes de implementar una parte productiva, sólo bloquea el gap que sea necesario para esa parte concreta.
 
-SendMail está Deferred y no bloquea el experimento aislado de persistencia ni la primera integración AD/TIVIT. Un gap necesario para ejecutar side effects reales debe provocar STOP & REPORT hasta resolverse con evidencia.
+SendMail está Deferred y no bloquea el baseline de voz XCALLY aislado ni la integración AD/TIVIT posterior. Un gap necesario para ejecutar side effects reales debe provocar STOP & REPORT hasta resolverse con evidencia.

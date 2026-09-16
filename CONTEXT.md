@@ -53,7 +53,7 @@ Servicios habilitados y materializados en DEV:
 - CU013 no integra tickets ITSM; el registro en herramientas de gestión está fuera del límite técnico del backend.
 - La validación de identidad comienza con documento y fecha de nacimiento por DTMF.
 - Los valores DTMF crudos quedan fuera del LLM y de los registros, y se minimizan en persistencia.
-- SendMail está Deferred. La secuencia aceptada es: experimento de persistencia → integración AD/TIVIT → depuración guiada por logs y pruebas con callers → SendMail. CU013 sólo recibirá el estado del envío.
+- SendMail está Deferred. La secuencia aceptada es: baseline de voz XCALLY → integración AD/TIVIT → depuración guiada por logs y pruebas con callers → SendMail. CU013 sólo recibirá el estado del envío.
 - [ADR-0009](docs/decisions/0009-use-thin-firestore-session-repository.md) acepta Thin Firestore Session Repository: cargar un `SessionRecord` semántico, construir un `GraphState` efímero, ejecutar LangGraph sin persistent checkpointer, consolidar y guardar antes del HTTP response.
 - La Opción A resultó viable experimentalmente, pero fue descartada para el voice path productivo por latencia, amplificación de escrituras, complejidad de persistencia/retención y acoplamiento a LangGraph.
 - El security floor productivo está resuelto en `langgraph>=1.0.10` y `langgraph-checkpoint>=4.1.1`; el lock exacto está fijado en [requirements.lock](requirements.lock) con `langgraph==1.2.11`, `langgraph-checkpoint==4.2.0` y `google-cloud-firestore==2.30.0`.
@@ -176,7 +176,7 @@ SendMail permanece Deferred y fuera del alcance inmediato. Los valores predeterm
 
 | Componente | Estado |
 |---|---|
-| Thin Session | validated |
+| Thin Session Repository | accepted + implemented |
 | Boundary HTTP/XCALLY | implemented, PROVISIONAL |
 | Gemini baseline | integrated |
 | Cloud Run DEV | implemented; estado de reposo `min=0` |
