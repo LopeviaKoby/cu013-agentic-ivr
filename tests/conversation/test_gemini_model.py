@@ -1,0 +1,259 @@
+"""Gemini adapter deterministic tests: config, parsing and error mapping.
+
+No Vertex AI, network or credentials are involved: the genai client is a
+recording double and every value is synthetic.
+"""
+
+import pytest
+from google.genai.errors import APIError
+
+from app.conversation.errors import (
+    InvalidModelOutputError,
+    ModelTimeoutError,
+    ModelUnavailableError,
+)
+from app.conversation.gemini import GeminiBaseline, GeminiTurnModel, parse_decision
+from app.session.metrics import RecordingTurnMetrics
+from app.session.record import Action, OperationStatus, PendingOperation
+from app.session.turns import Route
+
+VALID_DECISION_JSON = '{"message": "hola", "route": "CONTINUE", "action_requested": null}'
+
+
+class FakeUsage:
+    def __init__(self) -> None:
+        self.prompt_token_count = 12
+        self.candidates_token_count = 7
+        self.total_token_count = 19
+
+
+class FakeResponse:
+    def __init__(self, text: str | None, usage: object | None = None) -> None:
+        self._text = text
+        self.usage_metadata = usage
+
+    @property
+    def text(self) -> str:
+        if self._text is None:
+            raise ValueError("model produced no text")
+        return self._text
+
+
+class FakeModels:
+    def __init__(self, owner: "FakeGenaiClient") -> None:
+        self._owner = owner
+
+    async def generate_content(self, *, model: str, contents, config):
+        self._owner.calls.append((model, contents, config))
+        if self._owner.error is not None:
+            raise self._owner.error
+        return self._owner.response
+
+
+class FakeAio:
+    def __init__(self, owner: "FakeGenaiClient") -> None:
+        self.models = FakeModels(owner)
+
+
+class FakeGenaiClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, object]] = []
+        self.response = FakeResponse(VALID_DECISION_JSON)
+        self.error: Exception | None = None
+        self.aio = FakeAio(self)
+
+
+class ConnectError(Exception):
+    """Stands in for httpx/httpx2 ConnectError by type name."""
+
+
+def make_baseline(**overrides: object) -> GeminiBaseline:
+    values: dict[str, object] = {
+        "project": "synthetic-project",
+        "location": "synthetic-location",
+        "model": "synthetic-model",
+        "api_version": "v1",
+        "thinking_budget": 0,
+        "timeout_ms": 15000,
+        "attempts": 1,
+    }
+    values.update(overrides)
+    return GeminiBaseline(**values)
+
+
+def make_model(
+    client: FakeGenaiClient, *, metrics: RecordingTurnMetrics | None = None
+) -> GeminiTurnModel:
+    return GeminiTurnModel(client, make_baseline(), metrics=metrics)  # type: ignore[arg-type]
+
+
+def test_parse_decision_accepts_the_typed_contract() -> None:
+    decision = parse_decision(VALID_DECISION_JSON)
+    assert decision.message == "hola"
+    assert decision.route is Route.CONTINUE
+    assert decision.action_requested is None
+
+
+def test_parse_decision_accepts_an_action_suggestion() -> None:
+    decision = parse_decision(
+        '{"message": "ok", "route": "CONTINUE", "action_requested": "RESET_PASSWORD"}'
+    )
+    assert decision.action_requested is Action.RESET_PASSWORD
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "not json at all",
+        '{"message": "hola"}',
+        '{"message": "hola", "route": "UNKNOWN"}',
+        '{"message": "", "route": "CONTINUE"}',
+        '{"message": "hola", "route": "CONTINUE", "extra": 1}',
+    ],
+)
+def test_parse_decision_rejects_invalid_output(text: str) -> None:
+    with pytest.raises(InvalidModelOutputError):
+        parse_decision(text)
+
+
+async def test_decide_calls_generate_content_once_with_the_baseline_config() -> None:
+    client = FakeGenaiClient()
+    model = make_model(client)
+    decision = await model.decide(
+        transcript="synthetic transcript 0000",
+        identity_validated=False,
+        requested_action=None,
+        pending_operation=None,
+    )
+    assert decision.message == "hola"
+    assert len(client.calls) == 1
+    model_name, contents, config = client.calls[0]
+    assert model_name == "synthetic-model"
+    assert "synthetic transcript 0000" in contents
+    assert "identidad_validada: no" in contents
+    assert "acción_solicitada: ninguna" in contents
+    assert "operación_pendiente: ninguna" in contents
+    assert config.thinking_config.thinking_budget == 0
+    assert config.response_mime_type == "application/json"
+    assert config.response_schema is not None
+    assert config.http_options.timeout == 15000
+    assert config.http_options.retry_options.attempts == 1
+
+
+async def test_contents_carry_only_the_semantic_projection() -> None:
+    client = FakeGenaiClient()
+    model = make_model(client)
+    await model.decide(
+        transcript="synthetic transcript 0000",
+        identity_validated=True,
+        requested_action=Action.UNLOCK_ACCOUNT,
+        pending_operation=PendingOperation(
+            operation_id="operation-1",
+            action=Action.UNLOCK_ACCOUNT,
+            status=OperationStatus.PENDING,
+        ),
+    )
+    _, contents, _ = client.calls[0]
+    assert "identidad_validada: sí" in contents
+    assert "acción_solicitada: UNLOCK_ACCOUNT" in contents
+    assert "operación_pendiente: UNLOCK_ACCOUNT (pending)" in contents
+
+
+async def test_api_error_maps_to_model_unavailable() -> None:
+    client = FakeGenaiClient()
+    client.error = APIError(code=503, response_json={"error": {"message": "outage"}})
+    model = make_model(client)
+    with pytest.raises(ModelUnavailableError):
+        await model.decide(
+            transcript="synthetic transcript 0000",
+            identity_validated=False,
+            requested_action=None,
+            pending_operation=None,
+        )
+
+
+async def test_timeout_maps_to_model_timeout() -> None:
+    client = FakeGenaiClient()
+    client.error = TimeoutError()
+    model = make_model(client)
+    with pytest.raises(ModelTimeoutError):
+        await model.decide(
+            transcript="synthetic transcript 0000",
+            identity_validated=False,
+            requested_action=None,
+            pending_operation=None,
+        )
+
+
+async def test_connect_error_maps_to_model_unavailable() -> None:
+    client = FakeGenaiClient()
+    client.error = ConnectError("synthetic connect failure")
+    model = make_model(client)
+    with pytest.raises(ModelUnavailableError):
+        await model.decide(
+            transcript="synthetic transcript 0000",
+            identity_validated=False,
+            requested_action=None,
+            pending_operation=None,
+        )
+
+
+async def test_unknown_errors_propagate_unchanged() -> None:
+    client = FakeGenaiClient()
+    client.error = RuntimeError("synthetic unexpected failure")
+    model = make_model(client)
+    with pytest.raises(RuntimeError, match="synthetic unexpected failure"):
+        await model.decide(
+            transcript="synthetic transcript 0000",
+            identity_validated=False,
+            requested_action=None,
+            pending_operation=None,
+        )
+
+
+async def test_response_without_text_is_invalid_output() -> None:
+    client = FakeGenaiClient()
+    client.response = FakeResponse(None)
+    model = make_model(client)
+    with pytest.raises(InvalidModelOutputError):
+        await model.decide(
+            transcript="synthetic transcript 0000",
+            identity_validated=False,
+            requested_action=None,
+            pending_operation=None,
+        )
+
+
+async def test_usage_is_recorded_as_token_counts_only() -> None:
+    client = FakeGenaiClient()
+    client.response = FakeResponse(VALID_DECISION_JSON, usage=FakeUsage())
+    metrics = RecordingTurnMetrics()
+    model = make_model(client, metrics=metrics)
+    await model.decide(
+        transcript="synthetic transcript 0000",
+        identity_validated=False,
+        requested_action=None,
+        pending_operation=None,
+    )
+    assert dict(metrics.counters) == {
+        "prompt_tokens": 12,
+        "completion_tokens": 7,
+        "total_tokens": 19,
+    }
+    segment_names = [name for name, _ in metrics.segments]
+    assert segment_names == ["model"]
+
+
+async def test_model_segment_is_recorded_even_on_failure() -> None:
+    client = FakeGenaiClient()
+    client.error = TimeoutError()
+    metrics = RecordingTurnMetrics()
+    model = make_model(client, metrics=metrics)
+    with pytest.raises(ModelTimeoutError):
+        await model.decide(
+            transcript="synthetic transcript 0000",
+            identity_validated=False,
+            requested_action=None,
+            pending_operation=None,
+        )
+    assert [name for name, _ in metrics.segments] == ["model"]

@@ -7,9 +7,18 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from app.conversation.errors import ModelTimeoutError
+from app.session.metrics import RecordingTurnMetrics
 from app.session.record import Action, OperationStatus, SessionRecord
 from app.session.repository import SessionPersistenceError
-from app.session.turns import TurnInput, build_turn_graph, initial_graph_state
+from app.session.service import TurnService
+from app.session.turns import (
+    ModelTurnDecision,
+    Route,
+    TurnInput,
+    build_turn_graph,
+    initial_graph_state,
+)
 
 DOCUMENT_WHITELIST = {
     "schema_version",
@@ -23,7 +32,13 @@ DOCUMENT_WHITELIST = {
     "updated_at",
 }
 
-TRANSIENT_STATE_KEYS = {"identity_ok", "action_requested", "operation_result"}
+TRANSIENT_STATE_KEYS = {
+    "identity_ok",
+    "action_requested",
+    "operation_result",
+    "transcript",
+    "model_decision",
+}
 
 GRAPH_OR_RUNTIME_KEYS = {
     "messages",
@@ -38,7 +53,8 @@ PII_SENTINELS = ("SYNTHETIC-DOC-0000", "1900-01-01-SYNTHETIC", "SYNTHETIC-PASSWO
 
 
 async def test_first_turn_creates_a_valid_semantic_session(service, store) -> None:
-    record = await service.handle_turn("conversation-new", TurnInput())
+    result = await service.handle_turn("conversation-new", TurnInput())
+    record = result.record
     assert record.conversation_id == "conversation-new"
     assert record.schema_version == 1
     assert record.turn_count == 1
@@ -46,6 +62,7 @@ async def test_first_turn_creates_a_valid_semantic_session(service, store) -> No
     assert record.identity_validated is False
     assert record.created_at <= record.updated_at
     assert set(store.documents["conversation-new"]) == DOCUMENT_WHITELIST
+    assert result.decision is None
 
 
 async def test_normal_turn_is_exactly_one_read_and_one_write(service, store) -> None:
@@ -61,11 +78,11 @@ async def test_multi_turn_continuity(service, store) -> None:
     second = await service.handle_turn(
         "conversation-1", TurnInput(action_requested=Action.RESET_PASSWORD)
     )
-    assert first.turn_count == 1
-    assert second.turn_count == 2
-    assert second.revision == 2
-    assert second.identity_validated is True
-    assert second.requested_action is Action.RESET_PASSWORD
+    assert first.record.turn_count == 1
+    assert second.record.turn_count == 2
+    assert second.record.revision == 2
+    assert second.record.identity_validated is True
+    assert second.record.requested_action is Action.RESET_PASSWORD
     stored = store.documents["conversation-1"]
     assert stored["turn_count"] == 2
     assert stored["revision"] == 2
@@ -76,8 +93,9 @@ async def test_pending_operation_is_durable_across_turns(service, store) -> None
     created = await service.handle_turn(
         "conversation-1", TurnInput(identity_ok=True, action_requested=Action.UNLOCK_ACCOUNT)
     )
-    assert created.pending_operation is not None
-    operation_id = created.pending_operation.operation_id
+    record = created.record
+    assert record.pending_operation is not None
+    operation_id = record.pending_operation.operation_id
     assert store.documents["conversation-1"]["pending_operation"] == {
         "operation_id": operation_id,
         "action": "UNLOCK_ACCOUNT",
@@ -87,16 +105,16 @@ async def test_pending_operation_is_durable_across_turns(service, store) -> None
     repeated = await service.handle_turn(
         "conversation-1", TurnInput(action_requested=Action.UNLOCK_ACCOUNT)
     )
-    assert repeated.pending_operation is not None
-    assert repeated.pending_operation.operation_id == operation_id
-    assert repeated.pending_operation.status is OperationStatus.PENDING
+    assert repeated.record.pending_operation is not None
+    assert repeated.record.pending_operation.operation_id == operation_id
+    assert repeated.record.pending_operation.status is OperationStatus.PENDING
 
     resolved = await service.handle_turn(
         "conversation-1", TurnInput(operation_result=OperationStatus.CONFIRMED)
     )
-    assert resolved.pending_operation is not None
-    assert resolved.pending_operation.operation_id == operation_id
-    assert resolved.pending_operation.status is OperationStatus.CONFIRMED
+    assert resolved.record.pending_operation is not None
+    assert resolved.record.pending_operation.operation_id == operation_id
+    assert resolved.record.pending_operation.status is OperationStatus.CONFIRMED
     assert store.documents["conversation-1"]["pending_operation"] == {
         "operation_id": operation_id,
         "action": "UNLOCK_ACCOUNT",
@@ -117,8 +135,8 @@ async def test_crash_before_save_keeps_the_last_durable_state(service, store) ->
 
     store.fail_writes = False
     resumed = await service.handle_turn("conversation-1", TurnInput())
-    assert resumed.turn_count == 2
-    assert resumed.pending_operation is None
+    assert resumed.record.turn_count == 2
+    assert resumed.record.pending_operation is None
     assert store.documents["conversation-1"]["turn_count"] == 2
 
 
@@ -130,8 +148,8 @@ async def test_save_completes_before_control_returns(service, store) -> None:
     assert "conversation-1" not in store.documents
 
     store.write_gate.set()
-    record = await task
-    assert record.revision == 1
+    result = await task
+    assert result.record.revision == 1
     assert "conversation-1" in store.documents
 
 
@@ -169,3 +187,76 @@ async def test_full_turn_persists_no_pii_sentinels(service, store) -> None:
     rendered = repr(store.documents["conversation-1"])
     for sentinel in PII_SENTINELS:
         assert sentinel not in rendered
+
+
+async def test_transcript_turn_runs_one_model_call_and_one_load_one_save(
+    service_with_model, model, store
+) -> None:
+    result = await service_with_model.handle_turn(
+        "conversation-1", TurnInput(transcript="synthetic transcript 0000")
+    )
+    assert result.record.conversation_id == "conversation-1"
+    assert result.decision is model.decision
+    assert len(model.calls) == 1
+    assert (store.reads, store.writes) == (1, 1)
+    document = store.documents["conversation-1"]
+    assert set(document) == DOCUMENT_WHITELIST
+    assert "transcript" not in document
+    assert "message" not in document
+    assert "synthetic message" not in repr(document)
+
+
+async def test_transcript_and_model_output_never_reach_the_second_turn(
+    service_with_model, model
+) -> None:
+    await service_with_model.handle_turn(
+        "conversation-1", TurnInput(transcript="synthetic transcript 0000")
+    )
+    await service_with_model.handle_turn(
+        "conversation-1", TurnInput(transcript="synthetic transcript 0001")
+    )
+    assert len(model.calls) == 2
+    assert model.calls[1]["transcript"] == "synthetic transcript 0001"
+    assert model.calls[1]["identity_validated"] is False
+
+
+async def test_model_failure_aborts_before_the_save(service_with_model, model, store) -> None:
+    await service_with_model.handle_turn(
+        "conversation-1", TurnInput(transcript="synthetic transcript 0000")
+    )
+    durable_before = copy.deepcopy(store.documents["conversation-1"])
+
+    model.error = ModelTimeoutError("synthetic model timeout")
+    with pytest.raises(ModelTimeoutError):
+        await service_with_model.handle_turn(
+            "conversation-1", TurnInput(transcript="synthetic transcript 0001")
+        )
+    assert store.documents["conversation-1"] == durable_before
+    assert store.writes == 1
+
+
+async def test_model_inferred_action_without_identity_is_never_durable(
+    service_with_model, model, store
+) -> None:
+    model.decision = ModelTurnDecision(
+        message="synthetic message",
+        route=Route.COLLECT_IDENTITY,
+        action_requested=Action.UNLOCK_ACCOUNT,
+    )
+    result = await service_with_model.handle_turn(
+        "conversation-1", TurnInput(transcript="synthetic transcript 0000")
+    )
+    assert result.decision is not None
+    assert result.decision.action_requested is Action.UNLOCK_ACCOUNT
+    assert result.record.requested_action is None
+    assert result.record.pending_operation is None
+    assert store.documents["conversation-1"]["requested_action"] is None
+
+
+async def test_segments_are_recorded_through_the_metrics_seam(repository) -> None:
+    metrics = RecordingTurnMetrics()
+    service = TurnService(repository, build_turn_graph(), metrics=metrics)
+    await service.handle_turn("conversation-1", TurnInput())
+    names = [name for name, _ in metrics.segments]
+    assert names == ["session_load", "graph", "session_save"]
+    assert all(duration >= 0 for _, duration in metrics.segments)

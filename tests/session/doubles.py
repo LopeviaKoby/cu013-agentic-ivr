@@ -1,7 +1,9 @@
-"""Deterministic in-memory double for the narrow session document seam."""
+"""Deterministic in-memory doubles for the session and boundary seams."""
 
 import asyncio
 from collections.abc import Mapping
+
+from app.session.turns import ModelTurnDecision, Route
 
 
 class InMemorySessionDocumentStore:
@@ -30,3 +32,32 @@ class InMemorySessionDocumentStore:
         if self.fail_writes:
             raise RuntimeError("injected session write failure")
         self.documents[conversation_id] = dict(document)
+
+
+class FakeTurnModel:
+    """Deterministic TurnModel double; records calls, returns a canned decision."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.decision = ModelTurnDecision(message="synthetic message", route=Route.CONTINUE)
+        self.error: Exception | None = None
+
+    async def decide(
+        self,
+        *,
+        transcript: str,
+        identity_validated: bool,
+        requested_action,
+        pending_operation,
+    ) -> ModelTurnDecision:
+        self.calls.append(
+            {
+                "transcript": transcript,
+                "identity_validated": identity_validated,
+                "requested_action": requested_action,
+                "pending_operation": pending_operation,
+            }
+        )
+        if self.error is not None:
+            raise self.error
+        return self.decision

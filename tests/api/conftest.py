@@ -8,11 +8,12 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.app import create_app
 from app.api.security import API_KEY_ENV_VAR
+from app.conversation.engine import SessionConversationEngine
 from app.session.repository import SessionRepository
 from app.session.service import TurnService
 from app.session.turns import build_turn_graph
-from tests.api.doubles import SYNTHETIC_API_KEY, RecordingConversationEngine
-from tests.session.doubles import InMemorySessionDocumentStore
+from tests.api.doubles import SYNTHETIC_API_KEY
+from tests.session.doubles import FakeTurnModel, InMemorySessionDocumentStore
 
 BASE_URL = "http://testserver"
 
@@ -23,13 +24,18 @@ def store() -> InMemorySessionDocumentStore:
 
 
 @pytest.fixture
-def service(store: InMemorySessionDocumentStore) -> TurnService:
-    return TurnService(SessionRepository(store), build_turn_graph())
+def model() -> FakeTurnModel:
+    return FakeTurnModel()
 
 
 @pytest.fixture
-def engine(service: TurnService) -> RecordingConversationEngine:
-    return RecordingConversationEngine(service=service)
+def service(store: InMemorySessionDocumentStore, model: FakeTurnModel) -> TurnService:
+    return TurnService(SessionRepository(store), build_turn_graph(model=model))
+
+
+@pytest.fixture
+def engine(service: TurnService) -> SessionConversationEngine:
+    return SessionConversationEngine(service)
 
 
 @pytest.fixture
@@ -39,7 +45,7 @@ def api_key(monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 @pytest.fixture
-def app(engine: RecordingConversationEngine) -> FastAPI:
+def app(engine: SessionConversationEngine) -> FastAPI:
     return create_app(engine=engine)
 
 

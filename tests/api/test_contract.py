@@ -9,7 +9,7 @@ from app.api.contracts import (
     TranscriptTurn,
     TurnResponse,
 )
-from app.conversation.engine import Route, TurnOutcome
+from app.session.turns import ModelTurnDecision, Route
 from tests.api.doubles import SYNTHETIC_DTMF, SYNTHETIC_TRANSCRIPT, turns_url
 
 
@@ -52,8 +52,8 @@ def test_response_model_rejects_a_route_outside_the_enum() -> None:
 
 
 @pytest.mark.parametrize("route", list(Route))
-async def test_every_emitted_route_stays_inside_the_closed_enum(client, engine, route) -> None:
-    engine.outcome = TurnOutcome(message="synthetic message", route=route)
+async def test_every_emitted_route_stays_inside_the_closed_enum(client, model, route) -> None:
+    model.decision = ModelTurnDecision(message="synthetic message", route=route)
     response = await client.post(
         turns_url("conversation-1"), json={"transcript": SYNTHETIC_TRANSCRIPT}
     )

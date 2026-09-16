@@ -19,7 +19,7 @@ DEPENDENCY_ERROR = {
 
 
 async def test_identity_data_terminates_safely_without_touching_durable_state(
-    client, store, engine, caplog
+    client, store, model, caplog
 ) -> None:
     with caplog.at_level(logging.DEBUG):
         response = await client.post(turns_url("conversation-1"), json=IDENTITY_DATA)
@@ -30,7 +30,12 @@ async def test_identity_data_terminates_safely_without_touching_durable_state(
     assert SYNTHETIC_DTMF not in caplog.text
     assert store.documents == {}
     assert (store.reads, store.writes) == (0, 0)
-    assert engine.turns == []
+    assert model.calls == []
+
+
+async def test_identity_data_never_reaches_the_model_adapter(client, model) -> None:
+    await client.post(turns_url("conversation-1"), json=IDENTITY_DATA)
+    assert model.calls == []
 
 
 async def test_receiving_dtmf_never_marks_a_validated_identity(client, store) -> None:

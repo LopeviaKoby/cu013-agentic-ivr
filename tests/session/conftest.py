@@ -5,7 +5,7 @@ import pytest
 from app.session.repository import SessionRepository
 from app.session.service import TurnService
 from app.session.turns import build_turn_graph
-from tests.session.doubles import InMemorySessionDocumentStore
+from tests.session.doubles import FakeTurnModel, InMemorySessionDocumentStore
 
 
 @pytest.fixture
@@ -21,3 +21,13 @@ def repository(store: InMemorySessionDocumentStore) -> SessionRepository:
 @pytest.fixture
 def service(repository: SessionRepository) -> TurnService:
     return TurnService(repository, build_turn_graph())
+
+
+@pytest.fixture
+def model() -> FakeTurnModel:
+    return FakeTurnModel()
+
+
+@pytest.fixture
+def service_with_model(repository: SessionRepository, model: FakeTurnModel) -> TurnService:
+    return TurnService(repository, build_turn_graph(model=model))
