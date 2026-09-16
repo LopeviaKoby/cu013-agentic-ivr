@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Add the versioned system prompt module `app/conversation/prompts.py` with the
+  prior-request policy: when the caller prepends an explicit question or
+  informational request to an action, the assistant answers it briefly with
+  `CONTINUE` and does not start identity collection.
+- Add deterministic policy tests, a boundary regression that keeps a pre-auth
+  action intent transient, the manual real-model probe
+  `evals/conversation_policy_eval.py` and Experiment 0005 diagnosing the real
+  XCALLY voice turn.
 - Minimal productive Thin Session Repository core in `app/session`: semantic
   whitelisted `SessionRecord`, durable `pending_operation`, ephemeral
   `GraphState`, a deterministic single-node LangGraph turn without persistent
@@ -54,6 +62,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Move the system prompt out of `GeminiTurnModel` into the dedicated prompt
+  module; the Gemini adapter keeps only baseline config, transport, parsing and
+  error mapping, with no model, schema, thinking-budget or call-count change.
 - Replace the transitional `packages = []` packaging with explicit `app`
   package discovery; editable DEV install verified.
 - Raise dev tooling to advisory-free floors: `pytest>=9.0.3` and

@@ -2,7 +2,7 @@
 
 ## Propósito y alcance actual
 
-CU013 reconstruye el backend conversacional de Mesa de Ayuda para XCALLY Motion y Cally Square. El repositorio contiene autoridad documental, estándares de ingeniería, configuración no sensible, herramientas operativas reproducibles para DEV y experimentación, y el núcleo productivo mínimo del Thin Session Repository integrado y committeado en `app/session`. El worktree materializa en `app/api` un baseline DEV provisional del boundary HTTP para Cally Square, en `app/conversation` el motor real Gemini 2.5 Flash-Lite detrás del seam, en `evals/` el benchmark de latencia y en `ops/gcp/` el tooling de Cloud Run. El servicio Cloud Run DEV ya existe desplegado con `min=0` en reposo; todavía no existe integración XCALLY/Cally Square real ni AD/TIVIT.
+CU013 reconstruye el backend conversacional de Mesa de Ayuda para XCALLY Motion y Cally Square. El repositorio contiene autoridad documental, estándares de ingeniería, configuración no sensible, herramientas operativas reproducibles para DEV y experimentación, y el núcleo productivo mínimo del Thin Session Repository integrado y committeado en `app/session`. El worktree materializa en `app/api` un baseline DEV provisional del boundary HTTP para Cally Square, en `app/conversation` el motor real Gemini 2.5 Flash-Lite detrás del seam con su prompt versionado en `app/conversation/prompts.py`, en `evals/` el benchmark de latencia y el probe de política conversacional, y en `ops/gcp/` el tooling de Cloud Run. El servicio Cloud Run DEV ya existe desplegado; todavía no existe integración XCALLY/Cally Square real ni AD/TIVIT. El primer turno de voz XCALLY real fue diagnosticado read-only ([Experimento 0005](docs/experiments/0005-xcally-voice-turn-diagnosis.md)) y su corrección acotada de política conversacional está implementada, probada y committeada, pendiente de deploy y revalidación de voz.
 
 El primer corte de acciones de cuenta es `RESET_PASSWORD` + `UNLOCK_ACCOUNT`, sin prioridad obligatoria entre ambas.
 
@@ -60,7 +60,7 @@ Servicios habilitados y materializados en DEV:
 - El núcleo productivo mínimo del Thin Session Repository está integrado y committeado en `app/session`: contrato durable cerrado, grafo LangGraph determinista sin persistent checkpointer y 1 load + 1 save por turno normal.
 - El boundary HTTP XCALLY↔CU013 está implementado en el worktree como baseline DEV `PROVISIONAL` y tipado en [Boundary HTTP XCALLY↔CU013](docs/specs/xcally-boundary.md): `POST /api/v1/conversations/{conversation_id}/turns`, variantes transcript ASR e `IDENTITY_DATA`, autenticación `X-API-Key` sólo desde entorno, `turn_id` único por request y errores con taxonomía segura. No es el contrato integrado final.
 - El transcript es efímero y no se persiste; el DTMF crudo queda contenido en el boundary (no se persiste, registra, devuelve ni alcanza al seam) y nunca marca `identity_validated=True`.
-- El primer motor real es `GeminiTurnModel` (`app/conversation`): Vertex AI sobre ADC, `thinking_budget=0`, output estructurado tipado `ModelTurnDecision` (`message`, `route`, `action_requested`), una llamada y un attempt por turno normal, sin streaming ni tools. El grafo del turno es `START → run_model → advance_turn → END`; el modelo sugiere, el runtime decide.
+- El primer motor real es `GeminiTurnModel` (`app/conversation`): Vertex AI sobre ADC, `thinking_budget=0`, output estructurado tipado `ModelTurnDecision` (`message`, `route`, `action_requested`), una llamada y un attempt por turno normal, sin streaming ni tools. El prompt del sistema vive versionado en `app/conversation/prompts.py` (sin framework de prompts ni config dinámica) e incluye la política de petición previa: una pregunta explícita antepuesta a una acción se responde con `CONTINUE` antes de iniciar `COLLECT_IDENTITY`. El grafo del turno es `START → run_model → advance_turn → END`; el modelo sugiere, el runtime decide, y ningún nodo runtime reescribe `route`.
 - La validación positiva de identidad sigue sin integración; `IDENTITY_DATA` termina de forma segura con `dependency_unavailable`.
 - El [Experimento 0003](docs/experiments/0003-gemini-baseline-latency.md) midió el camino real desde host DEV (30 requests secuenciales, 0 errores): handler p50 1 281 / p95 1 922 ms; load p50 219 / p95 421 ms; modelo p50 782 / p95 1 062 ms (máx 4 094 ms); save p50 234 / p95 266 ms. Es un baseline DEV, no un SLO: no incluye ASR/TTS/red XCALLY ni Cloud Run in-region.
 - El [Experimento 0004](docs/experiments/0004-cloud-run-latency.md) midió el baseline in-region en Cloud Run `us-east1` con una instancia warm (revisión `00006-hn4`, digest `sha256:6ca03e…`): 30/30 requests medidas con 0 errores; handler p50 657 / p95 920 ms; load p95 36 ms; modelo p50 595 ms; save p95 102 ms; round-trip HTTPS del cliente p50 878 / p95 1 145 ms. `min=0` restaurado y verificado read-only.
@@ -81,6 +81,7 @@ Servicios habilitados y materializados en DEV:
 - [Experimento Thin Session Repository](docs/experiments/0002-firestore-thin-session-repository.md)
 - [Experimento Gemini baseline de latencia](docs/experiments/0003-gemini-baseline-latency.md)
 - [Experimento Cloud Run baseline](docs/experiments/0004-cloud-run-latency.md)
+- [Experimento diagnóstico de voz XCALLY](docs/experiments/0005-xcally-voice-turn-diagnosis.md)
 - [Runbook Cloud Run DEV benchmark](docs/runbooks/cloud-run-dev-benchmark.md)
 - [Núcleo Thin Session](app/session/)
 - [Benchmark de latencia DEV](evals/backend_latency.py)
@@ -108,6 +109,8 @@ Implementado en el repositorio:
 - suite determinista de 34 tests con doble en memoria y fake del cliente async; sin Gemini, XCALLY, AD/TIVIT ni credenciales;
 - baseline DEV provisional del boundary HTTP XCALLY↔CU013 implementado en el worktree bajo `app/api`, con contrato Pydantic 2, autenticación `X-API-Key` sólo desde entorno, `turn_id` por request, errores con taxonomía segura y OpenAPI coherente con las respuestas reales;
 - seam `ConversationEngine` en `app/conversation` como único punto de extensión para el motor Gemini, sin NLU determinista ni respuestas semánticas falsas;
+- política conversacional de petición previa en `app/conversation/prompts.py`: el prompt salió de `gemini.py`, que queda centrado en provider/config/transporte/parsing; la regla responde la pregunta antepuesta con `CONTINUE` y sólo después procede a `COLLECT_IDENTITY`, sin keywords ni regex y sin cambiar modelo, schema ni número de llamadas;
+- cobertura determinista de la política: el prompt documenta las rutas cerradas y los campos de la decisión, y la política precede a la regla de identidad; el boundary conserva la ruta `CONTINUE` del modelo y demuestra que una intención de acción previa a identidad permanece transitoria (blocker `CNV-001`);
 - motor real `GeminiTurnModel` detrás del seam: Vertex AI con ADC, baseline reemplazable en un solo objeto (`project`, `location`, `model`, `api_version`, `thinking_budget=0`, `timeout_ms`, `attempts=1`), output estructurado tipado y errores del modelo traducidos a la taxonomía segura (`dependency_timeout` 504, `dependency_unavailable` 503, salida inválida → `internal` 500);
 - seam `TurnMetrics` PII-safe (segmentos con nombres fijos y contadores sólo de tokens) y composition root DEV `app/main.py` con clientes async de Vertex y Firestore reutilizados y cerrados en el lifespan;
 - benchmark real `evals/backend_latency.py`: 5 warmups + 30 requests secuenciales medidos a través del boundary FastAPI contra Firestore y Vertex reales, con segmentación por etapa y conteo de tokens, sin registrar transcript, DTMF ni texto generado;
@@ -146,10 +149,13 @@ Validado localmente el 16-09-2026:
 - bloqueo de auth registrado y resuelto por el propietario: ADC `cu013-spike-firestore` sin `aiplatform.endpoints.predict` y falta de `iam.serviceAccounts.getAccessToken` sobre `cu013-runtime-dev`; sin cambios de IAM realizados por el agente;
 - benchmark in-region completado (Experimento 0004): 30/30 requests por HTTPS real con 0 errores/timeouts (p50 handler in-region ≈657 ms; p50 cliente ≈878 ms) y tag == HEAD, digest y secreto (`cu013-api-key-dev:2`, sólo nombre/versión) verificados read-only;
 - ventana warm cerrada: `min=0` restaurado con el script de stop y verificado read-only; inventario de `cu013dev_sessions`: 97 documentos (33 de la corrida Cloud Run + 1 audit + 63 de las corridas locales), sin borrados, con la corrección 54→63 anotada en el Experimento 0003.
+- diagnóstico read-only del primer turno de voz XCALLY real (Experimento 0005): revisión `00008-7gz` servida == `2a37b2a`, idéntica a HEAD en `app/`; logs PII-safe correlacionados en ventana estrecha con única request; métricas OBSERVED/DERIVED/NOT AVAILABLE; `SessionRecord` read-only con `turn_count=1`, `identity_validated=False` y sin acción pendiente; origen de `COLLECT_IDENTITY` demostrado en la regla de prompt y ausencia de NLU por keywords/regex;
+- corrección de política conversacional con gates: 112 tests deterministas, Ruff 0.16.7 check/format y MyPy 1.20.2 strict sobre `app` (18 archivos); probe real focalizado (fuera de CI), 5/5 `CONTINUE` en el caso compuesto, control directo hacia `COLLECT_IDENTITY` y pregunta previa aislada con `CONTINUE`.
 
 Pendiente:
 
 - cerrar FS-002 con el reparto del presupuesto completo de voz (XCALLY/ASR/TTS); el rango in-region indicado es de centenas bajas de milisegundos por llamada;
+- revalidar en voz DEV el cambio de prompt ya committeado (requiere autorización del owner para deploy; la revisión desplegada todavía contiene el prompt anterior);
 - integrar la validación positiva de identidad (ID-001);
 - evaluar Gemini 2.5 Flash-Lite y una alternativa antes del 16-10-2026;
 - validar los contratos externos aún abiertos antes de acciones de cuenta productivas;
@@ -167,6 +173,7 @@ El benchmark real de latencia del 16-09-2026 fue autorizado por el propietario y
 - Correlación, idempotencia, polling, reintentos y resultados tardíos (XC-002 a XC-004).
 - Esquema completo de resultados XCALLY/Orchestrator/TIVIT/AD (XC-005) y mapeo exacto de estados externos a respuesta o escalamiento (XC-006).
 - Resultado positivo de validación de identidad sin integración AD/TIVIT (ID-001).
+- CNV-001 abierto: la intención de acción expresada antes de validar identidad no es representable en el contrato durable actual (`requested_action` sólo se durabiliza tras identidad y el transcript es efímero); el Experimento 0005 confirma el límite y la decisión de diseño vuelve al owner, sin simularla ni cambiar `SessionRecord`.
 - FS-002 abierto con evidencia local e in-region: load p95 421 ms (local) / 36 ms (Cloud Run) y save p95 266 ms (local) / 102 ms (Cloud Run); el rango indicado es de centenas bajas de milisegundos por llamada, pero falta el reparto del presupuesto completo de voz (XCALLY/ASR/TTS) para fijar el valor.
 - La validación de TTL requiere permisos no concedidos a la cuenta de servicio del experimento.
 
@@ -181,7 +188,9 @@ SendMail permanece Deferred y fuera del alcance inmediato. Los valores predeterm
 | Gemini baseline | integrated |
 | Cloud Run DEV | implemented; estado de reposo `min=0` |
 | Experimento 0004 | completed |
+| Experimento 0005 | completed (corrección de prompt committeada, pendiente deploy y revalidación de voz) |
 | FS-002 | open |
+| CNV-001 | open (decisión del owner) |
 | Próximo gate | integración de voz XCALLY real sin AD/TIVIT |
 | AD/TIVIT | después del baseline de voz XCALLY aislado |
 
@@ -216,6 +225,7 @@ No añadir a esta instantánea trabajo especulativo o no aceptado.
 
 ## Hitos anteriores
 
+- Primer turno de voz XCALLY real diagnosticado read-only (Experimento 0005): revisión servida confirmada contra `app/`, logs correlacionados en ventana estrecha, `COLLECT_IDENTITY` originado en la regla de prompt, corrección acotada implementada y probada contra el modelo real, blocker `CNV-001` registrado.
 - Cloud Run DEV warm baseline medido (Experimento 0004): servicio desplegado con tag == SHA limpio, 30/30 requests por HTTPS real, in-region ≈mitad de la latencia local, `min=0` restaurado y verificado.
 - Gemini 2.5 Flash-Lite integrado como primer motor real dentro del turno (1 llamada, 1 load, 1 save) con output estructurado tipado y baseline local del camino completo (Experimento 0003, p50 handler 1 281 ms).
 - Thin Session Repository (ADR-0009) y baseline DEV provisional del boundary HTTP XCALLY↔CU013 aceptados e implementados, con contención de DTMF y autenticación `X-API-Key`.

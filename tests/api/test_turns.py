@@ -22,6 +22,8 @@ from tests.api.doubles import (
 
 REQUEST_ID_HEADERS = {"X-Request-ID": "conversation-1"}
 
+PRIOR_REQUEST_TRANSCRIPT = "quiero desbloquear mi cuenta pero antes explícame qué puedes hacer"
+
 ENGINE_UNAVAILABLE_ERROR = {
     "error": {
         "code": "dependency_unavailable",
@@ -176,6 +178,29 @@ async def test_internal_engine_failure_is_a_safe_internal_error(
     assert SYNTHETIC_DTMF not in response.text
     assert SYNTHETIC_DTMF not in caplog.text
     assert store.writes == 0
+
+
+async def test_prior_request_turn_keeps_the_model_route_and_transient_intent(
+    client, model, store
+) -> None:
+    """The runtime never rewrites a CONTINUE route, and a pre-auth action intent
+    remains transient: it is not representable in the durable session contract."""
+    model.decision = ModelTurnDecision(
+        message="Puedo restablecer contraseñas y desbloquear cuentas. ¿Seguimos?",
+        route=Route.CONTINUE,
+        action_requested=Action.UNLOCK_ACCOUNT,
+    )
+    response = await client.post(
+        turns_url("conversation-1"), json={"transcript": PRIOR_REQUEST_TRANSCRIPT}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["route"] == "CONTINUE"
+    assert body["message"] == model.decision.message
+    document = store.documents["conversation-1"]
+    assert document["identity_validated"] is False
+    assert document["requested_action"] is None
+    assert document["pending_operation"] is None
 
 
 async def test_model_inferred_action_is_not_business_success(client, model, store) -> None:
