@@ -77,9 +77,9 @@ Envelope estable; nunca se serializa detalle de Pydantic/FastAPI ni se ecoan tra
 |---|---|---|
 | `validation` | 422 | Payload inválido o JSON malformado |
 | `authorization` | 401 | `X-API-Key` ausente o incorrecta |
-| `dependency_unavailable` | 503 | Motor conversacional no configurado; validación de identidad no integrada |
-| `internal` | 500 | Fallo no esperado o API key no configurada |
-| `dependency_timeout` | — | Reservado para I/O externa con deadline; todavía sin disparador |
+| `dependency_unavailable` | 503 | Motor conversacional no configurado; fallo/indisponibilidad del modelo; validación de identidad no integrada |
+| `dependency_timeout` | 504 | La llamada al modelo excedió su deadline |
+| `internal` | 500 | Fallo no esperado, salida del modelo fuera del contrato tipado o API key no configurada |
 
 El shape exacto de errores que Cally Square interpreta sigue pendiente de evidencia integrada (XC-005, XC-006).
 
@@ -94,20 +94,22 @@ El shape exacto de errores que Cally Square interpreta sigue pendiente de eviden
 ## Transcript y seam conversacional
 
 - El transcript es input efímero: se entrega al seam y no se persiste.
-- No existe NLU determinista, intención hard-coded, FSM conversacional ni motor sustituto. El único punto de extensión es `ConversationEngine` (`app/conversation`), que la próxima iteración implementará con Gemini; el runtime conserva legalidad, autorización, estado y efectos externos.
+- No existe NLU determinista, intención hard-coded, FSM conversacional ni motor sustituto. `ConversationEngine` (`app/conversation`) es el seam; su implementación real es `SessionConversationEngine` sobre el Thin Session turn, y el primer motor real es Gemini 2.5 Flash-Lite (`GeminiTurnModel`, Vertex AI, ADC): exactamente una llamada al modelo por turno normal, sin streaming ni tools, con `thinking_budget=0`, output estructurado tipado (`ModelTurnDecision`: `message`, `route`, `action_requested`) y un solo attempt sin retries ocultos.
+- El modelo conduce lenguaje y puede sugerir una acción; el runtime conserva la última palabra sobre legalidad y estado durable, y ninguna sugerencia del modelo crea un resultado empresarial.
+- El modelo recibe sólo el transcript actual y la proyección semántica mínima del `SessionRecord`; nunca DTMF, documento, fecha de nacimiento, secretos, historial arbitrario ni objetos SDK.
 - Sin motor configurado, un turno de transcript falla de forma segura con `dependency_unavailable` (503).
 
 ## Persistencia
 
-- Reutiliza el Thin Firestore Session Repository de [ADR-0009](../decisions/0009-use-thin-firestore-session-repository.md): un load, un grafo LangGraph en RAM sin persistent checkpointer y un save antes del HTTP response.
-- El motor Gemini implementará el turno completo detrás del seam; el boundary HTTP no introduce checkpointer, segunda base, schema durable nuevo ni escrituras adicionales.
+- Reutiliza el Thin Firestore Session Repository de [ADR-0009](../decisions/0009-use-thin-firestore-session-repository.md): un load, el modelo dentro del grafo LangGraph en RAM sin persistent checkpointer y un save antes del HTTP response.
+- El grafo del turno es `START → run_model → advance_turn → END`; la consolidación durable excluye transcript y decisión del modelo. El boundary HTTP no introduce checkpointer, segunda base, schema durable nuevo ni escrituras adicionales.
 
 ## Abierto
 
 - Resultado positivo de validación de identidad y su integración con AD/TIVIT (ID-001).
 - Correlación, idempotencia, polling, reintentos y resultados tardíos de XCALLY (XC-002 a XC-004).
 - Shape real de responses/errors y mapeo de estados externos (XC-005, XC-006).
-- Deadline explícito de Firestore (FS-002): el mecanismo por llamada existe (`timeout` en `AsyncDocumentReference.get/set`), pero su valor requiere la medición del camino real con modelo.
+- Deadline explícito de Firestore (FS-002): con la medición del [Experimento 0003](../experiments/0003-gemini-baseline-latency.md) (load p50 219 / p95 421 ms; save p50 234 / p95 266 ms desde host DEV) el mecanismo por llamada sigue disponible, pero el valor no se fija aún: faltan la latencia in-region de Cloud Run y el reparto del presupuesto completo de voz (ASR/TTS/XCALLY), dominado además por la cola del modelo.
 
 ## Trazabilidad
 

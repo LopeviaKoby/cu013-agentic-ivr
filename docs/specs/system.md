@@ -153,6 +153,8 @@ Reconsiderar Terraform cuando ocurra al menos uno de estos triggers:
 
 `gemini-2.5-flash-lite` con `ThinkingConfig(thinking_budget=0)` es el baseline temporal. No es la selección definitiva de producción.
 
+**IMPLEMENTED (DEV baseline).** El primer motor real está integrado detrás del seam conversacional sobre Vertex AI con ADC, sin streaming ni tools, con output estructurado tipado y un solo attempt por turno. La medición del camino backend completo (HTTP → load → modelo → grafo → save → response) vive en el [Experimento 0003](../experiments/0003-gemini-baseline-latency.md); es un baseline DEV, no un SLO.
+
 Debe evaluarse al menos una alternativa antes del 16-10-2026 mediante benchmarks CU013, priorizando latencia, calidad conversacional, selección/argumentos de tools, continuidad contextual y razonamiento cuando sea necesario.
 
 ## Seguridad y observabilidad

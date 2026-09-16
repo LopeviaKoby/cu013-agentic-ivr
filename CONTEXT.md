@@ -2,7 +2,7 @@
 
 ## Propósito y alcance actual
 
-CU013 reconstruye el backend conversacional de Mesa de Ayuda para XCALLY Motion y Cally Square. El repositorio contiene autoridad documental, estándares de ingeniería, configuración no sensible, herramientas operativas reproducibles para DEV y experimentación, y el núcleo productivo mínimo del Thin Session Repository integrado y committeado en `app/session`. El worktree materializa en `app/api` un baseline DEV provisional del boundary HTTP para Cally Square y en `app/conversation` el seam para el motor Gemini. Todavía no existe servicio Cloud Run ni integración AD/TIVIT.
+CU013 reconstruye el backend conversacional de Mesa de Ayuda para XCALLY Motion y Cally Square. El repositorio contiene autoridad documental, estándares de ingeniería, configuración no sensible, herramientas operativas reproducibles para DEV y experimentación, y el núcleo productivo mínimo del Thin Session Repository integrado y committeado en `app/session`. El worktree materializa en `app/api` un baseline DEV provisional del boundary HTTP para Cally Square, en `app/conversation` el motor real Gemini 2.5 Flash-Lite detrás del seam y en `evals/` el benchmark de latencia del camino backend completo. Todavía no existe servicio Cloud Run ni integración AD/TIVIT.
 
 El primer corte de acciones de cuenta es `RESET_PASSWORD` + `UNLOCK_ACCOUNT`, sin prioridad obligatoria entre ambas.
 
@@ -33,13 +33,15 @@ IAM y diseño de impersonación ADC configurados:
 
 Validación ADC y lectura Firestore desde el host real de OpenCode: aprobada por el propietario con Python 3.12.2, `.venv` en Python 3.12.2 y `GOOGLE_APPLICATION_CREDENTIALS` sin definir. La impersonación ADC, el refresh de ADC mediante `google-auth` y la lectura read-only de Firestore `(default)` fueron correctos; el documento de prueba no existía.
 
+Desde el 16-09-2026 el ADC local impersona la identidad prevista de runtime `cu013-runtime-dev` (`roles/datastore.user` + `roles/aiplatform.user`) para la ejecución DEV del motor real; el propietario concedió `roles/iam.serviceAccountTokenCreator` sobre esa SA. `cu013-spike-firestore` sigue como identidad exclusiva de experimentos. Sin claves JSON de cuentas de servicio en ningún caso.
+
 La ausencia de valores locales predeterminados como `compute/region` o `artifacts/location` sigue siendo una desviación menor de la estación de trabajo, no un bloqueo arquitectónico.
 
 Servicios habilitados pero aún no materializados:
 
 - API de Cloud Run; ningún servicio desplegado;
 - API de Secret Manager; ningún secreto creado;
-- API de Vertex AI; código de ejecución y evaluación comparativa del modelo pendientes.
+- API de Vertex AI; el motor real y su benchmark DEV ya ejecutan, pero no existe evaluación comparativa de modelos ni servicio cloud.
 
 ## Estado arquitectónico actual
 
@@ -58,9 +60,11 @@ Servicios habilitados pero aún no materializados:
 - El núcleo productivo mínimo del Thin Session Repository está integrado y committeado en `app/session`: contrato durable cerrado, grafo LangGraph determinista sin persistent checkpointer y 1 load + 1 save por turno normal.
 - El boundary HTTP XCALLY↔CU013 está implementado en el worktree como baseline DEV `PROVISIONAL` y tipado en [Boundary HTTP XCALLY↔CU013](docs/specs/xcally-boundary.md): `POST /api/v1/conversations/{conversation_id}/turns`, variantes transcript ASR e `IDENTITY_DATA`, autenticación `X-API-Key` sólo desde entorno, `turn_id` único por request y errores con taxonomía segura. No es el contrato integrado final.
 - El transcript es efímero y no se persiste; el DTMF crudo queda contenido en el boundary (no se persiste, registra, devuelve ni alcanza al seam) y nunca marca `identity_validated=True`.
-- No existe motor conversacional real: `ConversationEngine` en `app/conversation` es el único seam para Gemini, sin NLU determinista ni respuestas falsas. La validación positiva de identidad sigue sin integración; `IDENTITY_DATA` termina de forma segura con `dependency_unavailable`.
+- El primer motor real es `GeminiTurnModel` (`app/conversation`): Vertex AI sobre ADC, `thinking_budget=0`, output estructurado tipado `ModelTurnDecision` (`message`, `route`, `action_requested`), una llamada y un attempt por turno normal, sin streaming ni tools. El grafo del turno es `START → run_model → advance_turn → END`; el modelo sugiere, el runtime decide.
+- La validación positiva de identidad sigue sin integración; `IDENTITY_DATA` termina de forma segura con `dependency_unavailable`.
+- El [Experimento 0003](docs/experiments/0003-gemini-baseline-latency.md) midió el camino real desde host DEV (30 requests secuenciales, 0 errores): handler p50 1 281 / p95 1 922 ms; load p50 219 / p95 421 ms; modelo p50 782 / p95 1 062 ms (máx 4 094 ms); save p50 234 / p95 266 ms. Es un baseline DEV, no un SLO: no incluye ASR/TTS/red XCALLY ni Cloud Run in-region.
 - Gemini 2.5 Flash-Lite con razonamiento desactivado sigue como referencia temporal.
-- No existen Terraform, Dockerfile ni servicio Cloud Run; el código de ejecución es el núcleo de sesión más el boundary HTTP, todavía sin motor.
+- No existen Terraform, Dockerfile ni servicio Cloud Run; el código de ejecución es el núcleo de sesión, el boundary HTTP y el motor real.
 
 ## Puntos de entrada del repositorio
 
@@ -74,7 +78,9 @@ Servicios habilitados pero aún no materializados:
 - [Runbook de inicialización GCP](docs/runbooks/gcp-dev-bootstrap.md)
 - [Experimento Firestore/LangGraph](docs/experiments/0001-firestore-langgraph-checkpointer.md)
 - [Experimento Thin Session Repository](docs/experiments/0002-firestore-thin-session-repository.md)
+- [Experimento Gemini baseline de latencia](docs/experiments/0003-gemini-baseline-latency.md)
 - [Núcleo Thin Session](app/session/)
+- [Benchmark de latencia DEV](evals/backend_latency.py)
 - [Lock reproducible](requirements.lock)
 - [`config.yaml`](config.yaml)
 
@@ -98,6 +104,9 @@ Implementado en el repositorio:
 - suite determinista de 34 tests con doble en memoria y fake del cliente async; sin Gemini, XCALLY, AD/TIVIT ni credenciales;
 - baseline DEV provisional del boundary HTTP XCALLY↔CU013 implementado en el worktree bajo `app/api`, con contrato Pydantic 2, autenticación `X-API-Key` sólo desde entorno, `turn_id` por request, errores con taxonomía segura y OpenAPI coherente con las respuestas reales;
 - seam `ConversationEngine` en `app/conversation` como único punto de extensión para el motor Gemini, sin NLU determinista ni respuestas semánticas falsas;
+- motor real `GeminiTurnModel` detrás del seam: Vertex AI con ADC, baseline reemplazable en un solo objeto (`project`, `location`, `model`, `api_version`, `thinking_budget=0`, `timeout_ms`, `attempts=1`), output estructurado tipado y errores del modelo traducidos a la taxonomía segura (`dependency_timeout` 504, `dependency_unavailable` 503, salida inválida → `internal` 500);
+- seam `TurnMetrics` PII-safe (segmentos con nombres fijos y contadores sólo de tokens) y composition root DEV `app/main.py` con clientes async de Vertex y Firestore reutilizados y cerrados en el lifespan;
+- benchmark real `evals/backend_latency.py`: 5 warmups + 30 requests secuenciales medidos a través del boundary FastAPI contra Firestore y Vertex reales, con segmentación por etapa y conteo de tokens, sin registrar transcript, DTMF ni texto generado;
 - suite determinista del boundary: contrato cerrado y rutas fuera del enum rechazadas, API key válida/incorrecta/ausente/no configurada, `IDENTITY_DATA` sin fuga de DTMF, payloads inválidos sin eco de transcript ni DTMF, identidad de sesión desde la ruta, `turn_id` distinto por request, `X-Request-ID` no usado como idempotency key y errores internos traducidos a contrato seguro;
 - lock productivo exacto y reproducible en `requirements.lock`, con revisión de advisories OSV sin hallazgos abiertos;
 - ningún saver, harness, double, fixture, collection prefix o código runtime de los spikes integrado en `dev`;
@@ -122,20 +131,17 @@ Validado localmente el 15-09-2026:
 - contrato OpenAPI del endpoint coherente con las respuestas reales (401/422/500/503 con `ErrorResponse`);
 - closeout documental: enlaces locales válidos, diff check y escaneo de secretos limpios.
 
+Validado localmente el 16-09-2026:
+
+- gates de la iteración Gemini: 99 tests deterministas (34 Thin Session + 32 boundary + 33 modelo/sesión nuevos), Ruff 0.16.7 check/format y MyPy 1.20.2 strict sobre `app` (17 archivos);
+- ADC impersonación de `cu013-runtime-dev` verificada sin imprimir tokens; lectura read-only de Firestore y llamada mínima a `gemini-2.5-flash-lite` con `thinking_budget=0` correctas (`FinishReason.STOP`);
+- benchmark real completado: 5 warmups + 30 requests medidos secuenciales (13 RESET + 13 UNLOCK + secuencia multi-turn de 4), 0 errores, segmentación p50/p95 por etapa, conteos de tokens y continuidad durable multi-turn verificada (`turn_count=4`, un solo documento);
+- bloqueo de auth registrado y resuelto por el propietario: ADC `cu013-spike-firestore` sin `aiplatform.endpoints.predict` y falta de `iam.serviceAccounts.getAccessToken` sobre `cu013-runtime-dev`; sin cambios de IAM realizados por el agente;
+- 54 documentos sintéticos de benchmark permanecen en `cu013dev_sessions` (2 corridas × 27); su borrado no fue autorizado y no se ejecutó.
+
 Pendiente:
 
-- integrar Gemini 2.5 Flash-Lite detrás del seam `ConversationEngine` y medir el camino backend real antes de avanzar a AD/TIVIT:
-
-  ```text
-  HTTP
-  → Firestore load
-  → Gemini 2.5 Flash-Lite
-  → LangGraph
-  → Firestore save
-  → HTTP response
-  ```
-
-- integrar la validación positiva de identidad (ID-001) y cerrar FS-002 con la medición del presupuesto de latencia;
+- integrar la validación positiva de identidad (ID-001) y cerrar FS-002 con latencia in-region de Cloud Run y el reparto del presupuesto completo de voz (ASR/TTS/XCALLY);
 - evaluar Gemini 2.5 Flash-Lite y una alternativa antes del 16-10-2026;
 - validar los contratos externos aún abiertos antes de acciones de cuenta productivas.
 
@@ -143,7 +149,7 @@ Pendiente:
 
 El propietario confirmó desde el host real la cadena completa `ADC impersonation → google-auth refresh → Firestore read-only` con `cu013-spike-firestore` sobre el proyecto `cu013-xcally-agentic` y la base `(default)`. El control previo al experimento está aprobado.
 
-Nunca deshabilitar TLS ni la verificación de certificados para sortear el problema.
+El benchmark real de latencia del 16-09-2026 fue autorizado por el propietario y se ejecutó con ADC impersonando `cu013-runtime-dev`; creó 54 documentos sintéticos bajo `cu013dev_sessions` que no fueron borrados. Nunca deshabilitar TLS ni la verificación de certificados para sortear el problema.
 
 ## Bloqueos y preguntas abiertas
 
@@ -151,25 +157,14 @@ Nunca deshabilitar TLS ni la verificación de certificados para sortear el probl
 - Correlación, idempotencia, polling, reintentos y resultados tardíos (XC-002 a XC-004).
 - Esquema completo de resultados XCALLY/Orchestrator/TIVIT/AD (XC-005) y mapeo exacto de estados externos a respuesta o escalamiento (XC-006).
 - Resultado positivo de validación de identidad sin integración AD/TIVIT (ID-001).
-- FS-002 abierto: el mecanismo de deadline de Firestore por llamada existe, pero falta medir el camino backend real con Gemini para repartir el presupuesto de latencia.
+- FS-002 abierto con evidencia nueva: load p50 219 / p95 421 ms y save p50 234 / p95 266 ms desde host DEV; falta latencia in-region de Cloud Run y el reparto del presupuesto completo de voz (ASR/TTS/red XCALLY), con la cola del modelo dominando la varianza.
 - La validación de TTL requiere permisos no concedidos a la cuenta de servicio del experimento.
 
 SendMail permanece Deferred y fuera del alcance inmediato. Los valores predeterminados ausentes de la configuración local no son bloqueos arquitectónicos.
 
 ## Próximo incremento
 
-El siguiente incremento integra Gemini 2.5 Flash-Lite real con razonamiento desactivado detrás de `ConversationEngine` y mide la latencia del camino backend completo:
-
-```text
-HTTP
-→ Firestore load
-→ Gemini 2.5 Flash-Lite
-→ LangGraph
-→ Firestore save
-→ HTTP response
-```
-
-Esta medición debe realizarse antes de avanzar a AD/TIVIT, porque todavía se desconoce la latencia real del modelo dentro del camino completo. Sus resultados deben fijar FS-002 y decidir si la arquitectura puede continuar; sin esa evidencia no se autoriza el avance. No añadir trabajo especulativo ni inventar contratos conversacionales.
+La evidencia de latencia del backend real ya existe y es un baseline DEV (p50 ≈1,3 s, p95 ≈1,9 s sin ASR/TTS/red). El siguiente incremento requiere decisión del propietario entre: integración AD/TIVIT (ID-001 y XC-001 a XC-006) con la medición integrada del flujo Cally Square, o despliegue Cloud Run para medir latencia in-region y fijar FS-002. Sin esa decisión no se avanza; no añadir trabajo especulativo ni inventar contratos.
 
 ## Ciclo de vida
 
@@ -185,6 +180,6 @@ No añadir a esta instantánea trabajo especulativo o no aceptado.
 
 ## Hitos anteriores
 
-- Baseline DEV provisional del boundary HTTP XCALLY↔CU013 implementado en el worktree sobre Thin Session: contrato tipado, autenticación `X-API-Key`, contención de DTMF, transcript efímero y seam `ConversationEngine` para Gemini, sin motor falso.
+- Gemini 2.5 Flash-Lite integrado como primer motor real dentro del turno (1 llamada, 1 load, 1 save) con output estructurado tipado y benchmark DEV del camino completo medido (Experimento 0003, 30/30 requests, p50 handler 1 281 ms).
+- Baseline DEV provisional del boundary HTTP XCALLY↔CU013 implementado sobre Thin Session: contrato tipado, autenticación `X-API-Key`, contención de DTMF, transcript efímero y seam `ConversationEngine` para Gemini, sin motor falso.
 - Thin Session Repository aceptado en ADR-0009, implementado como núcleo productivo mínimo con lock reproducible y con la limpieza Firestore experimental completada; Option A descartada, ambos experimentos preservados y worktrees/ramas locales retirados.
-- Limpieza destructiva y reinicio arquitectónico preservados por el tag de auditoría.

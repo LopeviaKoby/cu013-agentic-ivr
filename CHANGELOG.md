@@ -36,6 +36,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add the deterministic boundary test suite: contract closure, authentication,
   DTMF containment, sanitized validation errors, session identity, turn ids
   and safe dependency/internal errors.
+- Add the real Gemini 2.5 Flash-Lite engine (`GeminiTurnModel`) behind the
+  `ConversationEngine` seam: Vertex AI over ADC, typed structured output,
+  `thinking_budget=0`, one call and one attempt per normal turn, no streaming
+  and no tools.
+- Add the PII-safe `TurnMetrics` seam with fixed segment names and token
+  counters, and the DEV backend latency benchmark in
+  `evals/backend_latency.py` (5 warmups, 30 sequential measured requests
+  through the real boundary).
 
 ### Changed
 
@@ -49,6 +57,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Contain raw DTMF at the HTTP boundary: accepted only in the transient
   `IDENTITY_DATA` model and never persisted, logged, echoed or forwarded to
   the conversational seam; receiving DTMF never marks a validated identity.
+- Route model failures to the error taxonomy: `dependency_timeout` (504) and
+  `dependency_unavailable` (503); invalid structured model output stays a
+  safe `internal` error.
+- Document the measured DEV backend baseline in Experiment 0003 and
+  re-evaluate FS-002: it remains open; SDK defaults are not productive
+  policy and in-region Cloud Run plus ASR/TTS/XCALLY segments are the
+  missing evidence.
 - Document the provisional XCALLY conversational boundary baseline and
   reconcile XC-001, FS-002 and the new identity-validation gap.
 - Reject persistent LangGraph checkpointing for the production voice path.

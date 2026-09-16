@@ -39,6 +39,8 @@ El bootstrap no crea Cloud Run, secretos, WIF o Terraform. La autenticación loc
 
 ## Boundary XCALLY
 
-El baseline DEV provisional del contrato HTTP entre Cally Square y CU013 está en [Boundary HTTP XCALLY ↔ CU013](docs/specs/xcally-boundary.md): `POST /api/v1/conversations/{conversation_id}/turns`, autenticación `X-API-Key` desde entorno, variantes transcript ASR e `IDENTITY_DATA`, respuesta `message`/`route` y errores con taxonomía segura. No es todavía el contrato integrado final. El transcript es efímero y el DTMF crudo queda contenido en el boundary. El motor conversacional Gemini llega en la próxima iteración detrás del seam `ConversationEngine`.
+El baseline DEV provisional del contrato HTTP entre Cally Square y CU013 está en [Boundary HTTP XCALLY ↔ CU013](docs/specs/xcally-boundary.md): `POST /api/v1/conversations/{conversation_id}/turns`, autenticación `X-API-Key` desde entorno, variantes transcript ASR e `IDENTITY_DATA`, respuesta `message`/`route` y errores con taxonomía segura. No es todavía el contrato integrado final. El transcript es efímero y el DTMF crudo queda contenido en el boundary.
+
+El motor real es Gemini 2.5 Flash-Lite sobre Vertex AI (`app/conversation`), integrado dentro del turno delgado de sesión con output estructurado tipado. El [Experimento 0003](docs/experiments/0003-gemini-baseline-latency.md) conserva el baseline DEV de latencia del camino completo (HTTP → load → modelo → grafo → save → response), medido con [evals/backend_latency.py](evals/backend_latency.py).
 
 Las instrucciones operativas para agentes están en [AGENTS.md](AGENTS.md). [pyproject.toml](pyproject.toml) declara dependencias y configuración ejecutable; [requirements.lock](requirements.lock) fija las versiones productivas exactas.
