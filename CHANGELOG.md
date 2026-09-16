@@ -44,6 +44,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   counters, and the DEV backend latency benchmark in
   `evals/backend_latency.py` (5 warmups, 30 sequential measured requests
   through the real boundary).
+- Add the minimal production container (Python 3.12 slim, single uvicorn
+  process with factory entrypoint, non-root, runtime-only install constrained
+  by the lock) and `uvicorn` as the runtime HTTP dependency with a regenerated
+  lock and clean OSV review.
+- Add the Cloud Run DEV benchmark tooling: idempotent deploy, stop and
+  read-only verify scripts, the HTTPS E2E client that reads `CU013_API_KEY`
+  from the environment only, and the operations runbook.
 
 ### Changed
 
@@ -64,6 +71,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   re-evaluate FS-002: it remains open; SDK defaults are not productive
   policy and in-region Cloud Run plus ASR/TTS/XCALLY segments are the
   missing evidence.
+- Document the Cloud Run warm baseline in Experiment 0004: 30/30 measured
+  requests through the real HTTPS boundary on revision `00006-hn4`, roughly
+  half the local latency at p50/p95, service returned to `min=0`.
 - Document the provisional XCALLY conversational boundary baseline and
   reconcile XC-001, FS-002 and the new identity-validation gap.
 - Reject persistent LangGraph checkpointing for the production voice path.

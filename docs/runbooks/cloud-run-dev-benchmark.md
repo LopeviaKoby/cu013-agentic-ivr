@@ -87,5 +87,5 @@ ventana se interrumpe, ejecutar el paso 4 igualmente.
 ## Referencias
 
 - [Configuración no sensible](../../config.yaml)
-- [Experimento 0003 — baseline local](../../experiments/0003-gemini-baseline-latency.md)
-- [Experimento 0004 — baseline Cloud Run](../../experiments/0004-cloud-run-latency.md)
+- [Experimento 0003 — baseline local](../experiments/0003-gemini-baseline-latency.md)
+- [Experimento 0004 — baseline Cloud Run](../experiments/0004-cloud-run-latency.md)

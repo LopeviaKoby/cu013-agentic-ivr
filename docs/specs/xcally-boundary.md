@@ -10,6 +10,13 @@ El boundary sólo puede evolucionar con evidencia obtenida al integrar el flujo 
 
 Evidencia de origen: XML del flujo Cally Square de referencia y confirmación del propietario de que XCALLY envía DTMF crudo.
 
+### Validación disponible
+
+- Cloud Run DEV validó el boundary pre-XCALLY de punta a punta en el [Experimento 0004](../experiments/0004-cloud-run-latency.md): autenticación, contrato y turno real con Gemini, con `min=0` restaurado tras la ventana.
+- La latencia voice E2E (`end-of-speech → first useful audio`) sigue desconocida: no hay XCALLY, ASR ni TTS integrados.
+- La siguiente validación es Cally Square real contra este boundary.
+- El contrato de órdenes/resultados AD/TIVIT no observado no se integra todavía en esta SPEC.
+
 ## Endpoint y autenticación
 
 ```text
@@ -109,7 +116,7 @@ El shape exacto de errores que Cally Square interpreta sigue pendiente de eviden
 - Resultado positivo de validación de identidad y su integración con AD/TIVIT (ID-001).
 - Correlación, idempotencia, polling, reintentos y resultados tardíos de XCALLY (XC-002 a XC-004).
 - Shape real de responses/errors y mapeo de estados externos (XC-005, XC-006).
-- Deadline explícito de Firestore (FS-002): con la medición del [Experimento 0003](../experiments/0003-gemini-baseline-latency.md) (load p50 219 / p95 421 ms; save p50 234 / p95 266 ms desde host DEV) el mecanismo por llamada sigue disponible, pero el valor no se fija aún: faltan la latencia in-region de Cloud Run y el reparto del presupuesto completo de voz (ASR/TTS/XCALLY), dominado además por la cola del modelo.
+- Deadline explícito de Firestore (FS-002): con la medición in-region del [Experimento 0004](../experiments/0004-cloud-run-latency.md) (load p95 36,2 ms; save p95 101,5 ms) el mecanismo por llamada sigue disponible y el rango indicado baja a centenas de milisegundos, pero el valor no se fija aún: falta repartir el presupuesto completo de voz (XCALLY/ASR/TTS).
 
 ## Trazabilidad
 

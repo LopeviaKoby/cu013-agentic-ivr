@@ -138,8 +138,11 @@ segments plus in-region Cloud Run latency are unmeasured.
   run observed one ≈14 s model call that errored (single attempt, no
   retries).
 - Token counts are counters only; no model content was captured.
-- 54 benchmark documents (2 runs × 27) remain under `cu013dev_sessions`;
-  deletion was not authorized and was not performed.
+- 63 benchmark documents (inventoried: 31 from the exploratory run and 32
+  from the canonical run, including warmups) remain under `cu013dev_sessions`
+  after the two runs; deletion was not authorized and was not performed.
+  (Corrected from an earlier "54" estimate by the
+  [Experiment 0004](0004-cloud-run-latency.md) inventory.)
 
 ## Conclusion
 

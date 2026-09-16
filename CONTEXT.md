@@ -2,7 +2,7 @@
 
 ## Propósito y alcance actual
 
-CU013 reconstruye el backend conversacional de Mesa de Ayuda para XCALLY Motion y Cally Square. El repositorio contiene autoridad documental, estándares de ingeniería, configuración no sensible, herramientas operativas reproducibles para DEV y experimentación, y el núcleo productivo mínimo del Thin Session Repository integrado y committeado en `app/session`. El worktree materializa en `app/api` un baseline DEV provisional del boundary HTTP para Cally Square, en `app/conversation` el motor real Gemini 2.5 Flash-Lite detrás del seam y en `evals/` el benchmark de latencia del camino backend completo. Todavía no existe servicio Cloud Run ni integración AD/TIVIT.
+CU013 reconstruye el backend conversacional de Mesa de Ayuda para XCALLY Motion y Cally Square. El repositorio contiene autoridad documental, estándares de ingeniería, configuración no sensible, herramientas operativas reproducibles para DEV y experimentación, y el núcleo productivo mínimo del Thin Session Repository integrado y committeado en `app/session`. El worktree materializa en `app/api` un baseline DEV provisional del boundary HTTP para Cally Square, en `app/conversation` el motor real Gemini 2.5 Flash-Lite detrás del seam, en `evals/` el benchmark de latencia y en `ops/gcp/` el tooling de Cloud Run. El servicio Cloud Run DEV ya existe desplegado con `min=0` en reposo; todavía no existe integración XCALLY/Cally Square real ni AD/TIVIT.
 
 El primer corte de acciones de cuenta es `RESET_PASSWORD` + `UNLOCK_ACCOUNT`, sin prioridad obligatoria entre ambas.
 
@@ -10,7 +10,7 @@ El primer corte de acciones de cuenta es `RESET_PASSWORD` + `UNLOCK_ACCOUNT`, si
 
 - Python 3.12, FastAPI, Pydantic 2, LangGraph y `google-genai`/Vertex AI.
 - Firestore como único almacén durable aceptado.
-- Cloud Run como destino futuro de cómputo.
+- Cloud Run como cómputo DEV desplegado (`min=0` en reposo; `min=1` sólo en ventanas de benchmark).
 - Docker, GitHub Actions, pytest, Ruff y MyPy.
 - Proyecto GCP: `cu013-xcally-agentic`.
 - Región primaria: `us-east1`.
@@ -37,11 +37,11 @@ Desde el 16-09-2026 el ADC local impersona la identidad prevista de runtime `cu0
 
 La ausencia de valores locales predeterminados como `compute/region` o `artifacts/location` sigue siendo una desviación menor de la estación de trabajo, no un bloqueo arquitectónico.
 
-Servicios habilitados pero aún no materializados:
+Servicios habilitados y materializados en DEV:
 
-- API de Cloud Run; ningún servicio desplegado;
-- API de Secret Manager; ningún secreto creado;
-- API de Vertex AI; el motor real y su benchmark DEV ya ejecutan, pero no existe evaluación comparativa de modelos ni servicio cloud.
+- Cloud Run `cu013-runtime-dev` desplegado en `us-east1`, con `min=0` en reposo y acceso sin IAM de caller (PROVISIONAL: la autenticación real del boundary sigue siendo `X-API-Key`);
+- Secret Manager con el secreto DEV `cu013-api-key-dev` (versión activa 2; el valor nunca fue leído ni impreso por agentes);
+- Vertex AI con el motor real Gemini 2.5 Flash-Lite y ambos benchmarks ejecutados; la evaluación comparativa de modelos sigue pendiente.
 
 ## Estado arquitectónico actual
 
@@ -63,8 +63,9 @@ Servicios habilitados pero aún no materializados:
 - El primer motor real es `GeminiTurnModel` (`app/conversation`): Vertex AI sobre ADC, `thinking_budget=0`, output estructurado tipado `ModelTurnDecision` (`message`, `route`, `action_requested`), una llamada y un attempt por turno normal, sin streaming ni tools. El grafo del turno es `START → run_model → advance_turn → END`; el modelo sugiere, el runtime decide.
 - La validación positiva de identidad sigue sin integración; `IDENTITY_DATA` termina de forma segura con `dependency_unavailable`.
 - El [Experimento 0003](docs/experiments/0003-gemini-baseline-latency.md) midió el camino real desde host DEV (30 requests secuenciales, 0 errores): handler p50 1 281 / p95 1 922 ms; load p50 219 / p95 421 ms; modelo p50 782 / p95 1 062 ms (máx 4 094 ms); save p50 234 / p95 266 ms. Es un baseline DEV, no un SLO: no incluye ASR/TTS/red XCALLY ni Cloud Run in-region.
+- El [Experimento 0004](docs/experiments/0004-cloud-run-latency.md) midió el baseline in-region en Cloud Run `us-east1` con una instancia warm (revisión `00006-hn4`, digest `sha256:6ca03e…`): 30/30 requests medidas con 0 errores; handler p50 657 / p95 920 ms; load p95 36 ms; modelo p50 595 ms; save p95 102 ms; round-trip HTTPS del cliente p50 878 / p95 1 145 ms. `min=0` restaurado y verificado read-only.
 - Gemini 2.5 Flash-Lite con razonamiento desactivado sigue como referencia temporal.
-- No existen Terraform, Dockerfile ni servicio Cloud Run; el código de ejecución es el núcleo de sesión, el boundary HTTP y el motor real.
+- No existen Terraform ni infraestructura adicional; el contenedor (`Dockerfile`) y el servicio Cloud Run DEV existen con `min=0` en reposo. El código de ejecución es el núcleo de sesión, el boundary HTTP y el motor real.
 
 ## Puntos de entrada del repositorio
 
@@ -79,8 +80,11 @@ Servicios habilitados pero aún no materializados:
 - [Experimento Firestore/LangGraph](docs/experiments/0001-firestore-langgraph-checkpointer.md)
 - [Experimento Thin Session Repository](docs/experiments/0002-firestore-thin-session-repository.md)
 - [Experimento Gemini baseline de latencia](docs/experiments/0003-gemini-baseline-latency.md)
+- [Experimento Cloud Run baseline](docs/experiments/0004-cloud-run-latency.md)
+- [Runbook Cloud Run DEV benchmark](docs/runbooks/cloud-run-dev-benchmark.md)
 - [Núcleo Thin Session](app/session/)
 - [Benchmark de latencia DEV](evals/backend_latency.py)
+- [Cliente E2E Cloud Run](evals/cloud_run_latency.py)
 - [Lock reproducible](requirements.lock)
 - [`config.yaml`](config.yaml)
 
@@ -109,6 +113,9 @@ Implementado en el repositorio:
 - benchmark real `evals/backend_latency.py`: 5 warmups + 30 requests secuenciales medidos a través del boundary FastAPI contra Firestore y Vertex reales, con segmentación por etapa y conteo de tokens, sin registrar transcript, DTMF ni texto generado;
 - suite determinista del boundary: contrato cerrado y rutas fuera del enum rechazadas, API key válida/incorrecta/ausente/no configurada, `IDENTITY_DATA` sin fuga de DTMF, payloads inválidos sin eco de transcript ni DTMF, identidad de sesión desde la ruta, `turn_id` distinto por request, `X-Request-ID` no usado como idempotency key y errores internos traducidos a contrato seguro;
 - lock productivo exacto y reproducible en `requirements.lock`, con revisión de advisories OSV sin hallazgos abiertos;
+- contenedor productivo mínimo (`Dockerfile`, `.dockerignore`): Python 3.12 slim, un solo proceso uvicorn con entrypoint factory, usuario non-root, instalación runtime con el lock; `uvicorn` como dependencia runtime (lock regenerado, 70 pins, OSV limpio);
+- tooling Cloud Run DEV versionado en `ops/gcp/`: deploy idempotente con tag = SHA limpio y secreto por versión numérica, stop que restaura `min=0`, verificación read-only, rotación segura de la clave de benchmark y runbook asociado;
+- logging estructurado PII-safe del servicio (`StructuredLogTurnMetrics`) para recuperar la segmentación server-side desde Cloud Logging sin plataforma de observabilidad;
 - ningún saver, harness, double, fixture, collection prefix o código runtime de los spikes integrado en `dev`;
 - worktrees y ramas locales `spike/firestore-checkpointer` y `spike/firestore-thin-session-repository` retirados; no existían ramas remotas `spike/*`.
 
@@ -137,19 +144,22 @@ Validado localmente el 16-09-2026:
 - ADC impersonación de `cu013-runtime-dev` verificada sin imprimir tokens; lectura read-only de Firestore y llamada mínima a `gemini-2.5-flash-lite` con `thinking_budget=0` correctas (`FinishReason.STOP`);
 - benchmark real completado: 5 warmups + 30 requests medidos secuenciales (13 RESET + 13 UNLOCK + secuencia multi-turn de 4), 0 errores, segmentación p50/p95 por etapa, conteos de tokens y continuidad durable multi-turn verificada (`turn_count=4`, un solo documento);
 - bloqueo de auth registrado y resuelto por el propietario: ADC `cu013-spike-firestore` sin `aiplatform.endpoints.predict` y falta de `iam.serviceAccounts.getAccessToken` sobre `cu013-runtime-dev`; sin cambios de IAM realizados por el agente;
-- 54 documentos sintéticos de benchmark permanecen en `cu013dev_sessions` (2 corridas × 27); su borrado no fue autorizado y no se ejecutó.
+- benchmark in-region completado (Experimento 0004): 30/30 requests por HTTPS real con 0 errores/timeouts (p50 handler in-region ≈657 ms; p50 cliente ≈878 ms) y tag == HEAD, digest y secreto (`cu013-api-key-dev:2`, sólo nombre/versión) verificados read-only;
+- ventana warm cerrada: `min=0` restaurado con el script de stop y verificado read-only; inventario de `cu013dev_sessions`: 97 documentos (33 de la corrida Cloud Run + 1 audit + 63 de las corridas locales), sin borrados, con la corrección 54→63 anotada en el Experimento 0003.
 
 Pendiente:
 
-- integrar la validación positiva de identidad (ID-001) y cerrar FS-002 con latencia in-region de Cloud Run y el reparto del presupuesto completo de voz (ASR/TTS/XCALLY);
+- cerrar FS-002 con el reparto del presupuesto completo de voz (XCALLY/ASR/TTS); el rango in-region indicado es de centenas bajas de milisegundos por llamada;
+- integrar la validación positiva de identidad (ID-001);
 - evaluar Gemini 2.5 Flash-Lite y una alternativa antes del 16-10-2026;
-- validar los contratos externos aún abiertos antes de acciones de cuenta productivas.
+- validar los contratos externos aún abiertos antes de acciones de cuenta productivas;
+- decidir el cleanup de los 97 documentos sintéticos de benchmark (requiere autorización explícita; sin wildcards ni collection-group deletes).
 
 ## Control operativo previo al experimento
 
 El propietario confirmó desde el host real la cadena completa `ADC impersonation → google-auth refresh → Firestore read-only` con `cu013-spike-firestore` sobre el proyecto `cu013-xcally-agentic` y la base `(default)`. El control previo al experimento está aprobado.
 
-El benchmark real de latencia del 16-09-2026 fue autorizado por el propietario y se ejecutó con ADC impersonando `cu013-runtime-dev`; creó 54 documentos sintéticos bajo `cu013dev_sessions` que no fueron borrados. Nunca deshabilitar TLS ni la verificación de certificados para sortear el problema.
+El benchmark real de latencia del 16-09-2026 fue autorizado por el propietario y se ejecutó con ADC impersonando `cu013-runtime-dev`; las corridas locales y la corrida Cloud Run dejaron 97 documentos sintéticos bajo `cu013dev_sessions` que no fueron borrados. El despliegue y la ventana warm las ejecutó el propietario con el tooling versionado; el agente sólo hizo verificación y lecturas read-only. Nunca deshabilitar TLS ni la verificación de certificados para sortear el problema.
 
 ## Bloqueos y preguntas abiertas
 
@@ -157,14 +167,40 @@ El benchmark real de latencia del 16-09-2026 fue autorizado por el propietario y
 - Correlación, idempotencia, polling, reintentos y resultados tardíos (XC-002 a XC-004).
 - Esquema completo de resultados XCALLY/Orchestrator/TIVIT/AD (XC-005) y mapeo exacto de estados externos a respuesta o escalamiento (XC-006).
 - Resultado positivo de validación de identidad sin integración AD/TIVIT (ID-001).
-- FS-002 abierto con evidencia nueva: load p50 219 / p95 421 ms y save p50 234 / p95 266 ms desde host DEV; falta latencia in-region de Cloud Run y el reparto del presupuesto completo de voz (ASR/TTS/red XCALLY), con la cola del modelo dominando la varianza.
+- FS-002 abierto con evidencia local e in-region: load p95 421 ms (local) / 36 ms (Cloud Run) y save p95 266 ms (local) / 102 ms (Cloud Run); el rango indicado es de centenas bajas de milisegundos por llamada, pero falta el reparto del presupuesto completo de voz (XCALLY/ASR/TTS) para fijar el valor.
 - La validación de TTL requiere permisos no concedidos a la cuenta de servicio del experimento.
 
 SendMail permanece Deferred y fuera del alcance inmediato. Los valores predeterminados ausentes de la configuración local no son bloqueos arquitectónicos.
 
-## Próximo incremento
+## Estado operativo y próximo gate
 
-La evidencia de latencia del backend real ya existe y es un baseline DEV (p50 ≈1,3 s, p95 ≈1,9 s sin ASR/TTS/red). El siguiente incremento requiere decisión del propietario entre: integración AD/TIVIT (ID-001 y XC-001 a XC-006) con la medición integrada del flujo Cally Square, o despliegue Cloud Run para medir latencia in-region y fijar FS-002. Sin esa decisión no se avanza; no añadir trabajo especulativo ni inventar contratos.
+| Componente | Estado |
+|---|---|
+| Thin Session | validated |
+| Boundary HTTP/XCALLY | implemented, PROVISIONAL |
+| Gemini baseline | integrated |
+| Cloud Run DEV | implemented; estado de reposo `min=0` |
+| Experimento 0004 | completed |
+| FS-002 | open |
+| Próximo gate | integración de voz XCALLY real sin AD/TIVIT |
+| AD/TIVIT | después del baseline de voz XCALLY aislado |
+
+El próximo objetivo de medición es el camino completo de voz, todavía no medido:
+
+```text
+caller
+→ XCALLY/Cally Square
+→ ASR
+→ Cloud Run
+→ Firestore
+→ Gemini
+→ Firestore
+→ XCALLY
+→ TTS
+→ caller
+```
+
+La métrica objetivo de ese gate es `end-of-speech → first useful audio`. No añadir trabajo especulativo ni inventar contratos; AD/TIVIT no se integra antes de ese baseline de voz XCALLY aislado.
 
 ## Ciclo de vida
 
@@ -180,6 +216,6 @@ No añadir a esta instantánea trabajo especulativo o no aceptado.
 
 ## Hitos anteriores
 
-- Gemini 2.5 Flash-Lite integrado como primer motor real dentro del turno (1 llamada, 1 load, 1 save) con output estructurado tipado y benchmark DEV del camino completo medido (Experimento 0003, 30/30 requests, p50 handler 1 281 ms).
-- Baseline DEV provisional del boundary HTTP XCALLY↔CU013 implementado sobre Thin Session: contrato tipado, autenticación `X-API-Key`, contención de DTMF, transcript efímero y seam `ConversationEngine` para Gemini, sin motor falso.
-- Thin Session Repository aceptado en ADR-0009, implementado como núcleo productivo mínimo con lock reproducible y con la limpieza Firestore experimental completada; Option A descartada, ambos experimentos preservados y worktrees/ramas locales retirados.
+- Cloud Run DEV warm baseline medido (Experimento 0004): servicio desplegado con tag == SHA limpio, 30/30 requests por HTTPS real, in-region ≈mitad de la latencia local, `min=0` restaurado y verificado.
+- Gemini 2.5 Flash-Lite integrado como primer motor real dentro del turno (1 llamada, 1 load, 1 save) con output estructurado tipado y baseline local del camino completo (Experimento 0003, p50 handler 1 281 ms).
+- Thin Session Repository (ADR-0009) y baseline DEV provisional del boundary HTTP XCALLY↔CU013 aceptados e implementados, con contención de DTMF y autenticación `X-API-Key`.

@@ -68,9 +68,9 @@ Recursos actuales:
 
 - Firestore `(default)`, Native mode, Standard edition, `us-east1`.
 - Artifact Registry `cu013-containers-dev`, formato Docker, `us-east1`.
-- Cloud Run como target futuro de compute; API habilitada y ningún servicio creado.
-- Vertex AI habilitado en `us-east1`; modelo productivo aún no seleccionado.
-- Secret Manager API habilitada; todavía no existen secretos cloud para CU013.
+- Cloud Run `cu013-runtime-dev` desplegado en `us-east1` como entorno DEV PROVISIONAL; estado de reposo `min instances = 0` y `min = 1` sólo durante ventanas de benchmark autorizadas.
+- Vertex AI habilitado en `us-east1`; el motor real ejecuta el baseline temporal y la selección productiva sigue pendiente.
+- Secret Manager contiene el secreto DEV `cu013-api-key-dev`; Cloud Run lo consume por referencia con versión numérica, nunca por valor en el repositorio.
 
 APIs habilitadas:
 
@@ -99,7 +99,7 @@ Este nivel no está implementado. Su necesidad recurrente es un trigger para rec
 ## Identidades
 
 - `cu013-spike-firestore`: aísla el spike local y se usa mediante ADC impersonation. Tiene `roles/datastore.user`.
-- `cu013-runtime-dev`: identidad futura de menor privilegio para Cloud Run. Tiene `roles/datastore.user` y `roles/aiplatform.user`.
+- `cu013-runtime-dev`: identidad de menor privilegio del servicio Cloud Run DEV (en uso). Tiene `roles/datastore.user` y `roles/aiplatform.user`, y sólo accede al secreto DEV por binding a nivel de secreto.
 - `cu013-deployer-dev`: separa despliegue y runtime, y prepara GitHub Actions. Tiene `roles/run.developer`, acceso writer al repositorio DEV y derecho a usar la runtime SA.
 
 **INVARIANT.** No se permiten long-lived service-account keys.
@@ -117,12 +117,12 @@ Secret Manager
 → secretos reales inyectados en servicios cloud cuando existan
 ```
 
-Configuración operacional y secretos son categorías distintas. Tener Secret Manager API habilitada no significa que existan secretos ni bindings runtime.
+Configuración operacional y secretos son categorías distintas. En DEV existe `cu013-api-key-dev`, consumido por Cloud Run por referencia; los accesos son bindings a nivel de secreto, nunca valores versionados.
 
 ## Disciplina de costos
 
 - PoC/DEV está orientado a bajo costo.
-- Cloud Run tendrá inicialmente `min instances = 0` y `max instances = 1` cuando exista el servicio.
+- Cloud Run DEV opera con `min instances = 0` y `max instances = 1`; `min = 1` existe sólo durante una ventana de benchmark autorizada y se restaura a 0 al terminar, pase o falle.
 - No se crearán recursos always-on innecesarios ni una segunda base Firestore por defecto.
 - No se añadirán VPC, Cloud SQL, Redis, Kubernetes u observabilidad pesada sin evidencia.
 - El presupuesto y alerta económica se gestionan externamente; no son un hard cap técnico.
@@ -153,7 +153,7 @@ Reconsiderar Terraform cuando ocurra al menos uno de estos triggers:
 
 `gemini-2.5-flash-lite` con `ThinkingConfig(thinking_budget=0)` es el baseline temporal. No es la selección definitiva de producción.
 
-**IMPLEMENTED (DEV baseline).** El primer motor real está integrado detrás del seam conversacional sobre Vertex AI con ADC, sin streaming ni tools, con output estructurado tipado y un solo attempt por turno. La medición del camino backend completo (HTTP → load → modelo → grafo → save → response) vive en el [Experimento 0003](../experiments/0003-gemini-baseline-latency.md); es un baseline DEV, no un SLO.
+**IMPLEMENTED (DEV baseline).** El primer motor real está integrado detrás del seam conversacional sobre Vertex AI con ADC, sin streaming ni tools, con output estructurado tipado y un solo attempt por turno. La medición del camino backend completo (HTTP → load → modelo → grafo → save → response) vive en el [Experimento 0003](../experiments/0003-gemini-baseline-latency.md) (host DEV) y el baseline in-region con una instancia warm en el [Experimento 0004](../experiments/0004-cloud-run-latency.md) (Cloud Run `us-east1`); ambos son baselines DEV, no un SLO.
 
 Debe evaluarse al menos una alternativa antes del 16-10-2026 mediante benchmarks CU013, priorizando latencia, calidad conversacional, selección/argumentos de tools, continuidad contextual y razonamiento cuando sea necesario.
 
