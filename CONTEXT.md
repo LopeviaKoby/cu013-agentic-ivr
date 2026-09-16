@@ -88,7 +88,8 @@ Implementado en el repositorio:
 - Experimentos 0001 y 0002 preservados como evidencia histórica `Completed`;
 - ADR-0009 Accepted y specs reconciliadas con `SessionRecord` durable, `GraphState` efímero y save antes del response;
 - rangos productivos elevados al security floor sin adoptar el lock experimental exacto;
-- ningún saver, harness, double, fixture, collection prefix o código runtime de los spikes integrado en `dev`.
+- ningún saver, harness, double, fixture, collection prefix o código runtime de los spikes integrado en `dev`;
+- worktrees y ramas locales `spike/firestore-checkpointer` y `spike/firestore-thin-session-repository` retirados; no existían ramas remotas `spike/*`.
 
 Validado localmente el 15-09-2026:
 
@@ -109,7 +110,7 @@ Pendiente:
 
 - implementar el mínimo productivo de Thin Session Repository a partir de ADR-0009 y las specs, sin copiar el harness experimental;
 - resolver y bloquear reproduciblemente las versiones productivas exactas dentro del security floor;
-- completar el inventario read-only de colecciones `cu013spike_*` y limpiar sólo los documentos identificados de ambos spikes;
+- reanudar la enumeración y limpieza remota de Firestore cuando ADC pueda refrescar con TLS verificado; no se enumeró ni borró ninguna colección durante este cierre;
 - evaluar Gemini 2.5 Flash-Lite y una alternativa antes del 16-10-2026;
 - validar los contratos externos aún abiertos antes de acciones de cuenta productivas.
 
@@ -122,7 +123,7 @@ Nunca deshabilitar TLS ni la verificación de certificados para sortear el probl
 ## Bloqueos y preguntas abiertas
 
 - El lock productivo exacto de LangGraph/Firestore queda pendiente para la primera implementación; el security floor ya no está abierto.
-- La limpieza Firestore requiere enumerar los IDs exactos de los smoke runs de Option A. La consulta read-only intentada durante el closeout no pudo refrescar ADC por `CERTIFICATE_VERIFY_FAILED`; no se deshabilitó TLS y no se borró nada.
+- El único residual operativo del cierre experimental es la limpieza Firestore: el refresh ADC falló por `CERTIFICATE_VERIFY_FAILED` antes de listar root collections. No se deshabilitó TLS, no se construyó una allowlist incompleta y no se borró nada.
 - Contrato objetivo XCALLY↔CU013.
 - Correlación, idempotencia, polling, reintentos y resultados tardíos.
 - Esquema completo de resultados XCALLY/Orchestrator/TIVIT/AD.
@@ -149,6 +150,6 @@ No añadir a esta instantánea trabajo especulativo o no aceptado.
 
 ## Hitos anteriores
 
-- Thin Firestore Session Repository aceptado mediante ADR-0009; Option A descartada para producción y ambos experimentos preservados.
+- Thin Firestore Session Repository aceptado mediante ADR-0009; Option A descartada para producción, ambos experimentos preservados y worktrees/ramas locales retirados.
 - Limpieza destructiva y reinicio arquitectónico preservados por el tag de auditoría.
 - Base GCP DEV/SPIKE e impersonación ADC con lectura Firestore confirmadas por el propietario.
