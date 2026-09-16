@@ -27,6 +27,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Versioned source manifest for local corporate IOPs.
 - Engineering standards for Python, reliability and testing.
 - Add the CU013 iteration-closeout agent skill.
+- Add the provisional DEV FastAPI boundary baseline for Cally Square at
+  `POST /api/v1/conversations/{conversation_id}/turns`, with typed ASR
+  transcript and `IDENTITY_DATA` variants, environment-only `X-API-Key`
+  authentication, a per-request `turn_id` and a safe error taxonomy.
+- Add the minimal `ConversationEngine` seam for the next Gemini iteration; no
+  deterministic conversational logic is implemented.
+- Add the deterministic boundary test suite: contract closure, authentication,
+  DTMF containment, sanitized validation errors, session identity, turn ids
+  and safe dependency/internal errors.
 
 ### Changed
 
@@ -37,6 +46,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Remove the experimental Firestore spike documents (111 documents) under the
   documented `cu013spike_meas_*` prefixes.
 - Adopt Thin Firestore Session Repository for durable voice-session state.
+- Contain raw DTMF at the HTTP boundary: accepted only in the transient
+  `IDENTITY_DATA` model and never persisted, logged, echoed or forwarded to
+  the conversational seam; receiving DTMF never marks a validated identity.
+- Document the provisional XCALLY conversational boundary baseline and
+  reconcile XC-001, FS-002 and the new identity-validation gap.
 - Reject persistent LangGraph checkpointing for the production voice path.
 - Raise the LangGraph security floor to `langgraph>=1.0.10` and
   `langgraph-checkpoint>=4.1.1`; defer the exact production lock to the first

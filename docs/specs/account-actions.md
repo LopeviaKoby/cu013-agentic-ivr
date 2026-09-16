@@ -149,7 +149,7 @@ El runtime debe distinguir como mínimo:
 - resultado confirmado por XCALLY;
 - estado del envío cuando corresponda.
 
-No se fijan todavía nombres de nodos, GraphState keys, modelos Pydantic, endpoints ni payloads target.
+No se fijan todavía nombres de nodos, GraphState keys, modelos Pydantic, endpoints ni payloads target para las órdenes y resultados de AD/TIVIT. El baseline DEV provisional del boundary conversacional XCALLY ↔ CU013 está materializado y tipado en [Boundary HTTP XCALLY ↔ CU013](xcally-boundary.md).
 
 Una afirmación del caller o del LLM no puede convertirse en resultado empresarial. El agente sólo comunica estados efectivamente devueltos por el boundary externo.
 

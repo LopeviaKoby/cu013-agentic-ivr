@@ -2,7 +2,7 @@
 
 ## Propósito y alcance actual
 
-CU013 reconstruye el backend conversacional de Mesa de Ayuda para XCALLY Motion y Cally Square. El repositorio contiene autoridad documental, estándares de ingeniería, configuración no sensible, herramientas operativas reproducibles para DEV y experimentación, y el núcleo productivo mínimo del Thin Session Repository en `app/session`. Todavía no existe servicio Cloud Run ni integración XCALLY/AD/TIVIT.
+CU013 reconstruye el backend conversacional de Mesa de Ayuda para XCALLY Motion y Cally Square. El repositorio contiene autoridad documental, estándares de ingeniería, configuración no sensible, herramientas operativas reproducibles para DEV y experimentación, y el núcleo productivo mínimo del Thin Session Repository integrado y committeado en `app/session`. El worktree materializa en `app/api` un baseline DEV provisional del boundary HTTP para Cally Square y en `app/conversation` el seam para el motor Gemini. Todavía no existe servicio Cloud Run ni integración AD/TIVIT.
 
 El primer corte de acciones de cuenta es `RESET_PASSWORD` + `UNLOCK_ACCOUNT`, sin prioridad obligatoria entre ambas.
 
@@ -55,14 +55,18 @@ Servicios habilitados pero aún no materializados:
 - [ADR-0009](docs/decisions/0009-use-thin-firestore-session-repository.md) acepta Thin Firestore Session Repository: cargar un `SessionRecord` semántico, construir un `GraphState` efímero, ejecutar LangGraph sin persistent checkpointer, consolidar y guardar antes del HTTP response.
 - La Opción A resultó viable experimentalmente, pero fue descartada para el voice path productivo por latencia, amplificación de escrituras, complejidad de persistencia/retención y acoplamiento a LangGraph.
 - El security floor productivo está resuelto en `langgraph>=1.0.10` y `langgraph-checkpoint>=4.1.1`; el lock exacto está fijado en [requirements.lock](requirements.lock) con `langgraph==1.2.11`, `langgraph-checkpoint==4.2.0` y `google-cloud-firestore==2.30.0`.
-- El núcleo productivo mínimo del Thin Session Repository vive en `app/session`: contrato durable cerrado, grafo LangGraph determinista sin persistent checkpointer y 1 load + 1 save por turno normal.
+- El núcleo productivo mínimo del Thin Session Repository está integrado y committeado en `app/session`: contrato durable cerrado, grafo LangGraph determinista sin persistent checkpointer y 1 load + 1 save por turno normal.
+- El boundary HTTP XCALLY↔CU013 está implementado en el worktree como baseline DEV `PROVISIONAL` y tipado en [Boundary HTTP XCALLY↔CU013](docs/specs/xcally-boundary.md): `POST /api/v1/conversations/{conversation_id}/turns`, variantes transcript ASR e `IDENTITY_DATA`, autenticación `X-API-Key` sólo desde entorno, `turn_id` único por request y errores con taxonomía segura. No es el contrato integrado final.
+- El transcript es efímero y no se persiste; el DTMF crudo queda contenido en el boundary (no se persiste, registra, devuelve ni alcanza al seam) y nunca marca `identity_validated=True`.
+- No existe motor conversacional real: `ConversationEngine` en `app/conversation` es el único seam para Gemini, sin NLU determinista ni respuestas falsas. La validación positiva de identidad sigue sin integración; `IDENTITY_DATA` termina de forma segura con `dependency_unavailable`.
 - Gemini 2.5 Flash-Lite con razonamiento desactivado sigue como referencia temporal.
-- No existen Terraform, Dockerfile ni servicio Cloud Run; el único código de ejecución es el núcleo de sesión.
+- No existen Terraform, Dockerfile ni servicio Cloud Run; el código de ejecución es el núcleo de sesión más el boundary HTTP, todavía sin motor.
 
 ## Puntos de entrada del repositorio
 
 - [Especificación del sistema](docs/specs/system.md)
 - [Especificación de acciones de cuenta](docs/specs/account-actions.md)
+- [Boundary HTTP XCALLY ↔ CU013](docs/specs/xcally-boundary.md)
 - [Decisiones arquitectónicas](docs/decisions/)
 - [Gaps de implementación](docs/gaps.md)
 - [Estándares de ingeniería](docs/engineering/)
@@ -92,6 +96,9 @@ Implementado en el repositorio:
 - ADR-0009 Accepted y specs reconciliadas con `SessionRecord` durable, `GraphState` efímero y save antes del response;
 - núcleo productivo mínimo del Thin Session Repository en `app/session`: `SessionRecord` semántico con whitelist cerrada, `pending_operation` durable, `GraphState` efímero, grafo LangGraph determinista de un nodo sin persistent checkpointer, repositorio async de Firestore con seam documental estrecho y servicio de turno con exactamente 1 load + 1 save antes de devolver control;
 - suite determinista de 34 tests con doble en memoria y fake del cliente async; sin Gemini, XCALLY, AD/TIVIT ni credenciales;
+- baseline DEV provisional del boundary HTTP XCALLY↔CU013 implementado en el worktree bajo `app/api`, con contrato Pydantic 2, autenticación `X-API-Key` sólo desde entorno, `turn_id` por request, errores con taxonomía segura y OpenAPI coherente con las respuestas reales;
+- seam `ConversationEngine` en `app/conversation` como único punto de extensión para el motor Gemini, sin NLU determinista ni respuestas semánticas falsas;
+- suite determinista del boundary: contrato cerrado y rutas fuera del enum rechazadas, API key válida/incorrecta/ausente/no configurada, `IDENTITY_DATA` sin fuga de DTMF, payloads inválidos sin eco de transcript ni DTMF, identidad de sesión desde la ruta, `turn_id` distinto por request, `X-Request-ID` no usado como idempotency key y errores internos traducidos a contrato seguro;
 - lock productivo exacto y reproducible en `requirements.lock`, con revisión de advisories OSV sin hallazgos abiertos;
 - ningún saver, harness, double, fixture, collection prefix o código runtime de los spikes integrado en `dev`;
 - worktrees y ramas locales `spike/firestore-checkpointer` y `spike/firestore-thin-session-repository` retirados; no existían ramas remotas `spike/*`.
@@ -111,10 +118,24 @@ Validado localmente el 15-09-2026:
 - enlaces Markdown, límites documentales, ausencia de atajos TLS y consistencia de artefactos;
 - Option A medida contra Firestore real: ~29 RPC, 28 escrituras, ~17,6 KB y run p50 4,738 s / p95 4,805 s por turno trivial.
 - Option B medida contra Firestore real: 2 RPC, 1 lectura + 1 escritura, ~630 bytes y run p50 485,5 ms / p95 941,6 ms; continuidad, interrupción antes del save, `pending_operation` sintética y last-writer-wins validados sin retries, `ABORTED` o 429.
-- Closeout documental: Ruff check/format, parseo TOML/YAML, enlaces locales válidos, diff check y escaneo de secretos limpios.
+- gates del boundary HTTP: 66 tests deterministas, Ruff 0.16.7 check/format y MyPy 1.20.2 strict sobre `app` (13 archivos), sin regresión de los 34 tests Thin Session;
+- contrato OpenAPI del endpoint coherente con las respuestas reales (401/422/500/503 con `ErrorResponse`);
+- closeout documental: enlaces locales válidos, diff check y escaneo de secretos limpios.
 
 Pendiente:
 
+- integrar Gemini 2.5 Flash-Lite detrás del seam `ConversationEngine` y medir el camino backend real antes de avanzar a AD/TIVIT:
+
+  ```text
+  HTTP
+  → Firestore load
+  → Gemini 2.5 Flash-Lite
+  → LangGraph
+  → Firestore save
+  → HTTP response
+  ```
+
+- integrar la validación positiva de identidad (ID-001) y cerrar FS-002 con la medición del presupuesto de latencia;
 - evaluar Gemini 2.5 Flash-Lite y una alternativa antes del 16-10-2026;
 - validar los contratos externos aún abiertos antes de acciones de cuenta productivas.
 
@@ -126,17 +147,29 @@ Nunca deshabilitar TLS ni la verificación de certificados para sortear el probl
 
 ## Bloqueos y preguntas abiertas
 
-- Contrato objetivo XCALLY↔CU013.
-- Correlación, idempotencia, polling, reintentos y resultados tardíos.
-- Esquema completo de resultados XCALLY/Orchestrator/TIVIT/AD.
-- Mapeo exacto de estados externos a respuesta o escalamiento cuando aún no esté probado.
+- XC-001 abierto: existe un baseline HTTP provisional del turno, pero faltan la validación y el contrato integrado con el flujo Cally Square real y AD/TIVIT.
+- Correlación, idempotencia, polling, reintentos y resultados tardíos (XC-002 a XC-004).
+- Esquema completo de resultados XCALLY/Orchestrator/TIVIT/AD (XC-005) y mapeo exacto de estados externos a respuesta o escalamiento (XC-006).
+- Resultado positivo de validación de identidad sin integración AD/TIVIT (ID-001).
+- FS-002 abierto: el mecanismo de deadline de Firestore por llamada existe, pero falta medir el camino backend real con Gemini para repartir el presupuesto de latencia.
 - La validación de TTL requiere permisos no concedidos a la cuenta de servicio del experimento.
 
 SendMail permanece Deferred y fuera del alcance inmediato. Los valores predeterminados ausentes de la configuración local no son bloqueos arquitectónicos.
 
 ## Próximo incremento
 
-El mínimo productivo de Thin Session Repository ya está implementado y validado. El siguiente incremento requiere decisión del propietario; los pendientes aceptados son la evaluación del modelo, los contratos externos XCALLY/AD/TIVIT y el boundary de voz. No añadir trabajo especulativo ni inventar contratos.
+El siguiente incremento integra Gemini 2.5 Flash-Lite real con razonamiento desactivado detrás de `ConversationEngine` y mide la latencia del camino backend completo:
+
+```text
+HTTP
+→ Firestore load
+→ Gemini 2.5 Flash-Lite
+→ LangGraph
+→ Firestore save
+→ HTTP response
+```
+
+Esta medición debe realizarse antes de avanzar a AD/TIVIT, porque todavía se desconoce la latencia real del modelo dentro del camino completo. Sus resultados deben fijar FS-002 y decidir si la arquitectura puede continuar; sin esa evidencia no se autoriza el avance. No añadir trabajo especulativo ni inventar contratos conversacionales.
 
 ## Ciclo de vida
 
@@ -152,6 +185,6 @@ No añadir a esta instantánea trabajo especulativo o no aceptado.
 
 ## Hitos anteriores
 
+- Baseline DEV provisional del boundary HTTP XCALLY↔CU013 implementado en el worktree sobre Thin Session: contrato tipado, autenticación `X-API-Key`, contención de DTMF, transcript efímero y seam `ConversationEngine` para Gemini, sin motor falso.
 - Thin Session Repository aceptado en ADR-0009, implementado como núcleo productivo mínimo con lock reproducible y con la limpieza Firestore experimental completada; Option A descartada, ambos experimentos preservados y worktrees/ramas locales retirados.
 - Limpieza destructiva y reinicio arquitectónico preservados por el tag de auditoría.
-- Base GCP DEV/SPIKE e impersonación ADC con lectura Firestore confirmadas por el propietario.

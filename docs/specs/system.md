@@ -49,6 +49,10 @@ LangGraph orquesta el turno técnico y el LLM conserva la responsabilidad conver
 
 Ante un crash a mitad del turno, el siguiente request reinicia desde la última sesión durable. Last-writer-wins por documento se acepta mientras XCALLY ejecute secuencialmente por `conversation_id`; evidencia de concurrencia real del mismo conversation obliga a reabrir optimistic locking o transacciones.
 
+## Boundary HTTP
+
+**PROVISIONAL — implemented DEV baseline.** CU013 materializa un boundary HTTP mínimo para DEV. El contrato implementado, sus restricciones y su evolución basada en evidencia viven en [Boundary HTTP XCALLY ↔ CU013](xcally-boundary.md); no constituye todavía el contrato integrado final con Cally Square ni define órdenes/resultados AD/TIVIT.
+
 ## Entorno GCP actual
 
 **IMPLEMENTED AND VERIFIED BY OWNER.**

@@ -6,7 +6,7 @@ CU013 v0.2.0 es una reconstrucción arquitectónica nueva. El runtime anterior p
 
 ## Estado actual
 
-El repositorio contiene autoridad documental, configuración no sensible y tooling operativo reproducible para la base GCP DEV/SPIKE. Los experimentos de persistencia concluyeron, la estrategia Thin Firestore Session Repository está aceptada y su núcleo productivo mínimo vive en `app/session`; todavía no existe servicio Cloud Run ni integración XCALLY/AD/TIVIT.
+El repositorio contiene autoridad documental, configuración no sensible y tooling operativo reproducible para la base GCP DEV/SPIKE. Los experimentos de persistencia concluyeron, la estrategia Thin Firestore Session Repository está aceptada y su núcleo productivo mínimo vive en `app/session`. El baseline DEV provisional del boundary HTTP para Cally Square vive en `app/api`, con el seam conversacional `app/conversation` para el motor Gemini; todavía no existe servicio Cloud Run ni integración AD/TIVIT.
 
 La infraestructura confirmada usa el proyecto `cu013-xcally-agentic` y la región primaria `us-east1`, con Firestore `(default)`, Artifact Registry y service accounts separadas para spike, runtime y despliegue.
 
@@ -36,5 +36,9 @@ El bootstrap no crea Cloud Run, secretos, WIF o Terraform. La autenticación loc
 ## Persistencia de sesión
 
 [ADR-0009](docs/decisions/0009-use-thin-firestore-session-repository.md) acepta un `SessionRecord` semántico en Firestore y un `GraphState` efímero por request, sin persistent LangGraph checkpointer en el voice path. El núcleo mínimo productivo vive en `app/session`: un load, un grafo LangGraph en RAM y un save antes de devolver control. Los registros [Option A](docs/experiments/0001-firestore-langgraph-checkpointer.md) y [Option B](docs/experiments/0002-firestore-thin-session-repository.md) se conservan como evidencia histórica `Completed`.
+
+## Boundary XCALLY
+
+El baseline DEV provisional del contrato HTTP entre Cally Square y CU013 está en [Boundary HTTP XCALLY ↔ CU013](docs/specs/xcally-boundary.md): `POST /api/v1/conversations/{conversation_id}/turns`, autenticación `X-API-Key` desde entorno, variantes transcript ASR e `IDENTITY_DATA`, respuesta `message`/`route` y errores con taxonomía segura. No es todavía el contrato integrado final. El transcript es efímero y el DTMF crudo queda contenido en el boundary. El motor conversacional Gemini llega en la próxima iteración detrás del seam `ConversationEngine`.
 
 Las instrucciones operativas para agentes están en [AGENTS.md](AGENTS.md). [pyproject.toml](pyproject.toml) declara dependencias y configuración ejecutable; [requirements.lock](requirements.lock) fija las versiones productivas exactas.
