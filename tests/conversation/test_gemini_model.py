@@ -257,3 +257,40 @@ async def test_model_segment_is_recorded_even_on_failure() -> None:
             pending_operation=None,
         )
     assert [name for name, _ in metrics.segments] == ["model"]
+
+
+def test_baseline_from_env_uses_the_session_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for var in (
+        "CU013_VERTEX_PROJECT",
+        "CU013_VERTEX_LOCATION",
+        "CU013_VERTEX_MODEL",
+        "CU013_VERTEX_TIMEOUT_MS",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    baseline = GeminiBaseline.from_env()
+    assert baseline.provider == "vertex_ai"
+    assert baseline.project == "cu013-xcally-agentic"
+    assert baseline.location == "us-east1"
+    assert baseline.model == "gemini-2.5-flash-lite"
+    assert baseline.api_version == "v1"
+    assert baseline.thinking_budget == 0
+    assert baseline.timeout_ms == 15000
+    assert baseline.attempts == 1
+
+
+def test_baseline_from_env_reads_operational_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CU013_VERTEX_PROJECT", "synthetic-project")
+    monkeypatch.setenv("CU013_VERTEX_LOCATION", "synthetic-location")
+    monkeypatch.setenv("CU013_VERTEX_MODEL", "synthetic-model")
+    monkeypatch.setenv("CU013_VERTEX_TIMEOUT_MS", "9000")
+    baseline = GeminiBaseline.from_env()
+    assert baseline.project == "synthetic-project"
+    assert baseline.location == "synthetic-location"
+    assert baseline.model == "synthetic-model"
+    assert baseline.timeout_ms == 9000
+    assert baseline.thinking_budget == 0
+    assert baseline.attempts == 1
