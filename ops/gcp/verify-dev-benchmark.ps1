@@ -40,7 +40,8 @@ function Get-PublicServiceUrl {
     $annotatedUrls = [string]$ServiceDescription.metadata.annotations."run.googleapis.com/urls"
     if (-not [string]::IsNullOrWhiteSpace($annotatedUrls)) {
         try {
-            $urls += @($annotatedUrls | ConvertFrom-Json)
+            $annotated = ConvertFrom-Json -InputObject $annotatedUrls
+            $urls = @($urls + @($annotated))
         }
         catch {
             throw "service URLs annotation is not valid JSON"
@@ -54,28 +55,40 @@ function Get-PublicServiceUrl {
     return [string]$ServiceDescription.status.url
 }
 
-$serviceJson = gcloud run services describe $Service `
+$serviceOutput = @(& gcloud run services describe $Service `
     --project $ProjectId --region $Region `
     --impersonate-service-account $DeployerSa `
-    --format=json
+    --format=json)
 if ($LASTEXITCODE -ne 0) {
     Write-Error "cannot describe service (exit $LASTEXITCODE)"
     exit 1
 }
-$service = $serviceJson | ConvertFrom-Json
-$template = $service.spec.template
-$container = $template.spec.containers[0]
+$serviceText = $serviceOutput -join [Environment]::NewLine
+if ([string]::IsNullOrWhiteSpace($serviceText)) {
+    Write-Error "service describe returned no JSON"
+    exit 1
+}
+$serviceDescription = ConvertFrom-Json -InputObject $serviceText
+$template = $serviceDescription.spec.template
+$containers = @($template.spec.containers)
+if ($containers.Count -ne 1) {
+    Write-Error "expected exactly one Cloud Run container, found $($containers.Count)"
+    exit 1
+}
+$container = $containers | Select-Object -First 1
 $annotations = $template.metadata.annotations
-$serviceUrl = Get-PublicServiceUrl -ServiceDescription $service -Region $Region
+$serviceUrl = Get-PublicServiceUrl -ServiceDescription $serviceDescription -Region $Region
 $expectedServiceUrl = "https://{0}-{1}.{2}.run.app" -f `
-    $service.metadata.name, $service.metadata.namespace, $Region
+    $serviceDescription.metadata.name, $serviceDescription.metadata.namespace, $Region
 
 Check "service_url" ($serviceUrl -eq $expectedServiceUrl) $serviceUrl
-Check "region" ($service.metadata.labels."cloud.googleapis.com/location" -eq $Region) `
-    $service.metadata.labels."cloud.googleapis.com/location"
-$revisionName = $service.status.latestReadyRevisionName
-Check "latest_revision_ready" ($service.status.conditions | Where-Object { $_.type -eq "Ready" -and $_.status -eq "True" }) `
-    $revisionName
+Check "region" ($serviceDescription.metadata.labels."cloud.googleapis.com/location" -eq $Region) `
+    $serviceDescription.metadata.labels."cloud.googleapis.com/location"
+$revisionName = $serviceDescription.status.latestReadyRevisionName
+$readyConditions = @($serviceDescription.status.conditions | Where-Object {
+    $_.type -eq "Ready" -and $_.status -eq "True"
+})
+Check "latest_revision_ready" ($readyConditions.Count -gt 0) $revisionName
 Check "runtime_sa" ($template.spec.serviceAccountName -eq $RuntimeSa) $template.spec.serviceAccountName
 Check "concurrency" ($template.spec.containerConcurrency -eq 1) $template.spec.containerConcurrency
 Check "cpu" ($container.resources.limits.cpu -eq "1") $container.resources.limits.cpu
@@ -100,11 +113,20 @@ else {
     Check "secret_ref" $false "CU013_API_KEY env var missing or not backed by Secret Manager"
 }
 
-$revisionJson = gcloud run revisions describe $revisionName `
+$revisionOutput = @(& gcloud run revisions describe $revisionName `
     --project $ProjectId --region $Region `
     --impersonate-service-account $DeployerSa `
-    --format=json
-$revision = $revisionJson | ConvertFrom-Json
+    --format=json)
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "cannot describe revision (exit $LASTEXITCODE)"
+    exit 1
+}
+$revisionText = $revisionOutput -join [Environment]::NewLine
+if ([string]::IsNullOrWhiteSpace($revisionText)) {
+    Write-Error "revision describe returned no JSON"
+    exit 1
+}
+$revision = ($revisionText | ConvertFrom-Json)
 Check "image_digest" (-not [string]::IsNullOrEmpty($revision.status.imageDigest)) `
     $revision.status.imageDigest
 

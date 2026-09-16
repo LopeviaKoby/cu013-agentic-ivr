@@ -40,7 +40,8 @@ function Get-PublicServiceUrl {
     $annotatedUrls = [string]$ServiceDescription.metadata.annotations."run.googleapis.com/urls"
     if (-not [string]::IsNullOrWhiteSpace($annotatedUrls)) {
         try {
-            $urls += @($annotatedUrls | ConvertFrom-Json)
+            $annotated = ConvertFrom-Json -InputObject $annotatedUrls
+            $urls = @($urls + @($annotated))
         }
         catch {
             throw "service URLs annotation is not valid JSON"
@@ -131,31 +132,41 @@ Invoke-Checked {
 } "cloud run deploy (min-instances=1 for the benchmark window)"
 
 Write-Host "== effective configuration"
-$serviceJson = gcloud run services describe $Service `
+$serviceOutput = @(& gcloud run services describe $Service `
     --project $ProjectId --region $Region `
     --impersonate-service-account $DeployerSa `
-    --format=json
+    --format=json)
 if ($LASTEXITCODE -ne 0) {
     Write-Error "cannot describe deployed service (exit $LASTEXITCODE)"
     exit 1
 }
-$service = $serviceJson | ConvertFrom-Json
-$url = Get-PublicServiceUrl -ServiceDescription $service -Region $Region
-$revision = [string]$service.status.latestReadyRevisionName
-$minInstances = [string]$service.spec.template.metadata.annotations."autoscaling.knative.dev/minScale"
+$serviceText = $serviceOutput -join [Environment]::NewLine
+if ([string]::IsNullOrWhiteSpace($serviceText)) {
+    Write-Error "deployed service describe returned no JSON"
+    exit 1
+}
+$serviceDescription = (ConvertFrom-Json -InputObject $serviceText)
+$url = Get-PublicServiceUrl -ServiceDescription $serviceDescription -Region $Region
+$revision = [string]$serviceDescription.status.latestReadyRevisionName
+$minInstances = [string]$serviceDescription.spec.template.metadata.annotations."autoscaling.knative.dev/minScale"
 if ([string]::IsNullOrWhiteSpace($url) -or [string]::IsNullOrWhiteSpace($revision)) {
     Write-Error "deployed service did not report a ready URL and revision"
     exit 1
 }
-$revisionJson = gcloud run revisions describe $revision `
+$revisionOutput = @(& gcloud run revisions describe $revision `
     --project $ProjectId --region $Region `
     --impersonate-service-account $DeployerSa `
-    --format=json
+    --format=json)
 if ($LASTEXITCODE -ne 0) {
     Write-Error "cannot describe deployed revision (exit $LASTEXITCODE)"
     exit 1
 }
-$revisionDetails = $revisionJson | ConvertFrom-Json
+$revisionText = $revisionOutput -join [Environment]::NewLine
+if ([string]::IsNullOrWhiteSpace($revisionText)) {
+    Write-Error "deployed revision describe returned no JSON"
+    exit 1
+}
+$revisionDetails = ($revisionText | ConvertFrom-Json)
 $digest = [string]$revisionDetails.status.imageDigest
 Write-Host "url: $url"
 Write-Host "revision: $revision"
