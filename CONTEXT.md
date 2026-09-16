@@ -2,7 +2,7 @@
 
 ## Propósito y alcance actual
 
-CU013 reconstruye el backend conversacional de Mesa de Ayuda para XCALLY Motion y Cally Square. El repositorio contiene autoridad documental, estándares de ingeniería, configuración no sensible y herramientas operativas reproducibles para DEV y experimentación. Todavía no contiene código de ejecución.
+CU013 reconstruye el backend conversacional de Mesa de Ayuda para XCALLY Motion y Cally Square. El repositorio contiene autoridad documental, estándares de ingeniería, configuración no sensible, herramientas operativas reproducibles para DEV y experimentación, y el núcleo productivo mínimo del Thin Session Repository en `app/session`. Todavía no existe servicio Cloud Run ni integración XCALLY/AD/TIVIT.
 
 El primer corte de acciones de cuenta es `RESET_PASSWORD` + `UNLOCK_ACCOUNT`, sin prioridad obligatoria entre ambas.
 
@@ -54,9 +54,10 @@ Servicios habilitados pero aún no materializados:
 - SendMail está Deferred. La secuencia aceptada es: experimento de persistencia → integración AD/TIVIT → depuración guiada por logs y pruebas con callers → SendMail. CU013 sólo recibirá el estado del envío.
 - [ADR-0009](docs/decisions/0009-use-thin-firestore-session-repository.md) acepta Thin Firestore Session Repository: cargar un `SessionRecord` semántico, construir un `GraphState` efímero, ejecutar LangGraph sin persistent checkpointer, consolidar y guardar antes del HTTP response.
 - La Opción A resultó viable experimentalmente, pero fue descartada para el voice path productivo por latencia, amplificación de escrituras, complejidad de persistencia/retención y acoplamiento a LangGraph.
-- El security floor productivo está resuelto en `langgraph>=1.0.10` y `langgraph-checkpoint>=4.1.1`; el lock exacto se resolverá en la primera implementación productiva mínima.
+- El security floor productivo está resuelto en `langgraph>=1.0.10` y `langgraph-checkpoint>=4.1.1`; el lock exacto está fijado en [requirements.lock](requirements.lock) con `langgraph==1.2.11`, `langgraph-checkpoint==4.2.0` y `google-cloud-firestore==2.30.0`.
+- El núcleo productivo mínimo del Thin Session Repository vive en `app/session`: contrato durable cerrado, grafo LangGraph determinista sin persistent checkpointer y 1 load + 1 save por turno normal.
 - Gemini 2.5 Flash-Lite con razonamiento desactivado sigue como referencia temporal.
-- No existen código de ejecución, Terraform, Dockerfile ni servicio Cloud Run.
+- No existen Terraform, Dockerfile ni servicio Cloud Run; el único código de ejecución es el núcleo de sesión.
 
 ## Puntos de entrada del repositorio
 
@@ -69,6 +70,8 @@ Servicios habilitados pero aún no materializados:
 - [Runbook de inicialización GCP](docs/runbooks/gcp-dev-bootstrap.md)
 - [Experimento Firestore/LangGraph](docs/experiments/0001-firestore-langgraph-checkpointer.md)
 - [Experimento Thin Session Repository](docs/experiments/0002-firestore-thin-session-repository.md)
+- [Núcleo Thin Session](app/session/)
+- [Lock reproducible](requirements.lock)
 - [`config.yaml`](config.yaml)
 
 ## Implementado, validado y pendiente
@@ -81,13 +84,15 @@ Implementado en el repositorio:
 - manifiesto versionado para IOP locales de sólo lectura;
 - estándares de Python, fiabilidad y pruebas;
 - configuración ejecutable de Ruff, MyPy y pytest en `pyproject.toml`;
-- configuración transitoria `packages = []` mientras no exista un paquete Python productivo;
+- descubrimiento explícito del paquete `app` en `pyproject.toml`, con instalación editable verificada en un entorno limpio;
 - base GCP y decisión de inicialización documentadas;
 - configuración no sensible;
 - guion reproducible de inicialización y verificador de sólo lectura;
 - Experimentos 0001 y 0002 preservados como evidencia histórica `Completed`;
 - ADR-0009 Accepted y specs reconciliadas con `SessionRecord` durable, `GraphState` efímero y save antes del response;
-- rangos productivos elevados al security floor sin adoptar el lock experimental exacto;
+- núcleo productivo mínimo del Thin Session Repository en `app/session`: `SessionRecord` semántico con whitelist cerrada, `pending_operation` durable, `GraphState` efímero, grafo LangGraph determinista de un nodo sin persistent checkpointer, repositorio async de Firestore con seam documental estrecho y servicio de turno con exactamente 1 load + 1 save antes de devolver control;
+- suite determinista de 34 tests con doble en memoria y fake del cliente async; sin Gemini, XCALLY, AD/TIVIT ni credenciales;
+- lock productivo exacto y reproducible en `requirements.lock`, con revisión de advisories OSV sin hallazgos abiertos;
 - ningún saver, harness, double, fixture, collection prefix o código runtime de los spikes integrado en `dev`;
 - worktrees y ramas locales `spike/firestore-checkpointer` y `spike/firestore-thin-session-repository` retirados; no existían ramas remotas `spike/*`.
 
@@ -95,22 +100,21 @@ Validado localmente el 15-09-2026:
 
 - integridad SHA-256 de los dos IOP y coincidencia exacta de nombres;
 - PDF de IOP ignorados por Git y manifiesto versionable;
-- Python 3.12.2 en `.venv`, instalación editable DEV correcta y gates Ruff 0.16.5 aprobados;
+- Python 3.12.2 en `.venv` e instalación editable DEV correcta que expone `app` fuera del worktree;
 - impersonación ADC, refresh `google-auth` y lectura read-only de Firestore validados desde el host real por el propietario;
-- MyPy 1.20.2 con modo estricto y sin ignorar imports globalmente;
-- pytest 8.4.2 y pytest-asyncio 0.26.0 con `asyncio_mode = "auto"`;
+- gates aprobados con el entorno fijado por el lock: 34 tests deterministas, Ruff 0.16.7 check/format y MyPy 1.20.2 strict sobre `app`;
+- pytest 9.1.1 y pytest-asyncio 1.4.0 con `asyncio_mode = "auto"`;
+- `requirements.lock` reproducido en un `.venv` limpio: 68 pins exactos, sin desviaciones ni extras, y gates repetidos allí;
+- advisory review con OSV querybatch sobre los 68 pins: sin advisories abiertos; `langgraph==1.2.11` y `langgraph-checkpoint==4.2.0` por encima del security floor;
+- limpieza Firestore: inventario read-only de 21 root collections `cu013spike_meas_*`, 111 documentos borrados documento a documento con allowlist exacta y verificación posterior de 0 documentos; sin wildcards, collection-group deletes ni TLS deshabilitado;
 - sintaxis PowerShell y estructura YAML de la iteración anterior;
 - enlaces Markdown, límites documentales, ausencia de atajos TLS y consistencia de artefactos;
-- índice CodeGraph válido con 0 símbolos de código.
 - Option A medida contra Firestore real: ~29 RPC, 28 escrituras, ~17,6 KB y run p50 4,738 s / p95 4,805 s por turno trivial.
 - Option B medida contra Firestore real: 2 RPC, 1 lectura + 1 escritura, ~630 bytes y run p50 485,5 ms / p95 941,6 ms; continuidad, interrupción antes del save, `pending_operation` sintética y last-writer-wins validados sin retries, `ABORTED` o 429.
-- Closeout documental: Ruff check/format, parseo TOML/YAML, 24 archivos Markdown con enlaces locales válidos, diff check y escaneo de secretos limpios; ambos harnesses conservaron 33 tests, Ruff y MyPy correctos.
+- Closeout documental: Ruff check/format, parseo TOML/YAML, enlaces locales válidos, diff check y escaneo de secretos limpios.
 
 Pendiente:
 
-- implementar el mínimo productivo de Thin Session Repository a partir de ADR-0009 y las specs, sin copiar el harness experimental;
-- resolver y bloquear reproduciblemente las versiones productivas exactas dentro del security floor;
-- reanudar la enumeración y limpieza remota de Firestore cuando ADC pueda refrescar con TLS verificado; no se enumeró ni borró ninguna colección durante este cierre;
 - evaluar Gemini 2.5 Flash-Lite y una alternativa antes del 16-10-2026;
 - validar los contratos externos aún abiertos antes de acciones de cuenta productivas.
 
@@ -122,8 +126,6 @@ Nunca deshabilitar TLS ni la verificación de certificados para sortear el probl
 
 ## Bloqueos y preguntas abiertas
 
-- El lock productivo exacto de LangGraph/Firestore queda pendiente para la primera implementación; el security floor ya no está abierto.
-- El único residual operativo del cierre experimental es la limpieza Firestore: el refresh ADC falló por `CERTIFICATE_VERIFY_FAILED` antes de listar root collections. No se deshabilitó TLS, no se construyó una allowlist incompleta y no se borró nada.
 - Contrato objetivo XCALLY↔CU013.
 - Correlación, idempotencia, polling, reintentos y resultados tardíos.
 - Esquema completo de resultados XCALLY/Orchestrator/TIVIT/AD.
@@ -134,7 +136,7 @@ SendMail permanece Deferred y fuera del alcance inmediato. Los valores predeterm
 
 ## Próximo incremento
 
-Implementar en OpenCode el mínimo productivo de Thin Session Repository desde ADR-0009 y las specs: contrato semántico cerrado, carga por request, `GraphState` efímero, LangGraph sin persistent checkpointer y persistencia antes del response. No introducir todavía un contrato AD/TIVIT nuevo.
+El mínimo productivo de Thin Session Repository ya está implementado y validado. El siguiente incremento requiere decisión del propietario; los pendientes aceptados son la evaluación del modelo, los contratos externos XCALLY/AD/TIVIT y el boundary de voz. No añadir trabajo especulativo ni inventar contratos.
 
 ## Ciclo de vida
 
@@ -150,6 +152,6 @@ No añadir a esta instantánea trabajo especulativo o no aceptado.
 
 ## Hitos anteriores
 
-- Thin Firestore Session Repository aceptado mediante ADR-0009; Option A descartada para producción, ambos experimentos preservados y worktrees/ramas locales retirados.
+- Thin Session Repository aceptado en ADR-0009, implementado como núcleo productivo mínimo con lock reproducible y con la limpieza Firestore experimental completada; Option A descartada, ambos experimentos preservados y worktrees/ramas locales retirados.
 - Limpieza destructiva y reinicio arquitectónico preservados por el tag de auditoría.
 - Base GCP DEV/SPIKE e impersonación ADC con lectura Firestore confirmadas por el propietario.

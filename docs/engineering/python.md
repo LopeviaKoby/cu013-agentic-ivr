@@ -17,11 +17,25 @@ Este documento define convenciones de implementación subordinadas a la [SPEC de
 - El runtime nuevo parte con MyPy en modo `strict`. Toda excepción debe ser local, mínima y justificada.
 - No se permite `ignore_missing_imports = true` global sin una decisión explícita respaldada por evidencia.
 
-### Packaging transitorio
+### Packaging y lock
 
-`packages = []` es una configuración transitoria de la baseline sin runtime. En la misma iteración que cree el primer paquete productivo debe reemplazarse por una configuración explícita de packaging o discovery, verificando `pip install -e ".[dev]"` y que el paquete runtime sea importable desde `.venv`.
+- El paquete runtime productivo es `app`, descubierto explícitamente con `[tool.setuptools.packages.find]` e `include = ["app*"]`.
+- La instalación editable DEV debe verificar `pip install -e ".[dev]"` y que el paquete runtime sea importable desde `.venv`.
+- [`pyproject.toml`](../../pyproject.toml) declara rangos compatibles; [`requirements.lock`](../../requirements.lock) fija las versiones exactas y reproducibles de todo el entorno del proyecto.
+- DEV instala el extra de desarrollo con el lock:
 
-No se crean `app/`, paquetes vacíos ni configuración preventiva para anticipar esa iteración.
+  ```powershell
+  python -m pip install -c requirements.lock -e ".[dev]"
+  ```
+
+- El runtime productivo usa el mismo lock como constraints y no instala el extra `dev`:
+
+  ```powershell
+  python -m pip install -c requirements.lock .
+  ```
+
+- No se cambia de gestor de paquetes ni se añade herramienta de locking sin necesidad demostrada.
+- Al actualizar dependencias se revisan los advisories vigentes antes de fijar el lock y se regenera con la resolución real de `pip`.
 
 ## I/O asíncrona
 

@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Minimal productive Thin Session Repository core in `app/session`: semantic
+  whitelisted `SessionRecord`, durable `pending_operation`, ephemeral
+  `GraphState`, a deterministic single-node LangGraph turn without persistent
+  checkpointer, an async Firestore repository with a narrow document seam and a
+  turn service with exactly one load and one save.
+- Deterministic test suite for the session core, including continuity,
+  crash-before-save recovery, durable pending operation, PII and whitelist
+  exclusion and async repository behavior.
+- `requirements.lock` with the exact reproducible production pins, verified in
+  a clean environment and reviewed against current OSV advisories.
 - GCP DEV/SPIKE baseline in `us-east1`.
 - Firestore `(default)` in Native mode, Standard edition.
 - Artifact Registry DEV repository.
@@ -20,6 +30,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Replace the transitional `packages = []` packaging with explicit `app`
+  package discovery; editable DEV install verified.
+- Raise dev tooling to advisory-free floors: `pytest>=9.0.3` and
+  `pytest-asyncio>=1.4.0`.
+- Remove the experimental Firestore spike documents (111 documents) under the
+  documented `cu013spike_meas_*` prefixes.
 - Adopt Thin Firestore Session Repository for durable voice-session state.
 - Reject persistent LangGraph checkpointing for the production voice path.
 - Raise the LangGraph security floor to `langgraph>=1.0.10` and

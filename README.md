@@ -6,7 +6,7 @@ CU013 v0.2.0 es una reconstrucción arquitectónica nueva. El runtime anterior p
 
 ## Estado actual
 
-El repositorio contiene autoridad documental, configuración no sensible y tooling operativo reproducible para la base GCP DEV/SPIKE. Los experimentos de persistencia concluyeron y la estrategia Thin Firestore Session Repository está aceptada; todavía no existe runtime productivo ni servicio Cloud Run.
+El repositorio contiene autoridad documental, configuración no sensible y tooling operativo reproducible para la base GCP DEV/SPIKE. Los experimentos de persistencia concluyeron, la estrategia Thin Firestore Session Repository está aceptada y su núcleo productivo mínimo vive en `app/session`; todavía no existe servicio Cloud Run ni integración XCALLY/AD/TIVIT.
 
 La infraestructura confirmada usa el proyecto `cu013-xcally-agentic` y la región primaria `us-east1`, con Firestore `(default)`, Artifact Registry y service accounts separadas para spike, runtime y despliegue.
 
@@ -35,6 +35,6 @@ El bootstrap no crea Cloud Run, secretos, WIF o Terraform. La autenticación loc
 
 ## Persistencia de sesión
 
-[ADR-0009](docs/decisions/0009-use-thin-firestore-session-repository.md) acepta un `SessionRecord` semántico en Firestore y un `GraphState` efímero por request, sin persistent LangGraph checkpointer en el voice path. Los registros [Option A](docs/experiments/0001-firestore-langgraph-checkpointer.md) y [Option B](docs/experiments/0002-firestore-thin-session-repository.md) se conservan como evidencia histórica `Completed`.
+[ADR-0009](docs/decisions/0009-use-thin-firestore-session-repository.md) acepta un `SessionRecord` semántico en Firestore y un `GraphState` efímero por request, sin persistent LangGraph checkpointer en el voice path. El núcleo mínimo productivo vive en `app/session`: un load, un grafo LangGraph en RAM y un save antes de devolver control. Los registros [Option A](docs/experiments/0001-firestore-langgraph-checkpointer.md) y [Option B](docs/experiments/0002-firestore-thin-session-repository.md) se conservan como evidencia histórica `Completed`.
 
-Las instrucciones operativas para agentes están en [AGENTS.md](AGENTS.md). Las dependencias Python se centralizan en [pyproject.toml](pyproject.toml).
+Las instrucciones operativas para agentes están en [AGENTS.md](AGENTS.md). [pyproject.toml](pyproject.toml) declara dependencias y configuración ejecutable; [requirements.lock](requirements.lock) fija las versiones productivas exactas.
