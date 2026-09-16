@@ -21,5 +21,13 @@ vertex:
 cloud_run:
   service: cu013-runtime-dev
   region: us-east1
-  min_instances: 0
+  cpu: 1
+  memory: 512Mi
+  concurrency: 1
   max_instances: 1
+  min_instances: 0
+  benchmark_min_instances: 1
+  billing: request
+
+security:
+  api_key_secret: cu013-api-key-dev
