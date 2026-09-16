@@ -47,6 +47,10 @@ catch {
 if ([string]::IsNullOrWhiteSpace($apiKey)) {
     throw "secret payload was empty"
 }
+if ($apiKey.IndexOfAny([char[]]@(0, 10, 13)) -ge 0) {
+    Remove-Item Env:CU013_API_KEY -ErrorAction SilentlyContinue
+    throw "secret version $SecretVersion contains NUL, CR or LF and cannot be used as an HTTP header"
+}
 
 Set-Item -LiteralPath "Env:CU013_API_KEY" -Value $apiKey
 $apiKey = $null

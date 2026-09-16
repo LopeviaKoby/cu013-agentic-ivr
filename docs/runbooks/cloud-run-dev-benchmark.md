@@ -38,7 +38,8 @@ benchmark.**
    `python evals/cloud_run_latency.py --url <service-url>`
    - si la sesión no conserva la variable, cargar sólo la versión fijada en
      memoria con `. .\ops\gcp\set-dev-benchmark-api-key.ps1`; el script se
-     ejecuta mediante dot-sourcing, no imprime ni persiste el valor;
+     ejecuta mediante dot-sourcing, no imprime ni persiste el valor y rechaza
+     una versión que contenga NUL o saltos de línea (inválidos en `X-API-Key`);
    - conservar la salida completa sin secretos: incluye `benchmark_prefix`,
      `measured_started_at_utc` y `measured_ended_at_utc` para recuperar sólo
      las métricas server-side de las 30 requests medidas;
