@@ -25,7 +25,7 @@ La precedencia completa está definida en [AGENTS.md](../../AGENTS.md).
 
 **ACCEPTED.** La arquitectura es un monolito modular por capacidades. LangGraph es el framework de orquestación y debe usarse sólo donde aporte las primitivas necesarias.
 
-**ACCEPTED.** Firestore es el único store durable aceptado. El mecanismo concreto LangGraph↔Firestore sigue sin decidirse.
+**ACCEPTED.** Firestore es el único store durable aceptado. El mecanismo vigente es un Thin Firestore Session Repository; el voice path no usa un persistent LangGraph checkpointer.
 
 **ACCEPTED.** No se incorporarán una gran FSM conversacional, NLU por keywords/regex, RAG/vector DB, multi-agent, un orquestador propio ni infraestructura adicional sin evidencia.
 
@@ -38,6 +38,16 @@ El runtime es responsable de contratos, validación, autorización, invariantes,
 Una tool representa una capacidad externa. Persistir estado o modificar memoria interna no es una tool.
 
 Un turno normal apunta a una sola solicitud al modelo. Si una interacción lógica requiere más de dos llamadas secuenciales al modelo, se debe hacer STOP & REPORT.
+
+## Persistencia de sesión
+
+**ACCEPTED.** Cada request debe cargar desde Firestore un `SessionRecord` pequeño, semántico y con campos permitidos explícitamente; construir un `GraphState` efímero en RAM; ejecutar LangGraph sin checkpointer persistente; consolidar el siguiente `SessionRecord`; y persistirlo antes de emitir el HTTP response.
+
+El `GraphState` no es un contrato durable. No se persisten tools, schemas de tools, SDK clients, objetos internos de LangGraph, checkpoints ni estado arbitrario del grafo.
+
+LangGraph orquesta el turno técnico y el LLM conserva la responsabilidad conversacional. Una futura `pending_operation` durable puede exigir escrituras adicionales antes o después de un side effect empresarial; no se introducen escrituras por super-step o por internals de LangGraph.
+
+Ante un crash a mitad del turno, el siguiente request reinicia desde la última sesión durable. Last-writer-wins por documento se acepta mientras XCALLY ejecute secuencialmente por `conversation_id`; evidencia de concurrencia real del mismo conversation obliga a reabrir optimistic locking o transacciones.
 
 ## Entorno GCP actual
 

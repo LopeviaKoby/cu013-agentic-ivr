@@ -45,3 +45,4 @@ Sólo se reconsiderará si Firestore demuestra un fallo material bajo Option A y
 - [Especificación del sistema](../specs/system.md#alcance-y-stack)
 - [Acciones de cuenta — Persistencia](../specs/account-actions.md#persistencia-y-concurrencia)
 - [Experimento Firestore/LangGraph](../experiments/0001-firestore-langgraph-checkpointer.md)
+- [ADR-0009 — Usar un repositorio delgado de sesiones en Firestore](0009-use-thin-firestore-session-repository.md)

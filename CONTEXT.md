@@ -52,7 +52,9 @@ Servicios habilitados pero aún no materializados:
 - La validación de identidad comienza con documento y fecha de nacimiento por DTMF.
 - Los valores DTMF crudos quedan fuera del LLM y de los registros, y se minimizan en persistencia.
 - SendMail está Deferred. La secuencia aceptada es: experimento de persistencia → integración AD/TIVIT → depuración guiada por logs y pruebas con callers → SendMail. CU013 sólo recibirá el estado del envío.
-- La Opción A del mecanismo de checkpoints Firestore es el siguiente experimento, no un mecanismo de persistencia con estado Accepted.
+- [ADR-0009](docs/decisions/0009-use-thin-firestore-session-repository.md) acepta Thin Firestore Session Repository: cargar un `SessionRecord` semántico, construir un `GraphState` efímero, ejecutar LangGraph sin persistent checkpointer, consolidar y guardar antes del HTTP response.
+- La Opción A resultó viable experimentalmente, pero fue descartada para el voice path productivo por latencia, amplificación de escrituras, complejidad de persistencia/retención y acoplamiento a LangGraph.
+- El security floor productivo está resuelto en `langgraph>=1.0.10` y `langgraph-checkpoint>=4.1.1`; el lock exacto se resolverá en la primera implementación productiva mínima.
 - Gemini 2.5 Flash-Lite con razonamiento desactivado sigue como referencia temporal.
 - No existen código de ejecución, Terraform, Dockerfile ni servicio Cloud Run.
 
@@ -66,6 +68,7 @@ Servicios habilitados pero aún no materializados:
 - [Manifiesto de IOP locales](docs/iop/README.md)
 - [Runbook de inicialización GCP](docs/runbooks/gcp-dev-bootstrap.md)
 - [Experimento Firestore/LangGraph](docs/experiments/0001-firestore-langgraph-checkpointer.md)
+- [Experimento Thin Session Repository](docs/experiments/0002-firestore-thin-session-repository.md)
 - [`config.yaml`](config.yaml)
 
 ## Implementado, validado y pendiente
@@ -82,7 +85,10 @@ Implementado en el repositorio:
 - base GCP y decisión de inicialización documentadas;
 - configuración no sensible;
 - guion reproducible de inicialización y verificador de sólo lectura;
-- registro planificado del experimento.
+- Experimentos 0001 y 0002 preservados como evidencia histórica `Completed`;
+- ADR-0009 Accepted y specs reconciliadas con `SessionRecord` durable, `GraphState` efímero y save antes del response;
+- rangos productivos elevados al security floor sin adoptar el lock experimental exacto;
+- ningún saver, harness, double, fixture, collection prefix o código runtime de los spikes integrado en `dev`.
 
 Validado localmente el 15-09-2026:
 
@@ -95,11 +101,15 @@ Validado localmente el 15-09-2026:
 - sintaxis PowerShell y estructura YAML de la iteración anterior;
 - enlaces Markdown, límites documentales, ausencia de atajos TLS y consistencia de artefactos;
 - índice CodeGraph válido con 0 símbolos de código.
+- Option A medida contra Firestore real: ~29 RPC, 28 escrituras, ~17,6 KB y run p50 4,738 s / p95 4,805 s por turno trivial.
+- Option B medida contra Firestore real: 2 RPC, 1 lectura + 1 escritura, ~630 bytes y run p50 485,5 ms / p95 941,6 ms; continuidad, interrupción antes del save, `pending_operation` sintética y last-writer-wins validados sin retries, `ABORTED` o 429.
+- Closeout documental: Ruff check/format, parseo TOML/YAML, 24 archivos Markdown con enlaces locales válidos, diff check y escaneo de secretos limpios; ambos harnesses conservaron 33 tests, Ruff y MyPy correctos.
 
 Pendiente:
 
-- ejecutar la Opción A en `spike/firestore-checkpointer` mediante un encargo separado a OpenCode;
-- decidir el mecanismo LangGraph↔Firestore con evidencia;
+- implementar el mínimo productivo de Thin Session Repository a partir de ADR-0009 y las specs, sin copiar el harness experimental;
+- resolver y bloquear reproduciblemente las versiones productivas exactas dentro del security floor;
+- completar el inventario read-only de colecciones `cu013spike_*` y limpiar sólo los documentos identificados de ambos spikes;
 - evaluar Gemini 2.5 Flash-Lite y una alternativa antes del 16-10-2026;
 - validar los contratos externos aún abiertos antes de acciones de cuenta productivas.
 
@@ -111,8 +121,8 @@ Nunca deshabilitar TLS ni la verificación de certificados para sortear el probl
 
 ## Bloqueos y preguntas abiertas
 
-- Conjunto seguro y compatible de versiones LangGraph/Firestore y contrato concreto del saver al ejecutar el experimento.
-- Evidencia de latencia, amplificación de escrituras, contención y recuperación de la Opción A.
+- El lock productivo exacto de LangGraph/Firestore queda pendiente para la primera implementación; el security floor ya no está abierto.
+- La limpieza Firestore requiere enumerar los IDs exactos de los smoke runs de Option A. La consulta read-only intentada durante el closeout no pudo refrescar ADC por `CERTIFICATE_VERIFY_FAILED`; no se deshabilitó TLS y no se borró nada.
 - Contrato objetivo XCALLY↔CU013.
 - Correlación, idempotencia, polling, reintentos y resultados tardíos.
 - Esquema completo de resultados XCALLY/Orchestrator/TIVIT/AD.
@@ -123,7 +133,7 @@ SendMail permanece Deferred y fuera del alcance inmediato. Los valores predeterm
 
 ## Próximo incremento
 
-En un encargo separado, preparar el árbol de trabajo `spike/firestore-checkpointer` para que OpenCode ejecute la Opción A.
+Implementar en OpenCode el mínimo productivo de Thin Session Repository desde ADR-0009 y las specs: contrato semántico cerrado, carga por request, `GraphState` efímero, LangGraph sin persistent checkpointer y persistencia antes del response. No introducir todavía un contrato AD/TIVIT nuevo.
 
 ## Ciclo de vida
 
@@ -139,6 +149,6 @@ No añadir a esta instantánea trabajo especulativo o no aceptado.
 
 ## Hitos anteriores
 
+- Thin Firestore Session Repository aceptado mediante ADR-0009; Option A descartada para producción y ambos experimentos preservados.
 - Limpieza destructiva y reinicio arquitectónico preservados por el tag de auditoría.
 - Base GCP DEV/SPIKE e impersonación ADC con lectura Firestore confirmadas por el propietario.
-- Baseline documental y operativa v0.2.0 reconciliada para `dev`.

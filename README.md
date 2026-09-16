@@ -6,7 +6,7 @@ CU013 v0.2.0 es una reconstrucción arquitectónica nueva. El runtime anterior p
 
 ## Estado actual
 
-El repositorio contiene autoridad documental, configuración no sensible y tooling operativo reproducible para la base GCP DEV/SPIKE. Todavía no existe runtime, servicio Cloud Run ni implementación del spike Firestore/LangGraph.
+El repositorio contiene autoridad documental, configuración no sensible y tooling operativo reproducible para la base GCP DEV/SPIKE. Los experimentos de persistencia concluyeron y la estrategia Thin Firestore Session Repository está aceptada; todavía no existe runtime productivo ni servicio Cloud Run.
 
 La infraestructura confirmada usa el proyecto `cu013-xcally-agentic` y la región primaria `us-east1`, con Firestore `(default)`, Artifact Registry y service accounts separadas para spike, runtime y despliegue.
 
@@ -33,8 +33,8 @@ El primer slice incluye `RESET_PASSWORD` y `UNLOCK_ACCOUNT`. VPN queda para una 
 
 El bootstrap no crea Cloud Run, secretos, WIF o Terraform. La autenticación local del spike usa ADC impersonation y nunca claves JSON de service account.
 
-## Experimento siguiente
+## Persistencia de sesión
 
-El plan y registro durable del experimento está en [checkpointer Firestore/LangGraph](docs/experiments/0001-firestore-langgraph-checkpointer.md). Está en estado `Planned`; su ejecución pertenece a un encargo separado y a un worktree efímero.
+[ADR-0009](docs/decisions/0009-use-thin-firestore-session-repository.md) acepta un `SessionRecord` semántico en Firestore y un `GraphState` efímero por request, sin persistent LangGraph checkpointer en el voice path. Los registros [Option A](docs/experiments/0001-firestore-langgraph-checkpointer.md) y [Option B](docs/experiments/0002-firestore-thin-session-repository.md) se conservan como evidencia histórica `Completed`.
 
 Las instrucciones operativas para agentes están en [AGENTS.md](AGENTS.md). Las dependencias Python se centralizan en [pyproject.toml](pyproject.toml).

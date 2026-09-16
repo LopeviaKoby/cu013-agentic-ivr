@@ -183,11 +183,22 @@ El resultado exacto de SendMail permanece Deferred y fuera del alcance inmediato
 
 ## Persistencia y concurrencia
 
-Firestore es el único store durable aceptado. El mecanismo concreto LangGraph↔Firestore se decidirá mediante evidencia experimental.
+Firestore es el único store durable aceptado. La estrategia vigente es Thin Firestore Session Repository:
 
-Option A probará primero un custom async Firestore checkpointer compatible con la versión bloqueada de LangGraph. Es una hipótesis, no una decisión Accepted.
+```text
+request
+→ cargar SessionRecord
+→ construir GraphState efímero
+→ ejecutar LangGraph sin persistent checkpointer
+→ consolidar SessionRecord
+→ persistir antes del HTTP response
+```
 
-Option B es un Thin Session Repository: lectura, construcción de estado en memoria, ejecución y persistencia consolidada. Una operación pendiente puede exigir persistir antes de autorizar un side effect; una escritura por turno no es un dogma.
+El `SessionRecord` sólo conserva campos semánticos permitidos explícitamente; no conserva DTMF crudo, tools, schemas de tools, SDK clients, internals de LangGraph ni `GraphState` arbitrario.
+
+Una futura `pending_operation` durable puede exigir una escritura adicional antes de autorizar un side effect y otra al confirmar su resultado. Este requisito mantiene abierta la definición del contrato AD/TIVIT; no la inventa ni convierte una escritura por turno en dogma.
+
+Un crash mid-turn reinicia desde la última sesión durable. Last-writer-wins por documento se acepta mientras XCALLY procese secuencialmente un `conversation_id`; si aparece concurrencia real del mismo conversation se deben reevaluar optimistic locking o transacciones antes de producción.
 
 ## Seguridad
 

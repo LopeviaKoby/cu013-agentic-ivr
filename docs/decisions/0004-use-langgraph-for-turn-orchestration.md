@@ -45,3 +45,4 @@ Se reconsiderará si LangGraph impide una propiedad requerida aun manteniendo un
 
 - [Especificación del sistema](../specs/system.md#alcance-y-stack)
 - [Experimento Firestore/LangGraph](../experiments/0001-firestore-langgraph-checkpointer.md)
+- [ADR-0009 — Usar un repositorio delgado de sesiones en Firestore](0009-use-thin-firestore-session-repository.md)

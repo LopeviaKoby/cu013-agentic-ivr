@@ -20,6 +20,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Adopt Thin Firestore Session Repository for durable voice-session state.
+- Reject persistent LangGraph checkpointing for the production voice path.
+- Raise the LangGraph security floor to `langgraph>=1.0.10` and
+  `langgraph-checkpoint>=4.1.1`; defer the exact production lock to the first
+  minimal production implementation.
+
 - Documented reproducible `gcloud` bootstrap before Terraform.
 - Resolved the infrastructure blocker for the Firestore persistence spike.
 - Moved the deadline for evaluating a Gemini alternative to 16-10-2026.

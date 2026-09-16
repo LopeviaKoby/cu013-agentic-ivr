@@ -11,6 +11,7 @@ Este artefacto registra sólo incógnitas activas que requieren integración, ej
 | `XC-005` | Resultados y errores | Se observaron body común, rutas y statuses literales en XML/API | Shape completo de responses y errors reales | Captura PII-safe durante integración y traslado a contratos canónicos | Discovered |
 | `XC-006` | Respuesta y escalamiento | Existen statuses literales y ruta de handoff/escalamiento XCALLY | Mapeo exacto status → respuesta al caller o escalamiento | Debugging guiado por logs y pruebas con callers; actualizar SPEC al aceptarse | Discovered |
 | `MAIL-001` | SendMail | CU013 sólo debe recibir el estado del envío y nunca la contraseña temporal | Resultado exacto de SendMail | Secuencia: persistence spike → AD/TIVIT integration → log-driven debugging/caller tests → SendMail | Deferred |
+| `FS-001` | Dependencias de persistencia | Security floor resuelto: `langgraph>=1.0.10` y `langgraph-checkpoint>=4.1.1`; el lock seguro de los spikes fue compatible, pero no es una decisión productiva | Lock productivo exacto y reproducible para la implementación mínima de Thin Session | Resolver y validar compatibilidad en la primera implementación productiva, sin asumir automáticamente los pins del spike | Investigated |
 
 Ciclo de vida:
 
