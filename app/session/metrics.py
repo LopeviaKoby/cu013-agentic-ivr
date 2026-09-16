@@ -5,7 +5,10 @@ token counts. No transcript, DTMF, generated text or any payload data may
 ever be recorded here.
 """
 
+import logging
 from typing import Protocol
+
+logger = logging.getLogger("cu013.metrics")
 
 
 class TurnMetrics(Protocol):
@@ -44,3 +47,18 @@ class RecordingTurnMetrics:
     def drain_counters(self) -> list[tuple[str, int]]:
         counters, self.counters = self.counters, []
         return counters
+
+
+class StructuredLogTurnMetrics:
+    """Emit segment timings and token counters as PII-safe log lines.
+
+    Cloud Run captures stdout into Cloud Logging, so the DEV benchmark can
+    recover the server-side segmentation without an observability platform.
+    Only fixed names, durations and integer counters are ever logged.
+    """
+
+    def record_segment(self, name: str, duration_ms: float) -> None:
+        logger.info("turn_metric segment=%s duration_ms=%.3f", name, duration_ms)
+
+    def record_counter(self, name: str, value: int) -> None:
+        logger.info("turn_metric counter=%s value=%d", name, value)
