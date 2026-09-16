@@ -22,6 +22,17 @@ benchmark.**
 
 ## Ventana de benchmark
 
+Si la versión 1 de `cu013-api-key-dev` contiene CR/LF/NUL y no puede usarse
+en `X-API-Key`, el owner debe cerrar primero la ventana con
+`stop-dev-benchmark.ps1`. Después puede ejecutar
+`rotate-dev-benchmark-api-key.ps1`: el script confirma `min=0`, imagen y
+referencia actuales; añade una versión al secret existente con bytes
+exactos sin salto de línea, verifica la lectura, actualiza la referencia
+numérica del servicio y restaura `min=1`. Esta operación crea una revisión
+nueva sin reconstruir la imagen. El valor no se imprime ni se guarda en
+`.env`. La versión 1 permanece como evidencia; su deshabilitación se
+decidirá después de comprobar la nueva revisión.
+
 1. `powershell -File ops/gcp/deploy-dev-benchmark.ps1`
    - valida branch dev + worktree limpio + HEAD == origin/dev;
    - comprueba Docker, gcloud y Artifact Registry;
@@ -37,7 +48,9 @@ benchmark.**
    `$env:CU013_API_KEY`, que el cliente lee sin imprimir):
    `python evals/cloud_run_latency.py --url <service-url>`
    - si la sesión no conserva la variable, cargar sólo la versión fijada en
-     memoria con `. .\ops\gcp\set-dev-benchmark-api-key.ps1`; el script se
+     memoria con
+     `. .\ops\gcp\set-dev-benchmark-api-key.ps1 -SecretVersion <versión>`;
+     tras la rotación, no usar el valor por defecto (versión 1). El script se
      ejecuta mediante dot-sourcing, no imprime ni persiste el valor y rechaza
      una versión que contenga NUL o saltos de línea (inválidos en `X-API-Key`);
    - conservar la salida completa sin secretos: incluye `benchmark_prefix`,
@@ -47,7 +60,8 @@ benchmark.**
      percentiles se calculan independientemente sobre la distribución.
 3. Verificación read-only durante la ventana:
    `powershell -File ops/gcp/verify-dev-benchmark.ps1 -ExpectedMinInstances 1`
-   (nunca imprime el valor del secret).
+   (nunca imprime el valor del secret). Tras rotar, añadir
+   `-ExpectedSecretVersion <versión>` y comparar el tag de imagen.
 4. **Apagar obligatoriamente**:
    `powershell -File ops/gcp/stop-dev-benchmark.ps1`
    y verificar `min instances: 0` con `-ExpectedMinInstances 0`.

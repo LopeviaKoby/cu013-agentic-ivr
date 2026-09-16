@@ -15,7 +15,10 @@ param(
     [string]$SecretName = "cu013-api-key-dev",
     [string]$ArtifactRepo = "cu013-containers-dev",
     [ValidateSet(0, 1)]
-    [int]$ExpectedMinInstances = 1
+    [int]$ExpectedMinInstances = 1,
+    [string]$ExpectedSecretVersion = "",
+    [string]$ExpectedImage = "",
+    [string]$ExpectedImageDigest = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -102,12 +105,19 @@ Check "cpu_throttling" (
 ) $annotations."run.googleapis.com/cpu-throttling"
 $expectedImagePrefix = "us-east1-docker.pkg.dev/$ProjectId/$ArtifactRepo/$Service"
 Check "image_prefix" ($container.image.StartsWith($expectedImagePrefix)) $container.image
+if (-not [string]::IsNullOrWhiteSpace($ExpectedImage)) {
+    Check "image_exact" ($container.image -ceq $ExpectedImage) $container.image
+}
 
 $secretRef = $container.env | Where-Object { $_.name -eq "CU013_API_KEY" }
 if ($null -ne $secretRef -and $null -ne $secretRef.valueFrom.secretKeyRef) {
     $refName = $secretRef.valueFrom.secretKeyRef.name
     $refVersion = $secretRef.valueFrom.secretKeyRef.key
-    Check "secret_ref" ($refName -eq $SecretName) "secret=$refName version=$refVersion"
+    $secretMatches = $refName -eq $SecretName
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSecretVersion)) {
+        $secretMatches = $secretMatches -and [string]$refVersion -eq $ExpectedSecretVersion
+    }
+    Check "secret_ref" $secretMatches "secret=$refName version=$refVersion"
 }
 else {
     Check "secret_ref" $false "CU013_API_KEY env var missing or not backed by Secret Manager"
@@ -129,6 +139,10 @@ if ([string]::IsNullOrWhiteSpace($revisionText)) {
 $revision = ($revisionText | ConvertFrom-Json)
 Check "image_digest" (-not [string]::IsNullOrEmpty($revision.status.imageDigest)) `
     $revision.status.imageDigest
+if (-not [string]::IsNullOrWhiteSpace($ExpectedImageDigest)) {
+    Check "image_digest_exact" ($revision.status.imageDigest -ceq $ExpectedImageDigest) `
+        $revision.status.imageDigest
+}
 
 Write-Host "---"
 Write-Host "model/location config: defaults baked in the image (project cu013-xcally-agentic,"
