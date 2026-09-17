@@ -30,17 +30,22 @@ initial_state:
   identity_validated: true|false
   conversation_goal: <goal|null>        # semantic, not a class name
   goal_revision: <int>
-  confirmation: <pending|none|challenge-id|null>
+  confirmation: <pending|authorized|none|null>
+  confirmation_goal_revision: <int>     # optional; binds a challenge to an older revision
   pending_operation: <pending|unknown|confirmed|failed|null>
+  identity_failure_count: <int>         # optional
+  identity_validated_at_expired: true   # optional
+turn_semantics: sequence|paraphrases    # optional; "paraphrases" probes one property per turn
 turns:
   - transcript: synthetic caller utterance (may be a paraphrase set)
-external_events:                         # simulated, only when relevant
-  - event: <dispatch|result|late_result|delivery|...>
+external_events:                         # simulated domain events, only when relevant
+  - event: <identity_validation|confirmation_timeout|dispatch_timeout|result|late_result|delivery|goal_revision>
+    result: <caller_failure|technical_failure|confirmed|failed|pending|...>  # structured outcome
     detail: synthetic payload description
 expected:
-  route: <CONTINUE|COLLECT_IDENTITY|COMPLETE|ESCALATE>
+  route: <CONTINUE|COLLECT_IDENTITY|COMPLETE|ESCALATE|UNSPECIFIED>
   conversation_goal: <goal|null|unchanged>
-  confirmation_state: <pending|authorized|invalidated|cancelled|none>
+  confirmation_state: <pending|authorized|invalidated|cancelled|none|not_valid|not_oracled>
   action_eligibility: <eligible|not_eligible>
   dispatch_count: <int>                  # 0 or 1 per case by invariant
   state_delta: <brief semantic description>
@@ -49,11 +54,25 @@ expected:
   forbidden_claims: [...]                # claims the agent must never state
 ```
 
-A runner that cannot express a field yet reports
-`NOT REPRESENTABLE IN CURRENT CONTRACT` instead of faking support.
-`initial_state` may carry additional synthetic fields when a case needs them
-(e.g. `identity_failure_count`, `identity_validated_at_expired`); runners that
-cannot represent them treat the case as `PARTIAL`.
+`confirmation_state` describes the fate of the challenge that existed before
+the case: `invalidated`/`cancelled`/`none` mean no active challenge remains
+(a re-prompt may open a new one), and `authorized` means the dispatch guard
+exists. `not_valid` oracles only the contractual effect (no usable challenge
+remains) and accepts either internal conclusion, so the corpus never
+overfits internal enum names; `not_oracled` means the case deliberately does
+not oracle whether HITL started in that turn. The runner reports the observed
+conclusion separately.
+
+`route: UNSPECIFIED` marks a case whose exact route depends on a still-open
+wire contract (for example the identity technical-failure result): the state
+invariants are still compared in full and the route is reported as
+`NOT ORACLED`, never as a failure.
+
+A runner that cannot express a field reports
+`NOT REPRESENTABLE IN CURRENT CONTRACT` instead of faking support. Event-only
+cases and cases whose turn carries no caller speech (silence/timeout) are
+evaluated on state and reported as `NOT EVALUATED` for the route, because the
+XCALLY wire contract for those events is still open.
 
 ## Families
 
@@ -67,8 +86,8 @@ cannot represent them treat the case as `PARTIAL`.
 | goal-cancellation | explicit cancel before dispatch cancels the action |
 | multiple-supported-goals | more than one supported goal handled |
 | ambiguous-request | ambiguity leads to clarification, no dispatch |
-| unsupported-request | unsupported request declines without handoff unless required |
-| caller-asks-human | handoff because the caller requested it |
+| unsupported-request | unsupported or out-of-scope request declines/redirects without handoff |
+| caller-asks-human | handoff because the caller explicitly requested it; goal preserved unless explicitly cancelled |
 | caller-does-not-ask-human | no handoff without a valid cause |
 | identity-unvalidated | no dispatch authorization before identity |
 | identity-validated | identity enables eligibility, not dispatch |
@@ -105,18 +124,26 @@ privileged rule:
 
 ## Usage
 
-Real-model baseline runner (manual, outside CI, requires ADC):
+Runtime semantic runner (manual, outside CI, requires ADC): it replays each
+case against the real model and the deterministic runtime, then reports per
+case (PASS / FAIL / NOT ORACLED / NOT REPRESENTABLE / INFRA), per family, plus
+latency (model, runtime semantic processing and turn total: count, min, p50,
+p95, max), prompt/completion tokens per call and accumulated tokens for
+multi-turn and paraphrase cases:
 
 ```powershell
 .\.venv\Scripts\python.exe evals\conversation_baseline_eval.py
+.\.venv\Scripts\python.exe evals\conversation_baseline_eval.py --validate-only
 ```
 
-The runner records route, the semantic proposal fields available today
-(`action_requested`), latency and route stability per family. Token usage is
-not exposed by the current `TurnModel` seam and is therefore not reported
-rather than approximated. Checks the current model contract cannot express
-(conversation goal, confirmation state, dispatch eligibility, external truth)
-are reported as `NOT REPRESENTABLE IN CURRENT CONTRACT`.
+`--validate-only` checks the corpus schema statically (routes, confirmation
+states, eligibility values, event kinds and results, control references)
+without ADC, model or network; it is the deterministic corpus gate.
+
+Boundary events are simulated domain events: the XCALLY/AD wire contract
+remains open (ID-001, XC-001..XC-006), so the runner never invents or calls a
+payload. A transient Vertex failure is reported as `INFRA` and excluded from
+the comparison instead of being counted as a semantic verdict.
 
 Deterministic tests encode the same expectations against the runtime
 without the model. See [testing standards](../../docs/engineering/testing.md).

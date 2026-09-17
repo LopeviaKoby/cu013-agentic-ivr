@@ -24,11 +24,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   DEV voice validation) and the confirmation/operation reliability
   invariants.
 - Add the versioned PII-free conversation eval corpus
-  (`evals/conversation/cases.yaml`, 32 cases, 30 families, including the
-  Experiment 0005 provenance case with paraphrases and opposite controls) and
-  the manual baseline runner `evals/conversation_baseline_eval.py` that
-  reports `NOT REPRESENTABLE IN CURRENT CONTRACT` for checks the current
-  model contract cannot express.
+  (`evals/conversation/cases.yaml`, 34 cases, 30 families, including the
+  Experiment 0005 provenance case with paraphrases and opposite controls and
+  the owner-decision cases for unsupported requests, human requests, goal
+  cancellation, technical identity failure and side questions) and the manual
+  runtime semantic runner `evals/conversation_baseline_eval.py`: PASS / FAIL /
+  NOT ORACLED / NOT REPRESENTABLE / INFRA per case and family, `UNSPECIFIED`
+  route and `not_valid`/`not_oracled` confirmation semantics, model/runtime/
+  turn latency percentiles, prompt/completion tokens and accumulated tokens
+  for multi-turn cases, plus `--validate-only` static corpus validation with
+  no model or ADC.
+- Add the durable semantic runtime (schema v2) materializing ADR-0010:
+  conversational plan, identity authorization with absolute 30-minute TTL,
+  per-operation confirmation challenge, durable dispatch guard and external
+  operation truth in separate planes, with a fail-closed v1→v2 migration and
+  deterministic legality guards (no dispatch without a valid identity and a
+  matching challenge, one active external operation, UNKNOWN never
+  redispatched, model claims never create business truth).
+- Add the deterministic legality suite for the semantic runtime and the
+  owner-decision controls (unsupported request never a handoff cause, explicit
+  human request preserving the goal, no challenge from a side question,
+  invalidated challenge replaced by a new one).
 - Add the `conversation-evaluation` and `xcally-voice-validation` agent skills
   and the mandatory skill matrix to `AGENTS.md`.
 - Add the versioned system prompt module `app/conversation/prompts.py` with the
@@ -90,6 +106,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Move the system prompt out of `GeminiTurnModel` into the dedicated prompt
   module; the Gemini adapter keeps only baseline config, transport, parsing and
   error mapping, with no model, schema, thinking-budget or call-count change.
+- State the owner decisions as general prompt properties: scope redirection
+  without handoff for unsupported or out-of-scope requests, explicit human
+  request without cancelling the goal, side questions that never start or
+  restart the confirmation, and confirmation-answer classification that only
+  treats abandoning the whole goal as `CANCEL`.
+- Close the handoff causes to caller request and terminal failure
+  (`HandoffCause` no longer offers an unsupported-operation cause), and
+  reconcile the specs: unsupported requests never imply handoff, the goal is
+  only cancelled on explicit request, and an invalidated challenge is never
+  reused.
+- Stamp a brand-new session record with the injected turn clock instead of the
+  wall clock, keeping `created_at <= updated_at` deterministic.
+- Fix the corpus runner token accounting (prompt/completion/total were summed
+  together) and update the focused policy probe to the v2 decision contract.
+- Document the semantic runtime candidate in Experiment 0006 and resolve
+  `CNV-001`.
 - Replace the transitional `packages = []` packaging with explicit `app`
   package discovery; editable DEV install verified.
 - Raise dev tooling to advisory-free floors: `pytest>=9.0.3` and

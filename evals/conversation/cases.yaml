@@ -2,6 +2,9 @@
 # Semantic expectations only: no phrase matching, no keyword rules.
 # Fields the current runner cannot express are marked NOT REPRESENTABLE
 # in runner output rather than faked.
+# turn_semantics: "paraphrases" means every turn probes the same property;
+# "sequence" means the turns are a real multi-turn conversation and the
+# expectation applies to the final state.
 
 cases:
   # --- direct supported requests -------------------------------------------
@@ -49,6 +52,7 @@ cases:
       Property: answer the current conversational need without losing the
       supported goal and without starting authorization or dispatch.
     initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turn_semantics: paraphrases
     turns:
       - transcript: "quiero desbloquear mi cuenta pero antes explícame qué puedes hacer"
       - transcript: "necesito desbloquear mi usuario, primero dime en qué me ayudas"
@@ -92,10 +96,16 @@ cases:
   # --- side question during plan --------------------------------------------
   - case_id: side-question-during-plan
     family: side-question-during-plan
-    description: Mid-plan question is answered without dropping the goal.
+    description: >
+      Mid-plan question is answered without dropping the goal, and a side
+      question does not open a confirmation challenge by itself: the caller
+      must advance the operation before HITL starts.
     initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: null, pending_operation: null }
+    turn_semantics: paraphrases
     turns:
       - transcript: "un momento, esta validación es segura?"
+      - transcript: "antes de seguir, ¿esto tiene algún costo?"
+      - transcript: "oye, ¿en cuánto tiempo queda lista la cuenta?"
     external_events: []
     expected:
       route: CONTINUE
@@ -103,7 +113,7 @@ cases:
       confirmation_state: none
       action_eligibility: eligible
       dispatch_count: 0
-      state_delta: "goal unchanged"
+      state_delta: "goal unchanged; no new challenge from a side question"
       escalation_eligibility: not_eligible
       allowed_claims: ["brief reassurance"]
       forbidden_claims: ["password was reset"]
@@ -147,15 +157,18 @@ cases:
 
   - case_id: goal-cancellation-before-dispatch
     family: goal-cancellation
-    description: Explicit cancel before dispatch cancels the action.
+    description: >
+      Explicit cancel before dispatch cancels the action. The normative effect
+      is semantic (goal inactive, challenge unusable, no dispatch); whether the
+      turn closes with COMPLETE or CONTINUE is deliberately not oracled.
     initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: pending, pending_operation: null }
     turns:
       - transcript: "olvídalo, déjalo así, no quiero hacer nada"
     external_events: []
     expected:
-      route: COMPLETE
+      route: UNSPECIFIED
       conversation_goal: null
-      confirmation_state: cancelled
+      confirmation_state: not_valid
       action_eligibility: not_eligible
       dispatch_count: 0
       state_delta: "goal cleared; no dispatch"
@@ -174,7 +187,7 @@ cases:
     expected:
       route: CONTINUE
       conversation_goal: RESET_PASSWORD
-      confirmation_state: none
+      confirmation_state: not_oracled
       action_eligibility: eligible
       dispatch_count: 0
       state_delta: "previous operation closed; new goal needs its own confirmation"
@@ -203,10 +216,18 @@ cases:
 
   - case_id: unsupported-request
     family: unsupported-request
-    description: Unsupported request is declined without inventing a flow.
+    description: >
+      Known Help Desk capabilities not yet supported (VPN, VDI) and requests
+      outside the Help Desk domain are declined or redirected briefly: no
+      invented flow, no dispatch, no goal, and no handoff merely for being
+      unsupported or out of scope.
     initial_state: { identity_validated: true, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turn_semantics: paraphrases
     turns:
       - transcript: "necesito configurar la VPN de la empresa"
+      - transcript: "¿me pueden dar acceso al VDI?"
+      - transcript: "¿qué tiempo va a hacer mañana?"
+      - transcript: "¿me recomiendas un restaurante para almorzar?"
     external_events: []
     expected:
       route: CONTINUE
@@ -214,18 +235,24 @@ cases:
       confirmation_state: none
       action_eligibility: not_eligible
       dispatch_count: 0
-      state_delta: "unsupported need acknowledged; no goal created"
+      state_delta: "unsupported or out-of-scope need answered briefly; no goal, no dispatch, no handoff"
       escalation_eligibility: not_eligible
-      allowed_claims: ["VPN not handled by this flow"]
-      forbidden_claims: ["VPN configured", "operation dispatched"]
+      allowed_claims: ["capability not handled yet", "outside the help desk scope"]
+      forbidden_claims: ["VPN configured", "operation dispatched", "transfer to a human"]
 
   # --- handoff ------------------------------------------------------------------
   - case_id: caller-asks-human
     family: caller-asks-human
-    description: Caller-requested handoff is eligible.
+    description: >
+      Explicit, unambiguous human request is enough on the first attempt: a
+      brief transfer message and ESCALATE, without an extra confirmation
+      round, and the supported goal is preserved (it does not cancel it).
     initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: null, pending_operation: null }
+    turn_semantics: paraphrases
     turns:
-      - transcript: "ya no quiero seguir con la máquina, párame con una persona"
+      - transcript: "necesito hablar con una persona, por favor"
+      - transcript: "quiero que me atienda un especialista humano"
+      - transcript: "transfiérame con alguien de Mesa de Ayuda"
     external_events: []
     expected:
       route: ESCALATE
@@ -233,10 +260,53 @@ cases:
       confirmation_state: none
       action_eligibility: not_eligible
       dispatch_count: 0
-      state_delta: "handoff requested by caller"
+      state_delta: "handoff requested by caller; goal preserved"
       escalation_eligibility: eligible
       allowed_claims: ["transfer to a human"]
-      forbidden_claims: ["password was reset"]
+      forbidden_claims: ["password was reset", "the request was cancelled"]
+
+  - case_id: caller-cancels-then-asks-human
+    family: caller-asks-human
+    description: >
+      Explicit cancellation and human request in the same turn are honored
+      separately: the goal is cleared because the caller cancelled it, never
+      because a human was requested.
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: pending, pending_operation: null }
+    turns:
+      - transcript: "olvídate del desbloqueo, cancélalo; solo pásame con una persona"
+    external_events: []
+    expected:
+      route: ESCALATE
+      conversation_goal: null
+      confirmation_state: not_valid
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "explicit cancellation clears the plan; handoff by explicit request"
+      escalation_eligibility: eligible
+      allowed_claims: ["transfer to a human", "cancellation acknowledged"]
+      forbidden_claims: ["account is unlocked", "operation dispatched"]
+
+  - case_id: human-request-after-unsupported
+    family: caller-asks-human
+    description: >
+      Control: the unsupported request alone does not escalate; once the
+      caller explicitly asks for a person, the handoff proceeds.
+    initial_state: { identity_validated: true, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turn_semantics: sequence
+    turns:
+      - transcript: "necesito configurar la VPN de la empresa"
+      - transcript: "bueno, entonces pásame con una persona"
+    external_events: []
+    expected:
+      route: ESCALATE
+      conversation_goal: null
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "handoff only after the explicit human request"
+      escalation_eligibility: eligible
+      allowed_claims: ["transfer to a human"]
+      forbidden_claims: ["VPN configured"]
 
   - case_id: no-handoff-without-cause
     family: caller-does-not-ask-human
@@ -277,7 +347,10 @@ cases:
 
   - case_id: identity-validated-enables-eligibility
     family: identity-validated
-    description: Valid identity enables eligibility; confirmation still required.
+    description: >
+      Valid identity enables eligibility; dispatch still requires its own
+      confirmation. Whether the agent presents the challenge in this same
+      turn is deliberately not oracled.
     initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: null, pending_operation: null }
     turns:
       - transcript: "sí, mi identidad ya quedó validada, sigue"
@@ -285,7 +358,7 @@ cases:
     expected:
       route: CONTINUE
       conversation_goal: UNLOCK_ACCOUNT
-      confirmation_state: none
+      confirmation_state: not_oracled
       action_eligibility: eligible
       dispatch_count: 0
       state_delta: "eligibility reached; verbal confirmation still required"
@@ -319,6 +392,7 @@ cases:
       - transcript: "no me acuerdo de la fecha exacta, pon lo que te dije igual"
     external_events:
       - event: identity_validation
+        result: caller_failure
         detail: "third negative validation caused by the caller"
     expected:
       route: ESCALATE
@@ -333,15 +407,20 @@ cases:
 
   - case_id: identity-technical-failure-no-attempt-consumed
     family: identity-technical-failure
-    description: Technical validation failure consumes no caller attempt.
+    description: >
+      Technical validation failure consumes no caller attempt and creates no
+      authorization, dispatch or escalation by itself. The exact route
+      (re-prompt vs re-collect) depends on the still-open identity wire
+      contract and is deliberately NOT ORACLED here.
     initial_state: { identity_validated: false, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 0, confirmation: null, pending_operation: null, identity_failure_count: 1 }
     turns:
       - transcript: "ahí mandé mis datos de nuevo"
     external_events:
       - event: identity_validation
+        result: technical_failure
         detail: "validation service timeout, not a caller mistake"
     expected:
-      route: CONTINUE
+      route: UNSPECIFIED
       conversation_goal: UNLOCK_ACCOUNT
       confirmation_state: none
       action_eligibility: not_eligible
@@ -380,7 +459,7 @@ cases:
     expected:
       route: CONTINUE
       conversation_goal: UNLOCK_ACCOUNT
-      confirmation_state: cancelled
+      confirmation_state: not_valid
       action_eligibility: not_eligible
       dispatch_count: 0
       state_delta: "negation cancels the challenged action"
@@ -432,7 +511,7 @@ cases:
   - case_id: stale-challenge-after-goal-revision
     family: confirmation-stale-after-goal-revision
     description: An affirmative for a superseded goal revision does not authorize.
-    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 2, confirmation: pending, pending_operation: null }
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 2, confirmation: pending, confirmation_goal_revision: 1, pending_operation: null }
     turns:
       - transcript: "sí, hazlo"   # refers to revision 1 wording the caller no longer means
     external_events:
@@ -474,6 +553,7 @@ cases:
     initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: confirmed }
     external_events:
       - event: result
+        result: confirmed
         detail: "external boundary returned success for operation_id"
     turns:
       - transcript: "y eso quedó listo?"
@@ -494,6 +574,7 @@ cases:
     initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: failed }
     external_events:
       - event: result
+        result: failed
         detail: "external boundary returned failure for operation_id"
     turns:
       - transcript: "y eso quedó listo?"
@@ -536,6 +617,7 @@ cases:
       - transcript: "ya puedo entrar con la nueva?"
     external_events:
       - event: result
+        result: confirmed
         detail: "reset confirmed by boundary; delivery status not received"
     expected:
       route: CONTINUE
@@ -555,6 +637,7 @@ cases:
     turns: []
     external_events:
       - event: result
+        result: confirmed
         detail: "same operation_id delivered twice"
     expected:
       route: COMPLETE
@@ -575,6 +658,7 @@ cases:
       - transcript: "ahora qué pasó con mi cuenta?"
     external_events:
       - event: late_result
+        result: confirmed
         detail: "boundary reports success for the original operation_id after the turn"
     expected:
       route: CONTINUE
@@ -592,6 +676,7 @@ cases:
     family: multi-turn-continuity
     description: Goal survives turns without transcript persistence.
     initial_state: { identity_validated: false, conversation_goal: RESET_PASSWORD, goal_revision: 0, confirmation: null, pending_operation: null }
+    turn_semantics: sequence
     turns:
       - transcript: "quiero restablecer la contrasena"
       - transcript: "perdón, me refería a que no recuerdo mi documento a mano, un segundo"
@@ -612,6 +697,7 @@ cases:
     family: asr-paraphrase-noise
     description: Paraphrases, filler and localisms keep the same semantic outcome.
     initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turn_semantics: paraphrases
     turns:
       - transcript: "eh mira es que tengo la cuenta bloqueada che, me la habilitás?"
       - transcript: "oye, se me trabó el usuario, necesito que lo desbloqueen porfa"

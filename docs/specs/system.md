@@ -47,6 +47,8 @@ Un turno normal apunta a una sola solicitud al modelo. Si una interacción lógi
 
 - **ACCEPTED.** El estado durable conserva un plan conversacional pequeño y semántico de objetivos soportados, separado de cualquier autorización, confirmación u operación externa. La intención expresada por el caller puede existir como goal conversacional sin estar autorizada, confirmada, despachada ni completada.
 - **ACCEPTED.** Las side questions, correcciones, cambios de objetivo, cancelaciones y continuidad multi-turno son parte del comportamiento normal. Atender la necesidad conversacional del momento no pierde el goal soportado vigente; una corrección o cancelación del caller actualiza el plan antes de cualquier autorización o despacho.
+- **ACCEPTED.** El goal sólo se cancela o elimina si el caller lo solicita explícitamente, y en ese caso el agente comunica brevemente que la solicitud quedó cancelada. Una petición explícita de hablar con una persona no cancela, borra ni completa el goal vigente: nunca se infiere cancelación del goal a partir de un handoff.
+- **ACCEPTED.** Una petición fuera del alcance soportado no implica handoff: el agente responde brevemente que todavía no puede ayudar con esa capacidad o redirige al ámbito de Mesa de Ayuda, sin escalar por ese solo motivo. ESCALATE no es fallback de clasificación ni de alcance y requiere una causa aceptada.
 
 ### Separación goal / autorización / confirmación / operación / resultado
 
@@ -71,7 +73,7 @@ Un turno normal apunta a una sola solicitud al modelo. Si una interacción lógi
   3. sólo una aceptación afirmativa e inequívoca por voz del caller autoriza esa acción concreta;
   4. el runtime valida que la confirmación corresponde al challenge vigente y a la revisión vigente del objetivo;
   5. sólo entonces puede existir autorización de despacho.
-- **ACCEPTED.** Un challenge de confirmación queda invalidado por: timeout o silencio, ASR insuficiente o no concluyente, o revisión del objetivo tras emitir el challenge. Un challenge invalidado se re-solicita verbalmente.
+- **ACCEPTED.** Un challenge de confirmación queda invalidado por: timeout o silencio, ASR insuficiente o no concluyente, o revisión del objetivo tras emitir el challenge. Un challenge invalidado no se reutiliza: si corresponde volver a preguntar, se crea un challenge nuevo ligado a la acción y a la revisión vigentes del objetivo; el anterior no revive. Una pregunta lateral del caller no abre ni reabre por sí sola un challenge, aunque la identidad esté validada: el caller debe avanzar semánticamente la operación antes de iniciar o reiniciar la fase HITL.
 - **ACCEPTED.** El timeout, el silencio o el ASR insuficiente de una confirmación: no autorizan, no despachan, no infieren negación ni cancelación; invalidan ese intento de confirmación y obligan a repetir la solicitud verbal. Un re-prompt de confirmación no invalida la identidad ya validada y no consume intentos de validación de identidad. No existe máximo aceptado de reintentos de confirmación verbal.
 - **ACCEPTED.** No se reutiliza una afirmación anterior para otra acción ni para otra revisión del plan. Una negación explícita no autoriza el despacho. Una cancelación explícita antes del despacho cancela la acción.
 

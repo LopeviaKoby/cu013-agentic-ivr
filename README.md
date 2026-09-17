@@ -76,9 +76,9 @@ Fuera de alcance: ticketing ITSM, SendMail (Deferred), VPN (posterior) y acceso 
 | `evals/backend_latency.py` | Camino backend completo in-process (ASGI) contra Firestore y Vertex reales desde el host DEV | ADC con impersonación |
 | `evals/cloud_run_latency.py` | El mismo camino contra el servicio desplegado, por HTTPS real (`--url`) | `CU013_API_KEY` en el entorno y ventana warm |
 | `evals/conversation_policy_eval.py` | Política conversacional de petición previa contra el modelo real | ADC con impersonación |
-| `evals/conversation_baseline_eval.py` | Baseline semántico del modelo actual contra el corpus versionado de `evals/conversation/` | ADC con impersonación |
+| `evals/conversation_baseline_eval.py` | Runtime semántico completo (modelo real + guards de legalidad) contra el corpus versionado de `evals/conversation/` | ADC con impersonación |
 
-El corpus de evaluación conversacional (`evals/conversation/cases.yaml`, 32 casos, 30 familias, sintético y sin PII) expresa expectativas semánticas por familia — rutas, goals, confirmación, elegibilidad, claims — sin phrase matching. Las expectativas que el contrato actual del modelo no puede expresar se reportan como `NOT REPRESENTABLE IN CURRENT CONTRACT`. La metodología eval-driven está en [testing standards](docs/engineering/testing.md).
+El corpus de evaluación conversacional (`evals/conversation/cases.yaml`, 34 casos, 30 familias, sintético y sin PII) expresa expectativas semánticas por familia — rutas, goals, confirmación, elegibilidad, claims — sin phrase matching. El runner compara rutas, estado y claims, nunca wording; los eventos de boundary son eventos de dominio simulados porque el contrato wire XCALLY/AD sigue abierto (ID-001, XC-001..XC-006). La metodología eval-driven está en [testing standards](docs/engineering/testing.md).
 
 Metodología del benchmark: 5 warmups y luego 30 requests secuenciales medidas (13 `RESET`, 13 `UNLOCK`, secuencia multi-turn de 4), percentiles por segmento y verificación de continuidad durable del `SessionRecord`. Resultados en el [Experimento 0003](docs/experiments/0003-gemini-baseline-latency.md) (local) y el [Experimento 0004](docs/experiments/0004-cloud-run-latency.md) (in-region).
 
@@ -89,7 +89,7 @@ Metodología del benchmark: 5 warmups y luego 30 requests secuenciales medidas (
 python evals\cloud_run_latency.py --url <service-url>   # ventana warm
 ```
 
-Los gates deterministas (112 tests con `pytest`, sin Gemini, Firestore ni credenciales) son la suite local, no el harness.
+Los gates deterministas (193 tests con `pytest`, sin Gemini, Firestore ni credenciales) son la suite local, no el harness.
 
 ## Tecnologías e infraestructura
 

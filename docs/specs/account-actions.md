@@ -57,13 +57,14 @@ Los valores crudos de documento y fecha de nacimiento:
 
 **ACCEPTED.** El handoff procede únicamente cuando:
 
-1. el caller lo solicita;
+1. el caller lo solicita de forma explícita e inequívoca;
 2. el IOP o protocolo vigente lo exige;
-3. la operación no está soportada ni autorizada;
-4. existe un fallo terminal que impide resolver la operación automáticamente;
-5. otra condición aceptada en esta SPEC lo exige.
+3. existe un fallo terminal que impide resolver la operación automáticamente;
+4. otra condición aceptada en esta SPEC lo exige.
 
 No se inventan causas adicionales de handoff.
+
+**ACCEPTED (owner decision).** Pedir una operación fuera del slice soportado (`RESET_PASSWORD`, `UNLOCK_ACCOUNT`) no implica handoff automático: ESCALATE no es fallback de clasificación ni de alcance. Si la capacidad es conocida de Mesa de Ayuda pero todavía no está soportada (por ejemplo VPN o VDI), el agente responde brevemente que aún no puede ayudar con esa capacidad; si la petición queda fuera del ámbito de Mesa de Ayuda, redirige amablemente a ese ámbito. En ninguno de los dos casos se ejecuta nada, no se inventa un flujo y no se escala sólo por ello. El handoff sólo procede si concurre una causa aceptada, por ejemplo una solicitud explícita de persona del caller.
 
 ## Confirmación verbal por operación
 
