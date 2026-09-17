@@ -4,6 +4,8 @@ No Vertex AI, network or credentials are involved: the genai client is a
 recording double and every value is synthetic.
 """
 
+from typing import Any
+
 import pytest
 from google.genai.errors import APIError
 
@@ -14,10 +16,11 @@ from app.conversation.errors import (
 )
 from app.conversation.gemini import GeminiBaseline, GeminiTurnModel, parse_decision
 from app.session.metrics import RecordingTurnMetrics
-from app.session.record import Action, OperationStatus, PendingOperation
-from app.session.turns import Route
+from app.session.record import Action, DeliveryStatus, ExternalOperation, OperationStatus
+from app.session.turns import GoalIntent, ModelTurnDecision, Route
+from tests.session.doubles import make_challenge, make_goal
 
-VALID_DECISION_JSON = '{"message": "hola", "route": "CONTINUE", "action_requested": null}'
+VALID_DECISION_JSON = '{"message": "hola", "route": "CONTINUE"}'
 
 
 class FakeUsage:
@@ -87,18 +90,37 @@ def make_model(
     return GeminiTurnModel(client, make_baseline(), metrics=metrics)  # type: ignore[arg-type]
 
 
+async def decide(model: GeminiTurnModel, **overrides: Any) -> ModelTurnDecision:
+    values: dict[str, Any] = {
+        "transcript": "synthetic transcript 0000",
+        "goal": None,
+        "identity_validated": False,
+        "confirmation": None,
+        "external_operation": None,
+    }
+    values.update(overrides)
+    return await model.decide(**values)
+
+
 def test_parse_decision_accepts_the_typed_contract() -> None:
     decision = parse_decision(VALID_DECISION_JSON)
     assert decision.message == "hola"
     assert decision.route is Route.CONTINUE
-    assert decision.action_requested is None
+    assert decision.goal is None
+    assert decision.confirmation_request is False
+    assert decision.claims == ()
 
 
-def test_parse_decision_accepts_an_action_suggestion() -> None:
+def test_parse_decision_accepts_a_goal_proposal_and_claims() -> None:
     decision = parse_decision(
-        '{"message": "ok", "route": "CONTINUE", "action_requested": "RESET_PASSWORD"}'
+        '{"message": "ok", "route": "COLLECT_IDENTITY", '
+        '"goal": {"intent": "REQUEST", "action": "RESET_PASSWORD"}, '
+        '"claims": [{"kind": "IDENTITY_VALID"}]}'
     )
-    assert decision.action_requested is Action.RESET_PASSWORD
+    assert decision.goal is not None
+    assert decision.goal.intent is GoalIntent.REQUEST
+    assert decision.goal.action is Action.RESET_PASSWORD
+    assert decision.claims[0].kind.value == "IDENTITY_VALID"
 
 
 @pytest.mark.parametrize(
@@ -109,6 +131,9 @@ def test_parse_decision_accepts_an_action_suggestion() -> None:
         '{"message": "hola", "route": "UNKNOWN"}',
         '{"message": "", "route": "CONTINUE"}',
         '{"message": "hola", "route": "CONTINUE", "extra": 1}',
+        '{"message": "hola", "route": "CONTINUE", "identity_validated": true}',
+        '{"message": "hola", "route": "CONTINUE", "goal": {"intent": "BREAK"}}',
+        '{"message": "hola", "route": "CONTINUE", "claims": [{"kind": "UNDELIVERED"}]}',
     ],
 )
 def test_parse_decision_rejects_invalid_output(text: str) -> None:
@@ -119,44 +144,43 @@ def test_parse_decision_rejects_invalid_output(text: str) -> None:
 async def test_decide_calls_generate_content_once_with_the_baseline_config() -> None:
     client = FakeGenaiClient()
     model = make_model(client)
-    decision = await model.decide(
-        transcript="synthetic transcript 0000",
-        identity_validated=False,
-        requested_action=None,
-        pending_operation=None,
-    )
+    decision = await decide(model)
     assert decision.message == "hola"
     assert len(client.calls) == 1
     model_name, contents, config = client.calls[0]
     assert model_name == "synthetic-model"
     assert "synthetic transcript 0000" in contents
+    assert "objetivo: ninguno" in contents
     assert "identidad_validada: no" in contents
-    assert "acción_solicitada: ninguna" in contents
-    assert "operación_pendiente: ninguna" in contents
-    assert config.thinking_config.thinking_budget == 0
-    assert config.response_mime_type == "application/json"
-    assert config.response_schema is not None
-    assert config.http_options.timeout == 15000
-    assert config.http_options.retry_options.attempts == 1
+    assert "confirmación_pendiente: ninguna" in contents
+    assert "operación_externa: ninguna" in contents
+    assert config.thinking_config.thinking_budget == 0  # type: ignore[attr-defined]
+    assert config.response_mime_type == "application/json"  # type: ignore[attr-defined]
+    assert config.response_schema is not None  # type: ignore[attr-defined]
+    assert config.http_options.timeout == 15000  # type: ignore[attr-defined]
+    assert config.http_options.retry_options.attempts == 1  # type: ignore[attr-defined]
 
 
 async def test_contents_carry_only_the_semantic_projection() -> None:
     client = FakeGenaiClient()
     model = make_model(client)
-    await model.decide(
-        transcript="synthetic transcript 0000",
+    await decide(
+        model,
+        goal=make_goal(Action.UNLOCK_ACCOUNT, revision=2),
         identity_validated=True,
-        requested_action=Action.UNLOCK_ACCOUNT,
-        pending_operation=PendingOperation(
+        confirmation=make_challenge(Action.RESET_PASSWORD, revision=1),
+        external_operation=ExternalOperation(
             operation_id="operation-1",
-            action=Action.UNLOCK_ACCOUNT,
-            status=OperationStatus.PENDING,
+            action=Action.RESET_PASSWORD,
+            status=OperationStatus.CONFIRMED,
+            delivery=DeliveryStatus.PENDING,
         ),
     )
     _, contents, _ = client.calls[0]
+    assert "objetivo: UNLOCK_ACCOUNT (revisión 2)" in contents
     assert "identidad_validada: sí" in contents
-    assert "acción_solicitada: UNLOCK_ACCOUNT" in contents
-    assert "operación_pendiente: UNLOCK_ACCOUNT (pending)" in contents
+    assert "confirmación_pendiente: RESET_PASSWORD (revisión 1)" in contents
+    assert "operación_externa: RESET_PASSWORD (confirmed) entrega=pending" in contents
 
 
 async def test_api_error_maps_to_model_unavailable() -> None:
@@ -164,12 +188,7 @@ async def test_api_error_maps_to_model_unavailable() -> None:
     client.error = APIError(code=503, response_json={"error": {"message": "outage"}})
     model = make_model(client)
     with pytest.raises(ModelUnavailableError):
-        await model.decide(
-            transcript="synthetic transcript 0000",
-            identity_validated=False,
-            requested_action=None,
-            pending_operation=None,
-        )
+        await decide(model)
 
 
 async def test_timeout_maps_to_model_timeout() -> None:
@@ -177,12 +196,7 @@ async def test_timeout_maps_to_model_timeout() -> None:
     client.error = TimeoutError()
     model = make_model(client)
     with pytest.raises(ModelTimeoutError):
-        await model.decide(
-            transcript="synthetic transcript 0000",
-            identity_validated=False,
-            requested_action=None,
-            pending_operation=None,
-        )
+        await decide(model)
 
 
 async def test_connect_error_maps_to_model_unavailable() -> None:
@@ -190,12 +204,7 @@ async def test_connect_error_maps_to_model_unavailable() -> None:
     client.error = ConnectError("synthetic connect failure")
     model = make_model(client)
     with pytest.raises(ModelUnavailableError):
-        await model.decide(
-            transcript="synthetic transcript 0000",
-            identity_validated=False,
-            requested_action=None,
-            pending_operation=None,
-        )
+        await decide(model)
 
 
 async def test_unknown_errors_propagate_unchanged() -> None:
@@ -203,12 +212,7 @@ async def test_unknown_errors_propagate_unchanged() -> None:
     client.error = RuntimeError("synthetic unexpected failure")
     model = make_model(client)
     with pytest.raises(RuntimeError, match="synthetic unexpected failure"):
-        await model.decide(
-            transcript="synthetic transcript 0000",
-            identity_validated=False,
-            requested_action=None,
-            pending_operation=None,
-        )
+        await decide(model)
 
 
 async def test_response_without_text_is_invalid_output() -> None:
@@ -216,12 +220,7 @@ async def test_response_without_text_is_invalid_output() -> None:
     client.response = FakeResponse(None)
     model = make_model(client)
     with pytest.raises(InvalidModelOutputError):
-        await model.decide(
-            transcript="synthetic transcript 0000",
-            identity_validated=False,
-            requested_action=None,
-            pending_operation=None,
-        )
+        await decide(model)
 
 
 async def test_usage_is_recorded_as_token_counts_only() -> None:
@@ -229,12 +228,7 @@ async def test_usage_is_recorded_as_token_counts_only() -> None:
     client.response = FakeResponse(VALID_DECISION_JSON, usage=FakeUsage())
     metrics = RecordingTurnMetrics()
     model = make_model(client, metrics=metrics)
-    await model.decide(
-        transcript="synthetic transcript 0000",
-        identity_validated=False,
-        requested_action=None,
-        pending_operation=None,
-    )
+    await decide(model)
     assert dict(metrics.counters) == {
         "prompt_tokens": 12,
         "completion_tokens": 7,
@@ -250,12 +244,7 @@ async def test_model_segment_is_recorded_even_on_failure() -> None:
     metrics = RecordingTurnMetrics()
     model = make_model(client, metrics=metrics)
     with pytest.raises(ModelTimeoutError):
-        await model.decide(
-            transcript="synthetic transcript 0000",
-            identity_validated=False,
-            requested_action=None,
-            pending_operation=None,
-        )
+        await decide(model)
     assert [name for name, _ in metrics.segments] == ["model"]
 
 

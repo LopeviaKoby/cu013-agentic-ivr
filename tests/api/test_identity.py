@@ -44,7 +44,11 @@ async def test_receiving_dtmf_never_marks_a_validated_identity(client, store) ->
         turns_url("conversation-1"), json={"transcript": SYNTHETIC_TRANSCRIPT}
     )
     assert response.status_code == 200
-    assert store.documents["conversation-1"]["identity_validated"] is False
+    assert store.documents["conversation-1"]["identity"] == {
+        "validated_at": None,
+        "caller_failures": 0,
+    }
+    assert store.documents["conversation-1"]["dispatch"] is None
 
 
 async def test_identity_data_requires_document_id(client) -> None:

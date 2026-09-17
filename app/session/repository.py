@@ -52,12 +52,17 @@ class SessionRepository:
     def __init__(self, store: SessionDocumentStore) -> None:
         self._store = store
 
-    async def load(self, conversation_id: str) -> SessionRecord:
-        """Return the durable record, or a fresh semantic one when none exists."""
+    async def load(self, conversation_id: str, *, now: datetime | None = None) -> SessionRecord:
+        """Return the durable record, or a fresh semantic one when none exists.
+
+        The caller may pass its injected turn clock so a brand-new record is
+        stamped with the same ``now`` the rest of the turn uses; without one
+        the wall clock is used.
+        """
         try:
             document = await self._store.read(conversation_id)
             if document is None:
-                return SessionRecord.new(conversation_id, now=datetime.now(UTC))
+                return SessionRecord.new(conversation_id, now=now or datetime.now(UTC))
             return session_record_from_document(document)
         except Exception as exc:
             raise SessionPersistenceError("session load failed") from exc

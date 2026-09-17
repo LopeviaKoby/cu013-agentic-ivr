@@ -9,8 +9,9 @@ from app.api.contracts import (
     TranscriptTurn,
     TurnResponse,
 )
-from app.session.turns import ModelTurnDecision, Route
+from app.session.turns import Route
 from tests.api.doubles import SYNTHETIC_DTMF, SYNTHETIC_TRANSCRIPT, turns_url
+from tests.session.doubles import make_decision
 
 
 async def test_transcript_turn_returns_the_cally_square_contract(client) -> None:
@@ -51,11 +52,22 @@ def test_response_model_rejects_a_route_outside_the_enum() -> None:
         TurnResponse(message="synthetic message", route="UNKNOWN", turn_id="turn-1")
 
 
-@pytest.mark.parametrize("route", list(Route))
-async def test_every_emitted_route_stays_inside_the_closed_enum(client, model, route) -> None:
-    model.decision = ModelTurnDecision(message="synthetic message", route=route)
-    response = await client.post(
-        turns_url("conversation-1"), json={"transcript": SYNTHETIC_TRANSCRIPT}
-    )
-    assert response.status_code == 200
-    assert response.json()["route"] == route.value
+async def test_every_emitted_route_stays_inside_the_closed_enum(client, model) -> None:
+    """The runtime may only emit the four accepted routes, never a new one."""
+    observed: set[str] = set()
+    for decision in (
+        make_decision(route=Route.CONTINUE),
+        make_decision(route=Route.COMPLETE),
+        make_decision(
+            route=Route.COLLECT_IDENTITY,
+            goal={"intent": "REQUEST", "action": "UNLOCK_ACCOUNT"},
+        ),
+        make_decision(route=Route.ESCALATE, handoff_cause="CALLER_REQUEST"),
+    ):
+        model.decision = decision
+        response = await client.post(
+            turns_url("conversation-1"), json={"transcript": SYNTHETIC_TRANSCRIPT}
+        )
+        assert response.status_code == 200
+        observed.add(response.json()["route"])
+    assert observed == {route.value for route in Route}

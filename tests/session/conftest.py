@@ -1,11 +1,15 @@
 """Shared deterministic fixtures for the Thin Session Repository tests."""
 
+from datetime import UTC, datetime
+
 import pytest
 
 from app.session.repository import SessionRepository
 from app.session.service import TurnService
 from app.session.turns import build_turn_graph
-from tests.session.doubles import FakeTurnModel, InMemorySessionDocumentStore
+from tests.session.doubles import FakeTurnModel, FrozenClock, InMemorySessionDocumentStore
+
+NOW = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -19,8 +23,13 @@ def repository(store: InMemorySessionDocumentStore) -> SessionRepository:
 
 
 @pytest.fixture
-def service(repository: SessionRepository) -> TurnService:
-    return TurnService(repository, build_turn_graph())
+def clock() -> FrozenClock:
+    return FrozenClock(NOW)
+
+
+@pytest.fixture
+def service(repository: SessionRepository, clock: FrozenClock) -> TurnService:
+    return TurnService(repository, build_turn_graph(), clock=clock)
 
 
 @pytest.fixture
@@ -29,5 +38,7 @@ def model() -> FakeTurnModel:
 
 
 @pytest.fixture
-def service_with_model(repository: SessionRepository, model: FakeTurnModel) -> TurnService:
-    return TurnService(repository, build_turn_graph(model=model))
+def service_with_model(
+    repository: SessionRepository, model: FakeTurnModel, clock: FrozenClock
+) -> TurnService:
+    return TurnService(repository, build_turn_graph(model=model), clock=clock)

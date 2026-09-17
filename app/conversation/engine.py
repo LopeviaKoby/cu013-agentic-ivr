@@ -45,9 +45,9 @@ class ConversationEngine(Protocol):
 class SessionConversationEngine:
     """Real engine: one thin-session turn that includes the model call.
 
-    The typed model decision produced inside the turn becomes the boundary
+    The runtime validates the transient model decision into the boundary
     outcome; the runtime keeps owning legality, durable state and the truth
-    of business results.
+    of business results, and the model never authorizes or executes anything.
     """
 
     def __init__(self, service: TurnService) -> None:
@@ -58,7 +58,7 @@ class SessionConversationEngine:
             turn.conversation_id,
             TurnInput(transcript=turn.transcript),
         )
-        decision = result.decision
-        if decision is None:
+        outcome = result.outcome
+        if outcome is None:
             raise InvalidModelOutputError("turn completed without a model decision")
-        return TurnOutcome(message=decision.message, route=decision.route)
+        return TurnOutcome(message=outcome.message, route=outcome.route)

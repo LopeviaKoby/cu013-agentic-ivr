@@ -12,13 +12,14 @@ from app.conversation.errors import (
     ModelUnavailableError,
 )
 from app.session.record import Action
-from app.session.turns import ModelTurnDecision, Route
+from app.session.turns import Route
 from tests.api.doubles import (
     SYNTHETIC_DTMF,
     SYNTHETIC_MESSAGE,
     SYNTHETIC_TRANSCRIPT,
     turns_url,
 )
+from tests.session.doubles import make_decision
 
 REQUEST_ID_HEADERS = {"X-Request-ID": "conversation-1"}
 
@@ -39,11 +40,23 @@ DEPENDENCY_UNAVAILABLE_ERROR = {
     "error": {"code": "dependency_unavailable", "message": "dependency is not available"},
 }
 
+DEPENDENCY_UNAVAILABLE_IDENTITY_ERROR = {
+    "error": {
+        "code": "dependency_unavailable",
+        "message": "identity validation is not available",
+    },
+}
+
 INTERNAL_ERROR = {"error": {"code": "internal", "message": "internal error"}}
+
+COLLECT_IDENTITY_WITH_GOAL = make_decision(
+    route=Route.COLLECT_IDENTITY,
+    goal={"intent": "REQUEST", "action": "UNLOCK_ACCOUNT"},
+)
 
 
 async def test_structured_model_output_reaches_the_http_contract(client, model, store) -> None:
-    model.decision = ModelTurnDecision(message=SYNTHETIC_MESSAGE, route=Route.COMPLETE)
+    model.decision = make_decision(message=SYNTHETIC_MESSAGE, route=Route.COMPLETE)
     response = await client.post(
         turns_url("conversation-1"), json={"transcript": SYNTHETIC_TRANSCRIPT}
     )
@@ -180,15 +193,15 @@ async def test_internal_engine_failure_is_a_safe_internal_error(
     assert store.writes == 0
 
 
-async def test_prior_request_turn_keeps_the_model_route_and_transient_intent(
+async def test_prior_request_turn_keeps_the_route_and_the_goal_is_durable(
     client, model, store
 ) -> None:
-    """The runtime never rewrites a CONTINUE route, and a pre-auth action intent
-    remains transient: it is not representable in the durable session contract."""
-    model.decision = ModelTurnDecision(
+    """The runtime never rewrites a CONTINUE route, and the pre-auth goal is
+    representable and retakeable (the CNV-001 property)."""
+    model.decision = make_decision(
         message="Puedo restablecer contraseñas y desbloquear cuentas. ¿Seguimos?",
         route=Route.CONTINUE,
-        action_requested=Action.UNLOCK_ACCOUNT,
+        goal={"intent": "REQUEST", "action": "UNLOCK_ACCOUNT"},
     )
     response = await client.post(
         turns_url("conversation-1"), json={"transcript": PRIOR_REQUEST_TRANSCRIPT}
@@ -198,22 +211,77 @@ async def test_prior_request_turn_keeps_the_model_route_and_transient_intent(
     assert body["route"] == "CONTINUE"
     assert body["message"] == model.decision.message
     document = store.documents["conversation-1"]
-    assert document["identity_validated"] is False
-    assert document["requested_action"] is None
-    assert document["pending_operation"] is None
+    assert document["goal"] == {"action": "UNLOCK_ACCOUNT", "revision": 1}
+    assert document["identity"] == {"validated_at": None, "caller_failures": 0}
+    assert document["dispatch"] is None
+    assert document["external_operation"] is None
 
 
-async def test_model_inferred_action_is_not_business_success(client, model, store) -> None:
-    model.decision = ModelTurnDecision(
+async def test_model_claimed_success_is_not_business_success(client, model, store) -> None:
+    model.decision = make_decision(
         message="synthetic claim of business success",
         route=Route.COMPLETE,
-        action_requested=Action.UNLOCK_ACCOUNT,
+        goal={"intent": "REQUEST", "action": "UNLOCK_ACCOUNT"},
+        claims=[{"kind": "OPERATION_SUCCEEDED"}],
     )
     response = await client.post(
         turns_url("conversation-1"), json={"transcript": SYNTHETIC_TRANSCRIPT}
     )
     assert response.status_code == 200
+    assert response.json()["route"] == "CONTINUE"
+    assert response.json()["message"] != model.decision.message
     document = store.documents["conversation-1"]
-    assert document["identity_validated"] is False
-    assert document["requested_action"] is None
-    assert document["pending_operation"] is None
+    assert document["identity"]["validated_at"] is None  # type: ignore[index]
+    assert document["dispatch"] is None
+    assert document["external_operation"] is None
+
+
+async def test_every_legal_route_reaches_the_response(client, model) -> None:
+    model.decision = COLLECT_IDENTITY_WITH_GOAL
+    first = await client.post(
+        turns_url("conversation-1"), json={"transcript": SYNTHETIC_TRANSCRIPT}
+    )
+    assert first.json()["route"] == "COLLECT_IDENTITY"
+
+    for decision in (
+        make_decision(route=Route.CONTINUE),
+        make_decision(route=Route.ESCALATE, handoff_cause="CALLER_REQUEST"),
+        make_decision(route=Route.COMPLETE),
+    ):
+        model.decision = decision
+        response = await client.post(
+            turns_url("conversation-1"), json={"transcript": SYNTHETIC_TRANSCRIPT}
+        )
+        assert response.status_code == 200
+        assert response.json()["route"] == decision.route.value
+
+
+async def test_illegal_route_is_replaced_by_the_safe_fallback(client, model, store) -> None:
+    model.decision = make_decision(
+        route=Route.ESCALATE,
+        message="synthetic escalation message",
+        handoff_cause="TERMINAL_FAILURE",
+    )
+    response = await client.post(
+        turns_url("conversation-1"), json={"transcript": SYNTHETIC_TRANSCRIPT}
+    )
+    assert response.status_code == 200
+    assert response.json()["route"] == "CONTINUE"
+    assert response.json()["message"] != model.decision.message
+    assert store.documents["conversation-1"]["dispatch"] is None
+
+
+async def test_identity_data_event_still_terminates_safely(client, store) -> None:
+    response = await client.post(
+        turns_url("conversation-1"),
+        json={"event": "IDENTITY_DATA", "slots": {"document_id": SYNTHETIC_DTMF}},
+    )
+    assert response.status_code == 503
+    assert response.json() == DEPENDENCY_UNAVAILABLE_IDENTITY_ERROR
+    assert SYNTHETIC_DTMF not in response.text
+    assert store.writes == 0
+    assert store.documents == {}
+
+
+def test_action_enum_is_closed_to_the_supported_slice() -> None:
+    assert {action.value for action in Action} == {"RESET_PASSWORD", "UNLOCK_ACCOUNT"}

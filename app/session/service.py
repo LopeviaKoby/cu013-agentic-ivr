@@ -7,20 +7,21 @@ fixed PII-safe names only.
 """
 
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict
 
 from app.session.metrics import NullTurnMetrics, TurnMetrics
-from app.session.record import SCHEMA_VERSION, SessionRecord
+from app.session.record import SessionRecord
 from app.session.repository import SessionRepository
 from app.session.turns import (
     GraphState,
     ModelTurnDecision,
     TurnGraph,
     TurnInput,
+    TurnOutcomeState,
     initial_graph_state,
 )
 
@@ -38,25 +39,27 @@ def consolidate(
     decisions never enter this projection.
     """
     return SessionRecord(
-        schema_version=SCHEMA_VERSION,
         conversation_id=previous.conversation_id,
         turn_count=previous.turn_count + 1,
         revision=previous.revision + 1,
-        identity_validated=state["identity_validated"],
-        requested_action=state["requested_action"],
-        pending_operation=state["pending_operation"],
+        goal=state["goal"],
+        identity=state["identity"],
+        confirmation=state["confirmation"],
+        dispatch=state["dispatch"],
+        external_operation=state["external_operation"],
         created_at=previous.created_at,
         updated_at=now,
     )
 
 
 class TurnResult(BaseModel):
-    """One completed turn: durable record plus the transient model decision."""
+    """One completed turn: durable record plus transient model output."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     record: SessionRecord
     decision: ModelTurnDecision | None
+    outcome: TurnOutcomeState | None
 
 
 class TurnService:
@@ -67,24 +70,31 @@ class TurnService:
         repository: SessionRepository,
         graph: TurnGraph,
         metrics: TurnMetrics | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._repository = repository
         self._graph = graph
         self._metrics: TurnMetrics = metrics or NullTurnMetrics()
+        self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
 
     async def handle_turn(self, conversation_id: str, turn: TurnInput) -> TurnResult:
         """Run one turn and return only after the consolidated save completes."""
-        record = await self._load(conversation_id)
-        state: GraphState = initial_graph_state(record, turn)
+        now = self._clock()
+        record = await self._load(conversation_id, now=now)
+        state: GraphState = initial_graph_state(record, turn, now=now)
         final_state = await self._invoke_graph(state)
-        record = consolidate(record, final_state, now=datetime.now(UTC))
+        record = consolidate(record, final_state, now=now)
         await self._save(record)
-        return TurnResult(record=record, decision=final_state["model_decision"])
+        return TurnResult(
+            record=record,
+            decision=final_state["model_decision"],
+            outcome=final_state["outcome"],
+        )
 
-    async def _load(self, conversation_id: str) -> SessionRecord:
+    async def _load(self, conversation_id: str, *, now: datetime) -> SessionRecord:
         start = time.monotonic()
         try:
-            return await self._repository.load(conversation_id)
+            return await self._repository.load(conversation_id, now=now)
         finally:
             self._metrics.record_segment("session_load", _elapsed_ms(start))
 

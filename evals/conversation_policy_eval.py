@@ -1,7 +1,7 @@
 """Focused real-model probe for the prior-request conversational policy.
 
 Manual DEV probe, not CI: it calls Vertex AI with ADC through the same
-`GeminiTurnModel` the service uses and reports only route, action_requested
+`GeminiTurnModel` the service uses and reports only route, the plan proposal
 and latency per call. Messages are printed locally for inspection; every
 text is synthetic and PII-free. No assertions, no caching, no retries.
 
@@ -31,14 +31,15 @@ async def probe(model: GeminiTurnModel, label: str, transcript: str, repetitions
         start = time.monotonic()
         decision = await model.decide(
             transcript=transcript,
+            goal=None,
             identity_validated=False,
-            requested_action=None,
-            pending_operation=None,
+            confirmation=None,
+            external_operation=None,
         )
         latency_ms = (time.monotonic() - start) * 1000.0
         print(
             f"{label}[{index}] route={decision.route.value} "
-            f"action_requested={decision.action_requested} "
+            f"goal={decision.goal} "
             f"latency_ms={latency_ms:.0f}"
         )
         print(f"{label}[{index}] message={decision.message}")

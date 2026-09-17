@@ -29,7 +29,11 @@ from app.conversation.errors import (
 )
 from app.conversation.prompts import SYSTEM_INSTRUCTIONS
 from app.session.metrics import NullTurnMetrics, TurnMetrics
-from app.session.record import Action, PendingOperation
+from app.session.record import (
+    ConfirmationChallenge,
+    ConversationGoal,
+    ExternalOperation,
+)
 from app.session.turns import ModelTurnDecision
 
 PROVIDER: Literal["vertex_ai"] = "vertex_ai"
@@ -65,21 +69,38 @@ class GeminiBaseline(BaseModel):
 
 
 def _state_block(
+    goal: ConversationGoal | None,
     identity_validated: bool,
-    requested_action: Action | None,
-    pending_operation: PendingOperation | None,
+    confirmation: ConfirmationChallenge | None,
+    external_operation: ExternalOperation | None,
 ) -> str:
     """Render only the allowed semantic projection of the durable record."""
     lines = [
+        (
+            f"objetivo: {goal.action.value} (revisión {goal.revision})"
+            if goal is not None
+            else "objetivo: ninguno"
+        ),
         f"identidad_validada: {'sí' if identity_validated else 'no'}",
-        f"acción_solicitada: {requested_action.value if requested_action else 'ninguna'}",
     ]
-    if pending_operation is None:
-        lines.append("operación_pendiente: ninguna")
+    if confirmation is None:
+        lines.append("confirmación_pendiente: ninguna")
     else:
         lines.append(
-            f"operación_pendiente: {pending_operation.action.value} "
-            f"({pending_operation.status.value})"
+            f"confirmación_pendiente: {confirmation.action.value} "
+            f"(revisión {confirmation.goal_revision})"
+        )
+    if external_operation is None:
+        lines.append("operación_externa: ninguna")
+    else:
+        delivery = (
+            f" entrega={external_operation.delivery.value}"
+            if external_operation.delivery is not None
+            else ""
+        )
+        lines.append(
+            f"operación_externa: {external_operation.action.value} "
+            f"({external_operation.status.value}){delivery}"
         )
     return "\n".join(lines)
 
@@ -121,9 +142,10 @@ class GeminiTurnModel:
         self,
         *,
         transcript: str,
+        goal: ConversationGoal | None,
         identity_validated: bool,
-        requested_action: Action | None,
-        pending_operation: PendingOperation | None,
+        confirmation: ConfirmationChallenge | None,
+        external_operation: ExternalOperation | None,
     ) -> ModelTurnDecision:
         start = time.monotonic()
         try:
@@ -132,7 +154,7 @@ class GeminiTurnModel:
                     model=self._baseline.model,
                     contents=(
                         "Estado del sistema:\n"
-                        + _state_block(identity_validated, requested_action, pending_operation)
+                        + _state_block(goal, identity_validated, confirmation, external_operation)
                         + "\nTurno del llamante:\n"
                         + transcript
                     ),

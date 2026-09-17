@@ -1,13 +1,21 @@
 """Deterministic policy contract tests for the versioned system prompt.
 
 The prompt is a textual contract expressed as code, so these tests lock the
-structural properties the runtime depends on: every closed route and every
-decision field is documented, and the prior-request policy precedes identity
-collection. No model, network or credentials are involved.
+structural properties the runtime depends on: every closed route, decision
+field and semantic vocabulary value is documented, the plan/authorization
+separation is stated, and no utterance-specific patch list exists. No model,
+network or credentials are involved.
 """
 
-from app.conversation.prompts import PRIOR_REQUEST_RULE, SYSTEM_INSTRUCTIONS
-from app.session.turns import ModelTurnDecision, Route
+from app.conversation.prompts import SYSTEM_INSTRUCTIONS
+from app.session.turns import (
+    ClaimKind,
+    ConfirmationObservation,
+    GoalIntent,
+    HandoffCause,
+    ModelTurnDecision,
+    Route,
+)
 
 
 def test_prompt_documents_every_closed_route() -> None:
@@ -20,9 +28,23 @@ def test_prompt_documents_every_decision_field() -> None:
         assert field in SYSTEM_INSTRUCTIONS
 
 
-def test_prior_request_policy_precedes_identity_collection() -> None:
-    assert "CONTINUE" in PRIOR_REQUEST_RULE
-    assert "COLLECT_IDENTITY" in PRIOR_REQUEST_RULE
-    policy_index = SYSTEM_INSTRUCTIONS.index(PRIOR_REQUEST_RULE)
-    collection_index = SYSTEM_INSTRUCTIONS.index("Usa COLLECT_IDENTITY")
-    assert policy_index < collection_index
+def test_prompt_documents_the_closed_semantic_vocabulary() -> None:
+    for vocabulary in (GoalIntent, ConfirmationObservation, HandoffCause, ClaimKind):
+        for member in vocabulary:
+            assert member.value in SYSTEM_INSTRUCTIONS
+
+
+def test_prompt_states_the_plan_authorization_separation() -> None:
+    assert "El plan es lo que el llamante quiere, no lo que está autorizado" in (
+        SYSTEM_INSTRUCTIONS
+    )
+
+
+def test_prompt_states_the_central_conversational_property() -> None:
+    assert "atiende la necesidad conversacional inmediata" in SYSTEM_INSTRUCTIONS
+    assert "sin perder el objetivo soportado vigente" in SYSTEM_INSTRUCTIONS
+
+
+def test_prompt_has_no_utterance_specific_patch_lists() -> None:
+    for patch_phrase in ("pero antes", "antes dime", "primero,"):
+        assert patch_phrase not in SYSTEM_INSTRUCTIONS
