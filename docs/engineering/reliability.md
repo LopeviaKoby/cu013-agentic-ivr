@@ -36,6 +36,16 @@ El TTFT del modelo es una métrica diagnóstica; no equivale a first useful audi
 - El retry del modelo debe definir attempts y deadline, y respetar el presupuesto de voz; no debe heredar defaults incompatibles con ese presupuesto.
 - Un turno normal apunta a una sola llamada semántica al modelo. Más de dos llamadas secuenciales exige STOP & REPORT.
 
+## Invariantes de confirmación y operación externa
+
+Estas invariantes complementan las transversales de la [SPEC del sistema](../specs/system.md); sus valores concretos viven allí o en la evidencia de integración:
+
+- Un timeout, silencio o ASR insuficiente de la confirmación verbal no equivale a autorización: invalida ese intento y obliga a re-prompt verbal, sin tocar la identidad validada ni consumir intentos de identidad.
+- Tras un despacho externo de resultado incierto, la verdad de la operación queda en un estado desconocido (`UNKNOWN`): no se declara éxito ni fracaso, no se repite el side effect automáticamente y un resultado tardío se reconcilia con la operación existente.
+- No existe replay automático de side effects desconocidos; la reconciliación requiere confirmación del boundary externo.
+- Una sola operación externa activa por conversación; el guard durable precede a todo side effect ([ADR-0010](../decisions/0010-durable-semantic-plan-separate-from-authorization.md)).
+- El timing exacto de voz (endpointing, barge-in, timeouts de confirmación en el canal XCALLY/ASR/TTS) sigue dependiendo de evidencia XCALLY: no se inventan valores de polling, retry ni deadline externos; los gaps XC-002 a XC-006 gobiernan su obtención.
+
 ## Errores
 
 Usar esta taxonomía mínima y estable:
@@ -55,7 +65,7 @@ Los errores de Google, Firestore, LangGraph o HTTP no deben escapar directamente
 - No mantener estado mutable de negocio o sesión como global de proceso.
 - Firestore es la autoridad durable.
 - No ejecutar persistencia crítica después de devolver HTTP 2xx.
-- Los side effects deben distinguir `pending`, `confirmed` y `failed`.
+- Los side effects deben distinguir `pending`, `unknown`, `confirmed` y `failed` (terminología canónica de la [SPEC del sistema](../specs/system.md) y [ADR-0010](../decisions/0010-durable-semantic-plan-separate-from-authorization.md)).
 
 La concurrencia productiva de Cloud Run permanece TBD. Un benchmark controlado debe comparar al menos:
 
@@ -69,20 +79,18 @@ Estos valores no son una decisión productiva.
 Baseline de costo:
 
 - DEV normal: `min instances = 0`;
-- benchmark autorizado de cold start o latencia: `min instances = 1` temporalmente;
-- al finalizar: volver a `min instances = 0`.
+- ventana autorizada de benchmark (cold start o latencia) o de validación DEV de voz controlada: `min instances = 1` temporalmente;
+- al finalizar la ventana: volver a `min instances = 0`.
 
-## Contenedor futuro
+## Contenedor
 
-No existe Dockerfile en la baseline actual. Cuando se autorice su creación deberá respetar:
+El `Dockerfile` vigente construye la imagen que Cloud Run DEV despliega. Debe respetar:
 
-- imagen base confiable compatible con Python 3.12;
-- `.dockerignore`;
-- proceso non-root;
-- ningún secreto en imagen, layers o build args;
-- dependencias en layers aprovechables por cache antes del source cuando sea razonable;
-- imagen mínima, sin herramientas innecesarias;
-- un único proceso de aplicación inicialmente;
+- imagen base confiable compatible con Python 3.12 (`python:3.12-slim`);
+- `.dockerignore` que excluye docs, tests, evals, `ops/`, `.env` y artefactos locales;
+- proceso non-root (usuario dedicado `cu013`);
+- ningún secreto en imagen, layers o build args; runtime instala sólo dependencias con el lock (`pip install -c requirements.lock .`);
+- un único proceso de aplicación (`uvicorn` con entrypoint factory);
 - escucha en `0.0.0.0:$PORT`;
 - filesystem efímero, nunca durable.
 

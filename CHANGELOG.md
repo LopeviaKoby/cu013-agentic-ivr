@@ -8,6 +8,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Materialize the accepted product policy in the specs: transversal
+  conversational invariants (durable semantic plan, goal/identity/
+  confirmation/dispatch/operation separation, 30-minute identity TTL, HITL
+  verbal confirmation with timeout/re-prompt semantics), first-slice behavior
+  (three caller identity failures, handoff causes, no sensitivity-based
+  escalation, SendMail-gated reset, IOP-MDA-012 Firestore exception) and the
+  voice-confirmation policy note in the XCALLY boundary spec.
+- Add ADR-0010: durable semantic plan separated from authorization,
+  confirmation and external-operation truth, with durable guard before side
+  effects, one active operation per conversation and UNKNOWN after uncertain
+  dispatch.
+- Add the eval-driven testing methodology (real failure → corpus case →
+  general property → smallest layer → deterministic tests → real-model eval →
+  DEV voice validation) and the confirmation/operation reliability
+  invariants.
+- Add the versioned PII-free conversation eval corpus
+  (`evals/conversation/cases.yaml`, 32 cases, 30 families, including the
+  Experiment 0005 provenance case with paraphrases and opposite controls) and
+  the manual baseline runner `evals/conversation_baseline_eval.py` that
+  reports `NOT REPRESENTABLE IN CURRENT CONTRACT` for checks the current
+  model contract cannot express.
+- Add the `conversation-evaluation` and `xcally-voice-validation` agent skills
+  and the mandatory skill matrix to `AGENTS.md`.
 - Add the versioned system prompt module `app/conversation/prompts.py` with the
   prior-request policy: when the caller prepends an explicit question or
   informational request to an action, the assistant answers it briefly with
@@ -62,6 +85,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Reduce `AGENTS.md` to workflow/authority/matrix and point product rules to
+  the specs.
 - Move the system prompt out of `GeminiTurnModel` into the dedicated prompt
   module; the Gemini adapter keeps only baseline config, transport, parsing and
   error mapping, with no model, schema, thinking-budget or call-count change.

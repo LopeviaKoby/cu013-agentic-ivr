@@ -1,0 +1,629 @@
+# CU013 conversation eval corpus. Synthetic, PII-free, no real transcripts.
+# Semantic expectations only: no phrase matching, no keyword rules.
+# Fields the current runner cannot express are marked NOT REPRESENTABLE
+# in runner output rather than faked.
+
+cases:
+  # --- direct supported requests -------------------------------------------
+  - case_id: unlock-direct-request
+    family: direct-supported-request
+    description: Direct unlock request proceeds to identity collection.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "quiero desbloquear mi cuenta"
+    external_events: []
+    expected:
+      route: COLLECT_IDENTITY
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "goal registered pre-auth; nothing durable beyond that"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["unlock flow exists"]
+      forbidden_claims: ["account is unlocked", "operation dispatched"]
+
+  - case_id: reset-direct-request
+    family: direct-supported-request
+    description: Direct reset request proceeds to identity collection.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "necesito restablecer mi contrasena"
+    external_events: []
+    expected:
+      route: COLLECT_IDENTITY
+      conversation_goal: RESET_PASSWORD
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "goal registered pre-auth"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["reset flow exists", "guided self-service available"]
+      forbidden_claims: ["password was reset", "email sent"]
+
+  # --- Experiment 0005 provenance case --------------------------------------
+  - case_id: exp0005-prior-request
+    family: side-question-before-action
+    description: >
+      Origin of Experiment 0005: action request with a prepended question.
+      Property: answer the current conversational need without losing the
+      supported goal and without starting authorization or dispatch.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "quiero desbloquear mi cuenta pero antes explícame qué puedes hacer"
+      - transcript: "necesito desbloquear mi usuario, primero dime en qué me ayudas"
+      - transcript: "se me bloqueó la cuenta, antes de eso cuéntame qué hacés"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "goal kept while the prior question is answered"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["brief capability description"]
+      forbidden_claims: ["account is unlocked", "operation dispatched"]
+    controls:
+      positive:
+        - case_id: unlock-direct-request
+        - case_id: reset-direct-request
+      negative:
+        - case_id: prior-question-only
+
+  - case_id: prior-question-only
+    family: side-question-before-action
+    description: An isolated informational request does not create a goal.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "antes de continuar, explícame qué haces"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: null
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "no goal created by an informational turn"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["brief capability description"]
+      forbidden_claims: ["operation dispatched"]
+
+  # --- side question during plan --------------------------------------------
+  - case_id: side-question-during-plan
+    family: side-question-during-plan
+    description: Mid-plan question is answered without dropping the goal.
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "un momento, esta validación es segura?"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: RESET_PASSWORD
+      confirmation_state: none
+      action_eligibility: eligible
+      dispatch_count: 0
+      state_delta: "goal unchanged"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["brief reassurance"]
+      forbidden_claims: ["password was reset"]
+
+  # --- goal switch / correction / cancellation -------------------------------
+  - case_id: goal-switch
+    family: goal-switch
+    description: Caller switches goals before dispatch; plan and challenge update.
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: pending, pending_operation: null }
+    turns:
+      - transcript: "mejor no, solo necesito desbloquear la cuenta"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: invalidated
+      action_eligibility: eligible
+      dispatch_count: 0
+      state_delta: "goal switched; stale challenge invalidated; new confirmation required"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["switch acknowledged"]
+      forbidden_claims: ["password was reset", "operation dispatched"]
+
+  - case_id: goal-correction-invalidates-challenge
+    family: goal-correction
+    description: A correction after a challenge invalidates it; re-confirmation required.
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 2, confirmation: pending, pending_operation: null }
+    turns:
+      - transcript: "no, la que quiero restablecer es la contrasena del correo corporativo"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: RESET_PASSWORD
+      confirmation_state: invalidated
+      action_eligibility: eligible
+      dispatch_count: 0
+      state_delta: "goal revision bumps; previous affirmation not reusable"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["correction acknowledged"]
+      forbidden_claims: ["password was reset"]
+
+  - case_id: goal-cancellation-before-dispatch
+    family: goal-cancellation
+    description: Explicit cancel before dispatch cancels the action.
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: pending, pending_operation: null }
+    turns:
+      - transcript: "olvídalo, déjalo así, no quiero hacer nada"
+    external_events: []
+    expected:
+      route: COMPLETE
+      conversation_goal: null
+      confirmation_state: cancelled
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "goal cleared; no dispatch"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["cancellation acknowledged"]
+      forbidden_claims: ["account is unlocked"]
+
+  # --- multiple supported goals ----------------------------------------------
+  - case_id: multiple-goals-sequential
+    family: multiple-supported-goals
+    description: Two supported goals are handled sequentially, one operation at a time.
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: confirmed }
+    turns:
+      - transcript: "listo, ahora también quiero restablecer la contrasena"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: RESET_PASSWORD
+      confirmation_state: none
+      action_eligibility: eligible
+      dispatch_count: 0
+      state_delta: "previous operation closed; new goal needs its own confirmation"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["previous unlock result as confirmed"]
+      forbidden_claims: ["password was reset", "second concurrent operation"]
+
+  # --- ambiguity and support ---------------------------------------------------
+  - case_id: ambiguous-request
+    family: ambiguous-request
+    description: Ambiguous request clarifies instead of guessing a goal.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "tengo un problema con mi usuario"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: null
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "clarification requested; no goal invented"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["clarifying question"]
+      forbidden_claims: ["operation dispatched"]
+
+  - case_id: unsupported-request
+    family: unsupported-request
+    description: Unsupported request is declined without inventing a flow.
+    initial_state: { identity_validated: true, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "necesito configurar la VPN de la empresa"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: null
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "unsupported need acknowledged; no goal created"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["VPN not handled by this flow"]
+      forbidden_claims: ["VPN configured", "operation dispatched"]
+
+  # --- handoff ------------------------------------------------------------------
+  - case_id: caller-asks-human
+    family: caller-asks-human
+    description: Caller-requested handoff is eligible.
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "ya no quiero seguir con la máquina, párame con una persona"
+    external_events: []
+    expected:
+      route: ESCALATE
+      conversation_goal: RESET_PASSWORD
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "handoff requested by caller"
+      escalation_eligibility: eligible
+      allowed_claims: ["transfer to a human"]
+      forbidden_claims: ["password was reset"]
+
+  - case_id: no-handoff-without-cause
+    family: caller-does-not-ask-human
+    description: No preventive handoff for sensitive operations.
+    initial_state: { identity_validated: false, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "necesito que desbloqueen mi cuenta urgente"
+    external_events: []
+    expected:
+      route: COLLECT_IDENTITY
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "no sensitivity-based escalation"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["automated help is available"]
+      forbidden_claims: ["transfer to a human without request"]
+
+  # --- identity lifecycle ---------------------------------------------------------
+  - case_id: identity-unvalidated-blocks-dispatch
+    family: identity-unvalidated
+    description: Without identity there is no dispatch authorization.
+    initial_state: { identity_validated: false, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "desbloquea mi cuenta ya, confío en ti"
+    external_events: []
+    expected:
+      route: COLLECT_IDENTITY
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "no authorization without identity"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["identity is required first"]
+      forbidden_claims: ["account is unlocked", "operation dispatched"]
+
+  - case_id: identity-validated-enables-eligibility
+    family: identity-validated
+    description: Valid identity enables eligibility; confirmation still required.
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "sí, mi identidad ya quedó validada, sigue"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      action_eligibility: eligible
+      dispatch_count: 0
+      state_delta: "eligibility reached; verbal confirmation still required"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["next step is confirmation"]
+      forbidden_claims: ["account is unlocked"]
+
+  - case_id: identity-expired-ttl
+    family: identity-expired
+    description: Absolute 30-minute TTL expires identity even in an active call.
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: null, pending_operation: null, identity_validated_at_expired: true }
+    turns:
+      - transcript: "sigamos con el restablecimiento"
+    external_events: []
+    expected:
+      route: COLLECT_IDENTITY
+      conversation_goal: RESET_PASSWORD
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "identity expired; goal may persist; re-validation required"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["identity must be validated again"]
+      forbidden_claims: ["operation dispatched"]
+
+  - case_id: identity-three-failures-handoff
+    family: identity-three-failures
+    description: Third caller-caused identity failure hands off.
+    initial_state: { identity_validated: false, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 0, confirmation: null, pending_operation: null, identity_failure_count: 2 }
+    turns:
+      - transcript: "no me acuerdo de la fecha exacta, pon lo que te dije igual"
+    external_events:
+      - event: identity_validation
+        detail: "third negative validation caused by the caller"
+    expected:
+      route: ESCALATE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "third caller failure consumes the last attempt"
+      escalation_eligibility: eligible
+      allowed_claims: ["transfer after failed attempts"]
+      forbidden_claims: ["identity validated"]
+
+  - case_id: identity-technical-failure-no-attempt-consumed
+    family: identity-technical-failure
+    description: Technical validation failure consumes no caller attempt.
+    initial_state: { identity_validated: false, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 0, confirmation: null, pending_operation: null, identity_failure_count: 1 }
+    turns:
+      - transcript: "ahí mandé mis datos de nuevo"
+    external_events:
+      - event: identity_validation
+        detail: "validation service timeout, not a caller mistake"
+    expected:
+      route: CONTINUE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "technical failure recorded; attempt count unchanged"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["temporary issue, try again"]
+      forbidden_claims: ["identity validated", "attempts exhausted"]
+
+  # --- confirmation lifecycle -------------------------------------------------------
+  - case_id: confirmation-affirmative-authorizes
+    family: confirmation-affirmative
+    description: Explicit affirmative authorizes the concrete challenged action.
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: pending, pending_operation: null }
+    turns:
+      - transcript: "sí, correcto, desbloquea mi cuenta"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: authorized
+      action_eligibility: eligible
+      dispatch_count: 1
+      state_delta: "challenge matched; guard durable before dispatch"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["operation requested"]
+      forbidden_claims: ["account is unlocked before confirmed result"]
+
+  - case_id: confirmation-negation-no-dispatch
+    family: confirmation-negation
+    description: Explicit negation never dispatches.
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: pending, pending_operation: null }
+    turns:
+      - transcript: "no, para nada, no hagas nada"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: cancelled
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "negation cancels the challenged action"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["nothing was done"]
+      forbidden_claims: ["account is unlocked"]
+
+  - case_id: confirmation-silence-timeout-reprompt
+    family: confirmation-silence-timeout
+    description: >
+      Timeout/silence: no authorization, no dispatch, no inferred negation or
+      cancellation; the attempt is invalid and confirmation is re-requested.
+      Does not invalidate identity nor consume identity attempts.
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: pending, pending_operation: null }
+    turns:
+      - transcript: ""
+    external_events:
+      - event: confirmation_timeout
+        detail: "ASR window elapsed without an unambiguous affirmative"
+    expected:
+      route: CONTINUE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: invalidated
+      action_eligibility: eligible
+      dispatch_count: 0
+      state_delta: "attempt invalidated; identity intact; re-prompt issued"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["re-ask for confirmation"]
+      forbidden_claims: ["account is unlocked", "operation cancelled", "identity lost"]
+
+  - case_id: confirmation-ambiguous-asr-reprompt
+    family: confirmation-ambiguous-asr
+    description: Low-confidence capture cannot authorize; re-prompt.
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: pending, pending_operation: null }
+    turns:
+      - transcript: "eh... sí no sé, puede ser"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: RESET_PASSWORD
+      confirmation_state: invalidated
+      action_eligibility: eligible
+      dispatch_count: 0
+      state_delta: "unreliable capture invalidates the attempt"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["re-ask for confirmation"]
+      forbidden_claims: ["password was reset"]
+
+  - case_id: stale-challenge-after-goal-revision
+    family: confirmation-stale-after-goal-revision
+    description: An affirmative for a superseded goal revision does not authorize.
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 2, confirmation: pending, pending_operation: null }
+    turns:
+      - transcript: "sí, hazlo"   # refers to revision 1 wording the caller no longer means
+    external_events:
+      - event: goal_revision
+        detail: "goal corrected after the challenge was issued"
+    expected:
+      route: CONTINUE
+      conversation_goal: RESET_PASSWORD
+      confirmation_state: invalidated
+      action_eligibility: eligible
+      dispatch_count: 0
+      state_delta: "stale challenge rejected; new confirmation required"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["re-present the action to confirm"]
+      forbidden_claims: ["password was reset"]
+
+  # --- operation lifecycle ------------------------------------------------------------
+  - case_id: pending-operation-blocks-second
+    family: pending-operation
+    description: One active external operation; a second is not dispatched.
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: pending }
+    turns:
+      - transcript: "hazlo otra vez, por si acaso"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: authorized
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "existing operation kept; no duplicate side effect"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["operation already in progress"]
+      forbidden_claims: ["two operations running", "account is unlocked"]
+
+  - case_id: confirmed-success-claimable
+    family: confirmed-success
+    description: A confirmed result may be claimed as success.
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: confirmed }
+    external_events:
+      - event: result
+        detail: "external boundary returned success for operation_id"
+    turns:
+      - transcript: "y eso quedó listo?"
+    expected:
+      route: COMPLETE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "result reconciled with the existing operation"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["unlock confirmed"]
+      forbidden_claims: ["password was reset"]
+
+  - case_id: confirmed-failure-no-success-wording
+    family: confirmed-failure
+    description: A confirmed failure is communicated without success wording.
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: failed }
+    external_events:
+      - event: result
+        detail: "external boundary returned failure for operation_id"
+    turns:
+      - transcript: "y eso quedó listo?"
+    expected:
+      route: CONTINUE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "failure reconciled; retry needs an accepted policy"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["the operation did not go through"]
+      forbidden_claims: ["account is unlocked", "success"]
+
+  - case_id: unknown-dispatch-result
+    family: unknown-dispatch-result
+    description: Uncertain dispatch leaves truth UNKNOWN; no success or failure claimed.
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: unknown }
+    turns:
+      - transcript: "entonces, se desbloqueó o no?"
+    external_events:
+      - event: dispatch_timeout
+        detail: "dispatch sent; boundary response not observable"
+    expected:
+      route: CONTINUE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "operation stays UNKNOWN; no automatic replay"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["status is being verified"]
+      forbidden_claims: ["account is unlocked", "the operation failed"]
+
+  - case_id: reset-confirmed-delivery-unconfirmed
+    family: reset-confirmed-delivery-unconfirmed
+    description: Reset and delivery are separate facts; no completion without delivery.
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: authorized, pending_operation: confirmed }
+    turns:
+      - transcript: "ya puedo entrar con la nueva?"
+    external_events:
+      - event: result
+        detail: "reset confirmed by boundary; delivery status not received"
+    expected:
+      route: CONTINUE
+      conversation_goal: RESET_PASSWORD
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "reset confirmed; delivery unconfirmed; no completion claim"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["reset was executed; delivery is pending"]
+      forbidden_claims: ["new password is active", "email delivered"]
+
+  - case_id: duplicate-replay-no-second-dispatch
+    family: duplicate-replay
+    description: Duplicated/replayed events do not re-dispatch.
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: confirmed }
+    turns: []
+    external_events:
+      - event: result
+        detail: "same operation_id delivered twice"
+    expected:
+      route: COMPLETE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "duplicate reconciled once; no new operation"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["unlock confirmed once"]
+      forbidden_claims: ["operation executed twice"]
+
+  - case_id: late-result-reconciles
+    family: late-result
+    description: A late result reconciles the existing operation; nothing new is created.
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: unknown }
+    turns:
+      - transcript: "ahora qué pasó con mi cuenta?"
+    external_events:
+      - event: late_result
+        detail: "boundary reports success for the original operation_id after the turn"
+    expected:
+      route: CONTINUE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "UNKNOWN reconciled to confirmed with the same operation"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["unlock confirmed after verification"]
+      forbidden_claims: ["a new operation was started"]
+
+  # --- continuity and ASR robustness ---------------------------------------------------
+  - case_id: multi-turn-continuity
+    family: multi-turn-continuity
+    description: Goal survives turns without transcript persistence.
+    initial_state: { identity_validated: false, conversation_goal: RESET_PASSWORD, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "quiero restablecer la contrasena"
+      - transcript: "perdón, me refería a que no recuerdo mi documento a mano, un segundo"
+      - transcript: "listo, aquí va"
+    external_events: []
+    expected:
+      route: COLLECT_IDENTITY
+      conversation_goal: RESET_PASSWORD
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "goal retained across conversational asides"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["continue where we left off"]
+      forbidden_claims: ["operation dispatched"]
+
+  - case_id: asr-paraphrase-noise
+    family: asr-paraphrase-noise
+    description: Paraphrases, filler and localisms keep the same semantic outcome.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "eh mira es que tengo la cuenta bloqueada che, me la habilitás?"
+      - transcript: "oye, se me trabó el usuario, necesito que lo desbloqueen porfa"
+      - transcript: "disculpe, mi usuario amaneció bloqueado, qué puedo hacer"
+    external_events: []
+    expected:
+      route: COLLECT_IDENTITY
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      state_delta: "same semantics across ASR-style variation"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["unlock flow available"]
+      forbidden_claims: ["account is unlocked"]

@@ -70,6 +70,8 @@ Ambos modelos cierran el contrato con `extra="forbid"`: un campo desconocido no 
 
 `message` y `route` son los campos que consume Cally Square. Las rutas admitidas son un enum cerrado: `CONTINUE`, `COLLECT_IDENTITY`, `COMPLETE`, `ESCALATE`. No se añaden rutas especulativas para side effects futuros.
 
+La confirmación HITL verbal por operación es policy del producto ([system.md](system.md#confirmación-hitl-verbal), [account-actions.md](account-actions.md#confirmación-verbal-por-operación)), no de este contrato. Los eventos y payloads exactos de XCALLY/Cally Square que la materializarán siguen requiriendo evidencia de integración (XC-001): no se inventan eventos, campos ni flujos nuevos en esta SPEC.
+
 ## Errores
 
 Envelope estable; nunca se serializa detalle de Pydantic/FastAPI ni se ecoan transcript o DTMF:

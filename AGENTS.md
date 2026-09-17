@@ -81,13 +81,22 @@ Active implementation gaps live in [`docs/gaps.md`](docs/gaps.md) and must be re
 
 ## Account actions and security
 
-The first slice is `RESET_PASSWORD` plus `UNLOCK_ACCOUNT`, with no mandatory priority. Initial identity validation uses DTMF for document ID and date of birth.
+The first slice is `RESET_PASSWORD` plus `UNLOCK_ACCOUNT`. Product behavior — identity attempts, HITL verbal confirmation, handoff causes, SendMail policy and related invariants — lives in the specs and is not duplicated here:
 
-Raw DTMF values must not enter the LLM, logs or durable state beyond the strict validation need. A validated identity does not mean that an account operation succeeded.
+- [system specification](docs/specs/system.md) — transversal conversational invariants;
+- [account-actions specification](docs/specs/account-actions.md) — first-slice behavior.
 
-XCALLY/Cally Square initially mediates Orchestrator/TIVIT/AD. This route is experimental and may be reevaluated. SendMail integration is deferred; when implemented, Cally Square delivers any temporary password and CU013 receives only delivery status. CU013 never retains the password in the LLM, Firestore, logs, telemetry or fixtures.
+Security floor: raw DTMF never reaches the LLM, logs or durable state; secrets never live in `config.yaml`; `.env` is local and Git-ignored; Secret Manager provides cloud secrets; never use service-account JSON keys.
 
-Do not store secrets in `config.yaml`. `.env` is local and Git-ignored; Secret Manager will provide cloud secrets when they exist. Never use service-account JSON keys.
+## Mandatory skill matrix
+
+| Change type | Mandatory skill/docs | Required evidence |
+|---|---|---|
+| prompt / policy / schema / model | `conversation-evaluation` + applicable SPEC | semantic comparison against the corpus, no critical regressions |
+| accepted voice-impacting change | `xcally-voice-validation` | correlated DEV caller evidence |
+| state / side-effect architecture | applicable SPEC + ADR + deterministic tests | invariant coverage |
+| external action integration | account-actions + xcally boundary + gaps | observed contract, no guessed semantics |
+| iteration closeout | `iteration-closeout` | reconciled docs + gates |
 
 ## Workflow
 
@@ -168,4 +177,10 @@ Stop when required XCALLY behavior is unknown, a required business rule or exter
 
 Decisions live in `docs/decisions/`, use `NNNN-short-kebab-title.md`, and use the status values `Proposed`, `Accepted`, `Deprecated` or `Superseded`.
 
-The only active CU013 skill is `iteration-closeout` (`.agents/skills/iteration-closeout/SKILL.md`), used to close and reconcile an iteration before commit, integration or handoff. A future skill requires an explicit owner instruction and must represent a recurrent procedure, not a technology component, person, isolated bug or copy of a spec, ADR or `AGENTS.md`.
+The active CU013 skills are:
+
+- `iteration-closeout` — close and reconcile an iteration before commit, integration or handoff;
+- `conversation-evaluation` — mandatory for prompt, conversational schema, conversational policy or model changes;
+- `xcally-voice-validation` — mandatory for accepted voice-impacting changes.
+
+A future skill requires an explicit owner instruction and must represent a recurrent procedure, not a technology component, person, isolated bug or copy of a spec, ADR or `AGENTS.md`.

@@ -34,7 +34,9 @@ El mecanismo inicial aceptado es DTMF:
 3. obtener un resultado positivo de validación;
 4. sólo entonces autorizar la solicitud de reset o desbloqueo.
 
-La identidad validada concede derecho a solicitar una acción; no equivale al éxito de AD/TIVIT.
+La identidad validada concede derecho a solicitar una acción; no equivale al éxito de AD/TIVIT ni a la autorización de despacho, que exige además la confirmación HITL verbal de [system.md](system.md#confirmación-hitl-verbal).
+
+**ACCEPTED.** La identidad es válida sólo durante la llamada actual y por un TTL absoluto de 30 minutos. Un re-prompt de confirmación verbal no invalida la identidad y no consume intentos de validación; un timeout o ASR insuficiente de confirmación tampoco.
 
 Los valores crudos de documento y fecha de nacimiento:
 
@@ -42,6 +44,36 @@ Los valores crudos de documento y fecha de nacimiento:
 - no deben aparecer en logs o telemetría;
 - no deben persistirse más allá de lo estrictamente necesario para validar;
 - deben minimizarse en cualquier estado durable.
+
+## Intentos de validación de identidad
+
+**ACCEPTED.** Se permiten hasta tres fallos de identidad imputables al caller por llamada (documento o fecha incorrectos). Al tercer fallo el agente ejecuta handoff.
+
+**ACCEPTED.** Los fallos técnicos de validación (indisponibilidad o timeout del boundary externo) no consumen intentos del caller. No confunden la validación con la confirmación HITL: son fases distintas.
+
+## Atención automatizada y handoff
+
+**ACCEPTED.** CU013/XCALLY cuenta como atención automatizada de Mesa para `RESET_PASSWORD` y `UNLOCK_ACCOUNT`. No existe escalamiento preventivo por sensibilidad de la operación: ninguna de las dos acciones escala sólo por serlo.
+
+**ACCEPTED.** El handoff procede únicamente cuando:
+
+1. el caller lo solicita;
+2. el IOP o protocolo vigente lo exige;
+3. la operación no está soportada ni autorizada;
+4. existe un fallo terminal que impide resolver la operación automáticamente;
+5. otra condición aceptada en esta SPEC lo exige.
+
+No se inventan causas adicionales de handoff.
+
+## Confirmación verbal por operación
+
+**ACCEPTED.** Después de identidad válida y antes de cualquier despacho, cada operación exige su propia confirmación verbal afirmativa e inequívoca del caller sobre la acción concreta presentada, según la invariante HITL de [system.md](system.md#confirmación-hitl-verbal):
+
+- negación explícita, silencio, timeout y ASR no concluyente nunca autorizan;
+- un timeout de confirmación provoca un re-prompt verbal;
+- una cancelación explícita antes del despacho cancela la acción;
+- después del despacho no se promete reversión;
+- no existe máximo aceptado de reintentos de confirmación; los tres intentos de identidad son una fase distinta y no se mezclan.
 
 ## RESET_PASSWORD
 
@@ -55,9 +87,11 @@ El agente debe guiar al caller según el IOP vigente de cambio de contraseña, s
 - portal de accesos TIVIT, informando la condición vigente de conexión a la red corporativa TIVIT o VPN;
 - escalamiento a Service Desk cuando el usuario no pueda realizar el cambio por ninguna de las dos vías, tenga permisos VDI o requiera desbloqueo de cuenta.
 
+Aclaración vigente: la referencia del IOP a "requiera desbloqueo de cuenta" no convierte por sí sola ese caso en handoff humano obligatorio. CU013/XCALLY satisface la atención de Mesa como atención automatizada para `UNLOCK_ACCOUNT`; cuando la operación soportada puede resolverse autónomamente, el flujo continúa con el desbloqueo automático de esta SPEC (identidad + confirmación HITL), y el handoff humano sólo aplica según las causas aceptadas en esta SPEC.
+
 ### Acción directa
 
-La acción directa sólo puede solicitarse después de completar la validación positiva de identidad por DTMF y conceder autorización para actuar sobre la cuenta. Se ejecuta mediante:
+La acción directa sólo puede solicitarse después de completar la validación positiva de identidad por DTMF y de la confirmación HITL verbal de esa acción concreta. Se ejecuta mediante:
 
 ```text
 CU013 ↔ XCALLY/Cally Square ↔ Orchestrator/TIVIT/AD
@@ -65,17 +99,23 @@ CU013 ↔ XCALLY/Cally Square ↔ Orchestrator/TIVIT/AD
 
 El agente no debe afirmar que la contraseña fue restablecida ni que su entrega fue exitosa hasta recibir un resultado verificable del boundary autorizado.
 
+**ACCEPTED.** `reset confirmed` (resultado de AD/TIVIT) y `delivery confirmed` (estado de SendMail) son hechos separados; ninguno implica al otro y cada uno se comunica sólo con el estado recibido. El reset real para callers queda gated por SendMail validado: mientras SendMail esté Deferred, el reset directo no se declara completado para el caller sin su resultado de entrega.
+
 ## UNLOCK_ACCOUNT
 
 No existe una vía de autoservicio guiado aceptada para desbloquear una cuenta.
 
-Después de capturar por DTMF el documento y la fecha de nacimiento, obtener una validación positiva y conceder autorización, el agente puede solicitar directamente el desbloqueo mediante XCALLY/Orchestrator. La respuesta al caller debe describir la acción y su resultado sin exponer nombres de servicios o componentes técnicos.
+Después de capturar por DTMF el documento y la fecha de nacimiento, obtener una validación positiva y obtener la confirmación verbal de esa acción concreta, el agente puede solicitar directamente el desbloqueo mediante XCALLY/Orchestrator. La respuesta al caller debe describir la acción y su resultado sin exponer nombres de servicios o componentes técnicos.
 
 La solicitud usa el comando externo observado `desbloqueio` mediante los bloques REST de Cally Square hacia Orchestrator/TIVIT/AD. La respuesta al caller deriva exclusivamente del resultado externo observado; ni una intención del caller ni una inferencia del LLM prueban el éxito.
 
 ## Ticketing y Mesa de Servicio
 
 CU013 no crea, consulta ni modifica tickets ITSM. El registro de incidentes en herramientas de gestión está fuera del boundary técnico de este backend y no se implementa aquí.
+
+### Excepción owner al registro de IOP-MDA-012
+
+**ACCEPTED (owner decision).** IOP-MDA-012 exige registrar un incidente por cada desbloqueo. Para CU013, la persistencia en Firestore más logging seguro y PII-safe sustituyen ese registro de incidente. Esta excepción está autorizada explícitamente por el owner y no convierte Firestore en un sistema ITSM: CU013 no crea, consulta, actualiza ni cierra tickets, y el registro durable conserva sólo datos semánticos de operación, nunca datos personales crudos ni DTMF.
 
 Para CU013, el desbloqueo automatizado autorizado se ejecuta por la ruta XCALLY/Cally Square → Orchestrator/TIVIT/AD. Si la operación no puede resolverse, se usa la ruta de escalamiento o handoff disponible en XCALLY según la evidencia de los XML CU013/RD y `DOC_API_RD.pdf`.
 
@@ -152,6 +192,8 @@ El runtime debe distinguir como mínimo:
 No se fijan todavía nombres de nodos, GraphState keys, modelos Pydantic, endpoints ni payloads target para las órdenes y resultados de AD/TIVIT. El baseline DEV provisional del boundary conversacional XCALLY ↔ CU013 está materializado y tipado en [Boundary HTTP XCALLY ↔ CU013](xcally-boundary.md).
 
 Una afirmación del caller o del LLM no puede convertirse en resultado empresarial. El agente sólo comunica estados efectivamente devueltos por el boundary externo.
+
+**ACCEPTED.** Un resultado tardío (`late result`) se reconcilia con la operación existente y no crea una operación nueva ni un contacto nuevo; el resultado de una operación ya cancelada o cerrada no reabre nada.
 
 La estrategia de idempotencia, correlación, polling, retries y resultados tardíos permanece experimental y se gestiona en [docs/gaps.md](../gaps.md). No se autorizan retries automáticos de acciones de cuenta hasta aceptar una política respaldada por evidencia.
 

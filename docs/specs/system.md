@@ -39,6 +39,47 @@ Una tool representa una capacidad externa. Persistir estado o modificar memoria 
 
 Un turno normal apunta a una sola solicitud al modelo. Si una interacción lógica requiere más de dos llamadas secuenciales al modelo, se debe hacer STOP & REPORT.
 
+## Invariantes conversacionales transversales
+
+**ACCEPTED.** Las siguientes invariantes rigen cualquier comportamiento conversacional de CU013. Su materialización de estado concreto es discreción de ingeniería mientras las respete; los detalles del primer slice están en [Account Actions](account-actions.md).
+
+### Plan conversacional durable
+
+- **ACCEPTED.** El estado durable conserva un plan conversacional pequeño y semántico de objetivos soportados, separado de cualquier autorización, confirmación u operación externa. La intención expresada por el caller puede existir como goal conversacional sin estar autorizada, confirmada, despachada ni completada.
+- **ACCEPTED.** Las side questions, correcciones, cambios de objetivo, cancelaciones y continuidad multi-turno son parte del comportamiento normal. Atender la necesidad conversacional del momento no pierde el goal soportado vigente; una corrección o cancelación del caller actualiza el plan antes de cualquier autorización o despacho.
+
+### Separación goal / autorización / confirmación / operación / resultado
+
+- **ACCEPTED.** Estos estados son distintos y ninguno implica a otro:
+  1. goal conversacional (`conversation goal`);
+  2. identidad validada (`identity authorization`);
+  3. confirmación HITL verbal por operación (`verbal confirmation`);
+  4. autorización de despacho (`authorized dispatch`);
+  5. operación externa pendiente (`pending external operation`);
+  6. resultado externo confirmado (`confirmed external result`).
+- **ACCEPTED.** Toda afirmación (`claim`) comunicada al caller debe estar respaldada por el estado runtime observable. El modelo no crea verdad; la verdad del sistema proviene del estado durable y de resultados externos confirmados.
+
+### Identidad
+
+- **ACCEPTED.** La identidad validada está limitada a la llamada actual y expira con un TTL absoluto de 30 minutos desde su validación, sea cual sea la actividad de la conversación. Sin identidad vigente no existe autorización de despacho.
+
+### Confirmación HITL verbal
+
+- **ACCEPTED.** Toda operación sensible exige una confirmación verbal específica por operación, después de identidad válida:
+  1. identidad válida;
+  2. el sistema presenta verbalmente la acción concreta a confirmar;
+  3. sólo una aceptación afirmativa e inequívoca por voz del caller autoriza esa acción concreta;
+  4. el runtime valida que la confirmación corresponde al challenge vigente y a la revisión vigente del objetivo;
+  5. sólo entonces puede existir autorización de despacho.
+- **ACCEPTED.** Un challenge de confirmación queda invalidado por: timeout o silencio, ASR insuficiente o no concluyente, o revisión del objetivo tras emitir el challenge. Un challenge invalidado se re-solicita verbalmente.
+- **ACCEPTED.** El timeout, el silencio o el ASR insuficiente de una confirmación: no autorizan, no despachan, no infieren negación ni cancelación; invalidan ese intento de confirmación y obligan a repetir la solicitud verbal. Un re-prompt de confirmación no invalida la identidad ya validada y no consume intentos de validación de identidad. No existe máximo aceptado de reintentos de confirmación verbal.
+- **ACCEPTED.** No se reutiliza una afirmación anterior para otra acción ni para otra revisión del plan. Una negación explícita no autoriza el despacho. Una cancelación explícita antes del despacho cancela la acción.
+
+### Side effects
+
+- **ACCEPTED.** Los side effects externos sólo se ejecutan después de un guard durable persistido en Firestore y de una autorización válida (identidad vigente + confirmación verbal vigente + operación soportada). Existe como máximo una sola operación externa activa por conversación.
+- **ACCEPTED.** La incertidumbre tras un despacho externo se representa como un estado desconocido (`UNKNOWN`) que se reconcilia con el resultado real cuando llega; nunca se declara éxito ni fracaso sin confirmación, y un resultado tardío se reconcilia con la operación existente sin crear una operación nueva ni repetir el side effect.
+
 ## Persistencia de sesión
 
 **ACCEPTED.** Cada request debe cargar desde Firestore un `SessionRecord` pequeño, semántico y con campos permitidos explícitamente; construir un `GraphState` efímero en RAM; ejecutar LangGraph sin checkpointer persistente; consolidar el siguiente `SessionRecord`; y persistirlo antes de emitir el HTTP response.
@@ -68,7 +109,7 @@ Recursos actuales:
 
 - Firestore `(default)`, Native mode, Standard edition, `us-east1`.
 - Artifact Registry `cu013-containers-dev`, formato Docker, `us-east1`.
-- Cloud Run `cu013-runtime-dev` desplegado en `us-east1` como entorno DEV PROVISIONAL; estado de reposo `min instances = 0` y `min = 1` sólo durante ventanas de benchmark autorizadas.
+- Cloud Run `cu013-runtime-dev` desplegado en `us-east1` como entorno DEV PROVISIONAL; estado de reposo `min instances = 0` y `min = 1` sólo durante ventanas autorizadas de benchmark o de validación DEV de voz controlada.
 - Vertex AI habilitado en `us-east1`; el motor real ejecuta el baseline temporal y la selección productiva sigue pendiente.
 - Secret Manager contiene el secreto DEV `cu013-api-key-dev`; Cloud Run lo consume por referencia con versión numérica, nunca por valor en el repositorio.
 
@@ -122,7 +163,7 @@ Configuración operacional y secretos son categorías distintas. En DEV existe `
 ## Disciplina de costos
 
 - PoC/DEV está orientado a bajo costo.
-- Cloud Run DEV opera con `min instances = 0` y `max instances = 1`; `min = 1` existe sólo durante una ventana de benchmark autorizada y se restaura a 0 al terminar, pase o falle.
+- Cloud Run DEV opera con `min instances = 0` y `max instances = 1`; `min = 1` existe sólo durante una ventana autorizada de benchmark o de validación DEV de voz controlada y se restaura a 0 al terminar, pase o falle.
 - No se crearán recursos always-on innecesarios ni una segunda base Firestore por defecto.
 - No se añadirán VPC, Cloud SQL, Redis, Kubernetes u observabilidad pesada sin evidencia.
 - El presupuesto y alerta económica se gestionan externamente; no son un hard cap técnico.

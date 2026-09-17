@@ -22,6 +22,10 @@ skills-lock.json
 .agents/skills/*
 !.agents/skills/iteration-closeout/
 !.agents/skills/iteration-closeout/**
+!.agents/skills/conversation-evaluation/
+!.agents/skills/conversation-evaluation/**
+!.agents/skills/xcally-voice-validation/
+!.agents/skills/xcally-voice-validation/**
 .codegraph/
 docs/iop/*
 !docs/iop/README.md
