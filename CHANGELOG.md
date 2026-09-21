@@ -8,6 +8,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Add the technical XCALLY ↔ CU013 account-action contract: `/turns` emits
+  `EXECUTE_ACTION` with an opaque `command` only after the durable dispatch
+  guard, and `/integration-events` carries the closed PII-safe event union
+  (`IDENTITY_VALIDATION_RESULT`, `VOICE_INPUT_FAILURE`,
+  `ACCOUNT_ACTION_STATUS`, `ACCOUNT_ACTION_ERROR`) with a flat
+  `{acknowledged, operation_state, directive, message}` response. The
+  external action command stays CU013-owned and never carries document,
+  date, password, RD credentials or payloads.
+- Add deterministic anti-silence progress for pending operations: a single
+  runtime-owned message cadence with no model call per poll, idempotent
+  `NONE`, safe terminal wording and no ungrounded claims.
+- Add PII-safe identity handling separated from DTMF: raw identity was
+  removed from the active turn contract, identity outcomes travel as local
+  `VALID`/`INVALID`/`TECHNICAL_FAILURE`, and XCALLY maps its own lookup
+  (`GET /validauser/TIVIT/{DOCUMENTO}` with `FOUND`/`NOT_FOUND`) plus the
+  entry-date comparison against `resposta2` before calling CU013. `FOUND`
+  does not equal a validated identity. Full E2E evidence is still pending.
+- Reconcile repository readiness and the evaluation harness: experimental
+  short aliases are removed from active code/tests/docs and blocked by the
+  readiness gate, the confirmation-affirmative oracle matches the accepted
+  one-active-operation authority, and the harness computes worktree
+  identity with explicit UTF-8 decoding.
+- Select the active synthetic conversational baseline: Gemini 3.5
+  Flash-Lite on Vertex AI (`global`, `MINIMAL`, structured output,
+  mandatory procedure classification, three-pair recent memory) with
+  ADR-0011. Synthetic scope only; not voice-validated and not
+  production-accepted.
+- Add the agent evaluation lab: `evals/conversation_lab.py` (shared pure
+  schema, oracles, fingerprints, statistics and sanitization),
+  `evals/conversation_eval.py` (real-model runner with explicit
+  `independent_trial` / `sequence` trial kinds, null-as-absence oracle
+  semantics, clean/absent-field `NOT ORACLED` reporting, sanitized run /
+  case / repetition / turn evidence, fixed warmups excluded from verdicts,
+  repetition-level INFRA, invalid structured output as model failure,
+  focused-rerun scope metadata, deterministic variant fingerprint and
+  Git-ignored artifacts under `evals/results/`) and
+  `evals/conversation_compare.py` (pure paired comparator with a hard
+  critical-violation gate, semantic and efficiency gates, INFRA separation,
+  rerun merging that never erases original evidence, and a manual
+  spoken-quality review template with MEETS / CONCERN / NOT EVIDENCED).
+- Add the owner-authorized local conversational baseline reference at
+  `21896d12e04da173eda5b0fb4949ac5841812fdd` with synthetic scope and the
+  Experiment 0006 evidence reference; not voice-validated and not
+  production-accepted.
+- Add the deterministic lab test suite `tests/evals/` covering fresh
+  independent paraphrases, sequence retention, per-repetition verdicts,
+  `NOT ORACLED` / `NOT REPRESENTABLE` properties, null-as-absence,
+  repetition-level INFRA, invalid output as model failure, focused-rerun
+  merging, comparator acceptance logic, missing token usage and evidence
+  sanitization.
+- Add the credential-free GitHub Actions workflow
+  `.github/workflows/ci.yml` (corpus validation, pytest, Ruff and MyPy; no
+  ADC, no secrets, no cloud mutation).
+- Add Experiment 0007 documenting the lab, the harness-validation real-model
+  run against the accepted baseline and the defects it surfaced.
 - Materialize the accepted product policy in the specs: transversal
   conversational invariants (durable semantic plan, goal/identity/
   confirmation/dispatch/operation separation, 30-minute identity TTL, HITL
@@ -28,7 +83,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Experiment 0005 provenance case with paraphrases and opposite controls and
   the owner-decision cases for unsupported requests, human requests, goal
   cancellation, technical identity failure and side questions) and the manual
-  runtime semantic runner `evals/conversation_baseline_eval.py`: PASS / FAIL /
+  runtime semantic runner `evals/conversation_baseline_eval.py` (renamed to
+  `evals/conversation_eval.py` by the evaluation-lab iteration): PASS / FAIL /
   NOT ORACLED / NOT REPRESENTABLE / INFRA per case and family, `UNSPECIFIED`
   route and `not_valid`/`not_oracled` confirmation semantics, model/runtime/
   turn latency percentiles, prompt/completion tokens and accumulated tokens
@@ -101,6 +157,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Rename the XCALLY skill to `xcally-call-evidence-analysis`: it analyzes the
+  evidence of a real call the owner already executed and supplied and never
+  places calls, monitors telephony or captures logs automatically.
+- Extend `conversation-evaluation` with the paired candidate procedure
+  against the accepted baseline (memory and tool-choice behavior included)
+  and the pre-voice gate checklist.
+- Define the three validation layers and the pre-voice gate in the testing
+  standard; update README and AGENTS entry points, the mandatory skill matrix
+  and the `.gitignore` skill whitelist.
+- Extend the corpus with explicit `scenario_kind`, `handoff_cause` oracles,
+  per-turn checkpoints for sequences and the `long-conversation-memory`
+  intentional sequence (35 cases / 31 families).
 - Reduce `AGENTS.md` to workflow/authority/matrix and point product rules to
   the specs.
 - Move the system prompt out of `GeminiTurnModel` into the dedicated prompt
@@ -154,3 +222,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Moved the deadline for evaluating a Gemini alternative to 16-10-2026.
 - Clarified business-authority precedence, account-action paths, experiment retention and the documentation lifecycle.
 - Clarified the automated account-action and ticketing boundary.
+- Reconcile the active runtime to the selected profile (model, `global`
+  location separate from `us-east1` infrastructure, `MINIMAL` without
+  budget, required procedure schema, single prompt text) and the harness
+  (content-hashed worktree identity, null budget with level, model
+  location, comparator and gate identity).
+- Remove the discarded multi-provider benchmark lane from the active
+  runtime (endpoint, adapter, deploy script and exclusive tests) after
+  archiving source hashes and methodology; the historic scorer stays as
+  evidence only.
+
+### Removed
+
+- Remove discarded compact-prompt and confirmation-request variants from
+  the active prompt/schema path; evidence remains in Experiment 0009.

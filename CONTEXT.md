@@ -8,6 +8,8 @@ La iteración anterior materializó como autoridad de producto las decisiones co
 
 Esta iteración materializó el **laboratorio de evaluación** y el **baseline conversacional activo** por el owner: el runner `evals/conversation_eval.py` con `scenario_kind` explícito (`independent_trial`/`sequence`), oráculos nulos como ausencia esperada y `NOT ORACLED` visible para campos ausentes, evidencia estructurada sanitizada por run/caso/repetición/turno, warmups fijos excluidos, INFRA por repetición, output estructurado inválido como fallo de modelo, fingerprint determinista de variante calculado desde `config.yaml` y código, y artefactos locales ignorados en `evals/results/`; el comparador pareado puro `evals/conversation_compare.py` con gate crítico duro, gates semántico y de eficiencia sin SLO inventado, fusión de reruns focalizados que no borra la evidencia original y plantilla de revisión manual de calidad hablada; el CI sin credenciales `.github/workflows/ci.yml`; y la skill `xcally-call-evidence-analysis` (post-hoc sobre una llamada ya ejecutada por el owner; nunca coloca llamadas ni monitoriza telefonía). La validación de harness quedó registrada en el [Experimento 0007](docs/experiments/0007-agent-evaluation-lab.md): 138 repeticiones válidas sin INFRA, 35/46 trials PASS, cero violaciones críticas y ningún cambio de comportamiento de producto. La selección del perfil activo vive en [ADR-0011](docs/decisions/0011-select-active-conversation-profile.md), el [Experimento 0009](docs/experiments/0009-conversational-memory-and-eight-callers.md) y Git; no existe manifiesto JSON canónico paralelo.
 
+La iteración de integración materializó los **contratos backend para el flujo destino `TEST_XCALLY_CU013_API_APPROACH`**: el patrón command/event (`EXECUTE_ACTION` + `command` opaco en `/turns` y boundary técnico `/integration-events` con eventos PII-safe de identidad, canal de voz, estado y error de la operación externa), la máquina durable de operación sin duplicar enums, la política anti-silencio experimental y la retirada del DTMF crudo del contrato activo. La evidencia local vive en [Experimento 0010](docs/experiments/0010-integration-events-contract.md) y el contrato en [Boundary HTTP XCALLY↔CU013](docs/specs/xcally-boundary.md). No se modificó ningún XML XCALLY, no se llamó a RD/AD y no hubo deploy ni commit; el diseño Cally Square, el deploy coordinado y los caller tests E2E quedan pendientes.
+
 El primer corte de acciones de cuenta es `RESET_PASSWORD` + `UNLOCK_ACCOUNT`, sin prioridad obligatoria entre ambas.
 
 ## Pila y entorno
@@ -55,7 +57,7 @@ Servicios habilitados y materializados en DEV:
 - `RESET_PASSWORD` permite autoservicio guiado y acción directa autorizada después de validar identidad.
 - `UNLOCK_ACCOUNT` no tiene autoservicio; la acción directa autorizada usa XCALLY/Cally Square → Orchestrator/TIVIT/AD.
 - CU013 no integra tickets ITSM; el registro en herramientas de gestión está fuera del límite técnico del backend.
-- La validación de identidad comienza con documento y fecha de nacimiento por DTMF.
+- La validación de identidad comienza con la captura por DTMF del documento y el lookup externo por documento (`GET /validauser/TIVIT/{DOCUMENTO}`, `FOUND`/`NOT_FOUND`); tras `FOUND`, XCALLY captura la fecha de ingreso `DDMMYYYY` y la compara con `resposta2`. `FOUND` no equivale a identidad válida; el recorrido completo está pendiente de E2E (ID-001).
 - Los valores DTMF crudos quedan fuera del LLM y de los registros, y se minimizan en persistencia.
 - SendMail está Deferred. La secuencia aceptada es: baseline de voz XCALLY → integración AD/TIVIT → depuración guiada por logs y pruebas con callers → SendMail. CU013 sólo recibirá el estado del envío.
 - [ADR-0009](docs/decisions/0009-use-thin-firestore-session-repository.md) acepta Thin Firestore Session Repository: cargar un `SessionRecord` semántico, construir un `GraphState` efímero, ejecutar LangGraph sin persistent checkpointer, consolidar y guardar antes del HTTP response.
@@ -63,10 +65,10 @@ Servicios habilitados y materializados en DEV:
 - El security floor productivo está resuelto en `langgraph>=1.0.10` y `langgraph-checkpoint>=4.1.1`; el lock exacto está fijado en [requirements.lock](requirements.lock) con `langgraph==1.2.11`, `langgraph-checkpoint==4.2.0` y `google-cloud-firestore==2.30.0`.
 - El núcleo productivo mínimo del Thin Session Repository está integrado y committeado en `app/session`: contrato durable cerrado, grafo LangGraph determinista sin persistent checkpointer y 1 load + 1 save por turno normal.
 - El `SessionRecord` schema v2 materializa [ADR-0010](docs/decisions/0010-durable-semantic-plan-separate-from-authorization.md): plan conversacional durable pre-auth, autorización de identidad con TTL absoluto de 30 minutos, challenge de confirmación por operación, guard de despacho durable y verdad de operación externa, en planos separados con whitelist cerrada y migración v1→v2 fail-closed. Los guards deterministas rechazan rutas y claims ilegales sin segunda llamada al modelo, existe como máximo una operación externa activa y `UNKNOWN` no se redespacha automáticamente.
-- El boundary HTTP XCALLY↔CU013 está implementado en el worktree como baseline DEV `PROVISIONAL` y tipado en [Boundary HTTP XCALLY↔CU013](docs/specs/xcally-boundary.md): `POST /api/v1/conversations/{conversation_id}/turns`, variantes transcript ASR e `IDENTITY_DATA`, autenticación `X-API-Key` sólo desde entorno, `turn_id` único por request y errores con taxonomía segura. No es el contrato integrado final.
-- El transcript es efímero y no se persiste; el DTMF crudo queda contenido en el boundary (no se persiste, registra, devuelve ni alcanza al seam) y nunca marca `identity_validated=True`.
-- El primer motor activo es `GeminiTurnModel` (`app/conversation`): Vertex AI sobre ADC, ubicación de modelo `global`, `thinking_level=MINIMAL` sin `thinking_budget`, output estructurado tipado `ModelTurnDecision` (`message`, `route`, propuesta de plan, clasificación procedimental estructurada obligatoria, `confirmation_request`, observación de confirmación, causa de handoff y claims), una llamada y un attempt por turno normal, sin streaming ni tools. El prompt del sistema vive versionado en `app/conversation/prompts.py` (sin framework de prompts ni config dinámica) e incluye la política de petición previa, la precedencia de la necesidad inmediata, la preservación del goal ante una petición de persona, la redirección de alcance sin handoff y la clasificación de la confirmación HITL como principios generales. El grafo del turno es `START → run_model → advance_turn → END`; el modelo sugiere, el runtime decide, y ningún nodo runtime reescribe `route`.
-- La validación positiva de identidad sigue sin integración; `IDENTITY_DATA` termina de forma segura con `dependency_unavailable`.
+- El boundary HTTP XCALLY↔CU013 está implementado en el worktree como baseline DEV `PROVISIONAL` y tipado en [Boundary HTTP XCALLY↔CU013](docs/specs/xcally-boundary.md): `POST /api/v1/conversations/{conversation_id}/turns` con transcript ASR y `POST /api/v1/conversations/{conversation_id}/integration-events` con eventos técnicos PII-safe, autenticación `X-API-Key` sólo desde entorno, `turn_id` único por request, `command` opaco sólo con `EXECUTE_ACTION` y errores con taxonomía segura. No es el contrato integrado final.
+- El transcript es efímero y no se persiste; el DTMF crudo ya no existe en el contrato activo (Cally Square captura y valida), y nunca marca identidad validada.
+- El primer motor activo es `GeminiTurnModel` (`app/conversation`): Vertex AI sobre ADC, ubicación de modelo `global`, `thinking_level=MINIMAL` sin `thinking_budget`, output estructurado tipado `ModelTurnDecision` (`message`, `route`, propuesta de plan, clasificación procedimental estructurada obligatoria, `confirmation_request`, observación de confirmación, causa de handoff y claims), una llamada y un attempt por turno normal, sin streaming ni tools. El prompt del sistema vive versionado en `app/conversation/prompts.py` (sin framework de prompts ni config dinámica) e incluye la política de petición previa, la precedencia de la necesidad inmediata, la preservación del goal ante una petición de persona, la redirección de alcance sin handoff y la clasificación de la confirmación HITL como principios generales. El grafo del turno es `START → run_model → advance_turn → END`; el modelo sugiere, el runtime decide, y el contrato del modelo no incluye `EXECUTE_ACTION`.
+- La validación positiva de identidad sigue sin integración real; el contrato PII-safe `IDENTITY_VALIDATION_RESULT` está implementado y probado sólo con dobles (ID-001).
 - El [Experimento 0003](docs/experiments/0003-gemini-baseline-latency.md) midió el camino real desde host DEV (30 requests secuenciales, 0 errores): handler p50 1 281 / p95 1 922 ms; load p50 219 / p95 421 ms; modelo p50 782 / p95 1 062 ms (máx 4 094 ms); save p50 234 / p95 266 ms. Es un baseline DEV, no un SLO: no incluye ASR/TTS/red XCALLY ni Cloud Run in-region.
 - El [Experimento 0004](docs/experiments/0004-cloud-run-latency.md) midió el baseline in-region en Cloud Run `us-east1` con una instancia warm: 30/30 requests medidas con 0 errores; handler p50 657 / p95 920 ms; load p95 36 ms; modelo p50 595 ms; save p95 102 ms; round-trip HTTPS del cliente p50 878 / p95 1 145 ms. `min=0` restaurado y verificado read-only.
 - Gemini 3.5 Flash-Lite con razonamiento `MINIMAL` es el perfil conversacional activo sintético. Su identidad se deriva de `config.yaml` y `app/conversation` y el harness calcula su fingerprint en runtime; la historia vive en ADR-0011, Experimento 0009 y Git.
@@ -90,6 +92,7 @@ Servicios habilitados y materializados en DEV:
 - [Experimento diagnóstico de voz XCALLY](docs/experiments/0005-xcally-voice-turn-diagnosis.md)
 - [Experimento semántico 0006](docs/experiments/0006-semantic-runtime-evaluation.md)
 - [Experimento laboratorio de evaluación 0007](docs/experiments/0007-agent-evaluation-lab.md)
+- [Experimento contrato de eventos técnicos 0010](docs/experiments/0010-integration-events-contract.md)
 - [Runbook Cloud Run DEV benchmark](docs/runbooks/cloud-run-dev-benchmark.md)
 - [Núcleo Thin Session](app/session/)
 - [Benchmark de latencia DEV](evals/backend_latency.py)
@@ -126,7 +129,8 @@ Implementado en el repositorio:
 - lock productivo exacto y reproducible en `requirements.lock`;
 - contenedor productivo mínimo (`Dockerfile`, `.dockerignore`) con instalación runtime con el lock;
 - tooling Cloud Run DEV versionado en `ops/gcp/` y runbook asociado;
-- gate determinista de repository readiness en `tests/repository/` que protege fuentes canónicas, baseline efectivo, higiene de artefactos, links y lock.
+- contratos backend de integración para `TEST_XCALLY_CU013_API_APPROACH`: `/turns` con `BoundaryRoute.EXECUTE_ACTION` y `command` opaco, `/integration-events` con union discriminada de eventos PII-safe, máquina durable de operación, directivas anti-silencio y retirada del DTMF crudo del contrato activo, con tests deterministas de autorización, duplicados, late results, JSON y canarios PII;
+- gate determinista de repository readiness en `tests/repository/` que protege fuentes canónicas, baseline efectivo, higiene de artefactos, aliases experimentales, links y lock.
 
 Validado localmente el 15-09-2026:
 
@@ -159,13 +163,22 @@ Validado el 19-09-2026 (reconciliación del baseline, sin commit):
 - gates deterministas y corpus validados; sin evaluación focal nueva;
 - cloud read-only verificado sin mutación; cleanup pendiente separado y sin freeze declarado hasta cerrar readiness.
 
+Validado el 21-09-2026 (contratos backend del flujo TEST, sin commit):
+
+- `/turns` sólo transcript, `EXECUTE_ACTION` + `command` opaco y `/integration-events` con union discriminada de eventos PII-safe implementados y probados con dobles; cero llamadas al modelo por polling;
+- máquina durable de operación con ACK idempotente, conflicto seguro, late results y sin re-dispatch; canarios PII ausentes de modelo, Firestore, logs, respuesta y artefactos versionados;
+- aliases experimentales eliminados de código/harness/tests/docs activos y bloqueados por el gate de readiness; oráculo `confirmation-affirmative-authorizes` reconciliado a `not_eligible` tras despacho legal;
+- gates deterministas, corpus y mypy en verde; sin XML XCALLY modificado, sin llamada RD/AD, sin deploy ni commit.
+
 Pendiente:
 
+- aceptación del owner de los contratos backend implementados y del [Experimento 0010](docs/experiments/0010-integration-events-contract.md);
+- diseñar en Cally Square el flujo `TEST_XCALLY_CU013_API_APPROACH` (rama `EXECUTE_ACTION`, captura/validación de identidad, `VOICE_INPUT_FAILURE`, adaptación de bloques RD y polling sin LLM) y desplegar de forma coordinada, porque el contrato nuevo reemplaza `IDENTITY_DATA`;
+- caller tests E2E y análisis con `xcally-call-evidence-analysis` antes de declarar integrados identidad, RD, polling, ASR/TTS, latencia o handoff;
 - revalidar en voz DEV el prompt y el runtime semántico ya committeados (requiere autorización del owner para deploy; la revisión desplegada todavía contiene el prompt anterior y no el runtime v2);
 - cerrar FS-002 con el reparto del presupuesto completo de voz (XCALLY/ASR/TTS); el rango in-region indicado es de centenas bajas de milisegundos por llamada;
 - integrar la validación positiva de identidad (ID-001);
 - validar los contratos externos aún abiertos antes de acciones de cuenta productivas;
-- reconciliar la tensión de oráculo del caso `confirmation-affirmative-authorizes` (espera `action_eligibility: eligible` con `dispatch_count: 1`, mientras el runtime reporta `not_eligible` tras un despacho legal): es una decisión del owner sobre el oráculo, no un cambio de comportamiento;
 - decidir el cleanup de los 97 documentos sintéticos de benchmark (requiere autorización explícita; sin wildcards ni collection-group deletes).
 
 ## Control operativo previo al experimento
@@ -176,8 +189,8 @@ El benchmark real de latencia del 16-09-2026 fue autorizado por el propietario y
 
 ## Bloqueos y preguntas abiertas
 
-- XC-001 abierto: existe un baseline HTTP provisional del turno, pero faltan la validación y el contrato integrado con el flujo Cally Square real y AD/TIVIT.
-- Correlación, idempotencia, polling, reintentos y resultados tardíos (XC-002 a XC-004).
+- XC-001 abierto: existe un baseline HTTP provisional del turno y un contrato técnico local de órdenes/resultados, pero faltan la validación y el contrato integrado con el flujo Cally Square real y AD/TIVIT.
+- Correlación, idempotencia, polling, reintentos y resultados tardíos (XC-002 a XC-004): contrato local candidate, sin evidencia E2E.
 - Esquema completo de resultados XCALLY/Orchestrator/TIVIT/AD (XC-005) y mapeo exacto de estados externos a respuesta o escalamiento (XC-006).
 - Resultado positivo de validación de identidad sin integración AD/TIVIT (ID-001).
 - FS-002 abierto con evidencia local e in-region: load p95 421 ms (local) / 36 ms (Cloud Run) y save p95 266 ms (local) / 102 ms (Cloud Run); el rango indicado es de centenas bajas de milisegundos por llamada, pero falta el reparto del presupuesto completo de voz (XCALLY/ASR/TTS) para fijar el valor.
@@ -191,18 +204,19 @@ SendMail permanece Deferred y fuera del alcance inmediato. Los valores predeterm
 | Componente | Estado |
 |---|---|
 | Thin Session Repository | accepted + implemented |
-| Boundary HTTP/XCALLY | implemented, PROVISIONAL |
+| Boundary HTTP/XCALLY | implemented, PROVISIONAL (`/turns` + `/integration-events`) |
 | Gemini baseline | integrated (Gemini 3.5 Flash-Lite, `global`, `MINIMAL`, sintético; no voz-validado) |
 | Cloud Run DEV | implemented; estado de reposo `min=0` |
 | Experimento 0004 | completed |
 | Experimento 0005 | completed (corrección de prompt committeada, pendiente deploy y revalidación de voz) |
 | Experimento 0006 | completed (runtime semántico candidato, sin regresiones críticas; validación de voz DEV pendiente) |
 | Experimento 0007 | completed (laboratorio de evaluación materializado y validado; sin comparación de candidato todavía) |
+| Experimento 0010 | running (contratos backend de integración implementados y probados localmente; diseño Cally Square, deploy coordinado y E2E pendientes) |
 | Baseline conversacional activo | Gemini 3.5 Flash-Lite, Vertex `global`, `MINIMAL`, sintético; no voz-validado ni producción |
 | FS-002 | open |
 | CNV-001 | resolved (schema v2 durable pre-auth + continuidad + correcciones/cancelación implementados y verificados; eliminado de `docs/gaps.md`) |
 | Laboratorio de evaluación | `conversation_eval.py` + `conversation_compare.py` + corpus de 47 casos / 39 familias; `scenario_kind`, oráculos nulos/ausentes, evidencia por run/caso/turno, INFRA por repetición, reruns focalizados y CI sin credenciales |
-| Próximo gate | validación de voz DEV del runtime semántico y del prompt committeados, tras commit y deploy autorizados |
+| Próximo gate | aceptación del owner del contrato del Experimento 0010, diseño Cally Square de TEST y deploy coordinado; después, caller tests E2E |
 | AD/TIVIT | después del baseline de voz XCALLY aislado |
 
 El próximo objetivo de medición es el camino completo de voz, todavía no medido:
@@ -236,6 +250,6 @@ No añadir a esta instantánea trabajo especulativo o no aceptado.
 
 ## Hitos anteriores
 
+- Contratos backend del flujo `TEST_XCALLY_CU013_API_APPROACH`: command/event (`EXECUTE_ACTION` + `command` opaco, `/integration-events` con eventos PII-safe), máquina durable de operación, anti-silencio experimental y retirada del DTMF crudo; Experimento 0010 en curso y readiness de aliases/oráculo reconciliada.
 - Laboratorio de evaluación y baseline activo: runner real-model y comparador pareado puro, `scenario_kind`, oráculos nulos/ausentes, evidencia sanitizada, fingerprint en runtime, reruns focalizados, CI sin credenciales y skill `xcally-call-evidence-analysis`; validación de harness real sin violaciones críticas registrada en el Experimento 0007.
 - Owner decisions y semantic runtime: peticiones no soportadas o fuera de alcance sin handoff automático, petición explícita de persona sin cancelar el goal, fallo técnico de identidad sin oráculo de ruta, side question sin challenge HITL, challenge invalidado nunca reutilizado y cancelación semántica; schema v2 durable, migración v1→v2 fail-closed, guards de legalidad y evaluación real-model registrada en el Experimento 0006; `CNV-001` resuelto.
-- Primer turno de voz XCALLY real diagnosticado read-only (Experimento 0005): revisión servida confirmada contra `app/`, logs correlacionados en ventana estrecha, `COLLECT_IDENTITY` originado en la regla de prompt y corrección acotada implementada y probada contra el modelo real.
