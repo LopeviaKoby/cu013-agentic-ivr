@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  credential-free-gates:
+    name: credential-free gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install lock-constrained environment
+        run: python -m pip install -c requirements.lock -e ".[dev]"
+      - name: Validate conversation corpus and schemas
+        run: python evals/conversation_eval.py --validate-only
+      - name: Deterministic tests
+        run: python -m pytest
+      - name: Ruff check
+        run: python -m ruff check .
+      - name: Ruff format check
+        run: python -m ruff format --check .
+      - name: MyPy strict on app
+        run: python -m mypy app

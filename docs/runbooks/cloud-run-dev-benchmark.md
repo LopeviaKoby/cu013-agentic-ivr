@@ -84,8 +84,75 @@ servicio activo con una revisión aparentemente inactiva.
 recursos always-on adicionales; no usar instance-based billing. Si la
 ventana se interrumpe, ejecutar el paso 4 igualmente.
 
+## Experimento 0009 — ráfaga de ocho callers (PREPARADO, NO EJECUTADO)
+
+Esta sección prepara el benchmark de capacidad del
+[Experimento 0009](../experiments/0009-conversational-memory-and-eight-callers.md)
+sin ejecutarlo: ningún comando aquí crea revisiones, cambia tráfico,
+construye imágenes ni genera gasto. La ejecución requiere autorización
+separada del owner con ventana explícita.
+
+Artefactos preparados (esta iteración):
+
+- `evals/conversation_burst.py`: cliente de barrera de ocho IDs sintéticos
+  distintos, seam determinista async (mismo render de prompt/memoria y
+  validación de decisión, delay fijo declarado de 600 ms, resultado fijo
+  seguro; sin Vertex ni AD), colección de métricas client-side
+  (release/arrival skew, wall por request, errores/timeouts), estimador de
+  costo con stop-line, escritor de manifiesto de documentos sintéticos y
+  plan propuesto impreso. `--self-check` valida la mecánica en local
+  (in-memory, sin red); `--estimate-only`, `--print-plan` y
+  `--manifest-only` no tocan cloud. Cualquier `--url`/`--execute-live`
+  se rechaza sin una autorización distinta.
+- `ops/gcp/collect-burst-prestate.ps1`: captura read-only del pre-state
+  (`spec.traffic` completo con porcentajes, tags y `latestRevision` frente
+  a `revisionName`, escalado service/revision, image digests, entorno).
+- Estimación (tarifas recuperadas el 2026-09-18, a reconfirmar al
+  autorizar): Fase A ≈ US$0.03 (744 requests con seam, sin Vertex),
+  Fase B ≈ US$0.08 (336 requests con provider real),
+  Fase C ≈ US$0.01 (48 requests cold), cleanup ≈ US$0.00;
+  **total ≈ US$0.12**, dentro del stop-line de US$2.50 (presupuesto
+  US$3/mes). Detalle: `python evals/conversation_burst.py --estimate-only`.
+
+Diseño autorizado (sólo tras autorización separada):
+
+- Fase A: 1 vCPU / 512 MiB, **concurrency=8, max_instances=1** primero con
+  el seam; si falla por contención/latencia: concurrency=4/max=2; sólo
+  después concurrency=2/max=4. Al menos 30 ráfagas por brazo en al menos
+  tres ventanas de 60 s, alternando brazos; **no** 2 vCPU/workers/threads/
+  uvloop por anticipación.
+- Fase B: provider real sólo para configuración(es) prometedora(s),
+  al menos 20 ráfagas válidas por brazo.
+- Fase C: cold burst separado con `min_instances=0` verificado antes de
+  cada una de al menos cinco ráfagas.
+- Revisión tagged temporal con `--no-traffic` sobre el servicio DEV
+  existente (reutiliza IAM/red/secretos/Firestore) **sólo si** el pre-state
+  y la semántica de restauración de `LATEST` son demostrables; si no, se
+  propone servicio aislado temporal en lugar de crearlo profilácticamente.
+- Rollback exacto: `gcloud run services update-traffic SERVICE
+  --remove-tags TAG`, borrado sólo de revisiones 0%-tráfico listadas, y
+  verificación de `spec.traffic`, tráfico efectivo, `min_instances=0`,
+  imagen servidora original y ninguna revisión warm facturable. Nunca
+  `--to-latest` mientras una revisión experimental pueda volverse latest.
+- Limpieza Firestore: borrar documento a documento sólo los IDs del
+  manifiesto, bajo autorización de cleanup; sin wildcards ni
+  collection-group deletes.
+
+Monitoreo (filtrado por revisión tagged y ventana UTC; las métricas pueden
+llegar con retraso de muestreo):
+
+- `run.googleapis.com/container/cpu/utilizations`,
+  `container/memory/utilizations`, `container/max_request_concurrencies`,
+  `container/instance_count`, `container/startup_latencies`,
+  `request_latencies`, `request_count`, más `request_latency/pending` y
+  `request_latency/e2e_latencies`; correlación por `turn_id`/run ID
+  sintético, nunca transcript.
+
 ## Referencias
 
 - [Configuración no sensible](../../config.yaml)
 - [Experimento 0003 — baseline local](../experiments/0003-gemini-baseline-latency.md)
 - [Experimento 0004 — baseline Cloud Run](../experiments/0004-cloud-run-latency.md)
+- Nota de selección 2026-09-19: el carril temporal multi-proveedor fue
+  retirado del runtime activo; su historia vive en el Experimento 0009 y
+  Git.

@@ -112,7 +112,9 @@ Recursos actuales:
 - Firestore `(default)`, Native mode, Standard edition, `us-east1`.
 - Artifact Registry `cu013-containers-dev`, formato Docker, `us-east1`.
 - Cloud Run `cu013-runtime-dev` desplegado en `us-east1` como entorno DEV PROVISIONAL; estado de reposo `min instances = 0` y `min = 1` sólo durante ventanas autorizadas de benchmark o de validación DEV de voz controlada.
-- Vertex AI habilitado en `us-east1`; el motor real ejecuta el baseline temporal y la selección productiva sigue pendiente.
+- Vertex AI habilitado; el motor real ejecuta el baseline conversacional
+  activo (ubicación de modelo `global`; infraestructura en `us-east1`) y la
+  selección productiva sigue pendiente de validación de voz.
 - Secret Manager contiene el secreto DEV `cu013-api-key-dev`; Cloud Run lo consume por referencia con versión numérica, nunca por valor en el repositorio.
 
 APIs habilitadas:
@@ -176,8 +178,6 @@ Configuración operacional y secretos son categorías distintas. En DEV existe `
 
 `southamerica-east1` permanece como alternativa futura a benchmarkear, especialmente por cercanía con AD/TIVIT en Brasil. No es failover ni región secundaria activa.
 
-Vertex AI en `us-east1` es una dirección temporal sujeta a medición.
-
 ## Terraform
 
 **Status: DEFERRED.** No debe crearse `infra/terraform/` en esta etapa.
@@ -194,11 +194,25 @@ Reconsiderar Terraform cuando ocurra al menos uno de estos triggers:
 
 ## Modelo
 
-`gemini-2.5-flash-lite` con `ThinkingConfig(thinking_budget=0)` es el baseline temporal. No es la selección definitiva de producción.
+El baseline conversacional activo es Gemini 3.5 Flash-Lite sobre Vertex AI,
+ubicación de modelo `global`, nivel de razonamiento `MINIMAL`, salida
+estructurada habilitada, clasificación procedimental estructurada
+obligatoria y memoria conversacional reciente de tres pares de turnos
+completados en el carril sintético de evaluación. La infraestructura
+(Cloud Run, Firestore) sigue en `us-east1`: no confundir la ubicación del
+modelo con la región de infraestructura.
 
-**IMPLEMENTED (DEV baseline).** El primer motor real está integrado detrás del seam conversacional sobre Vertex AI con ADC, sin streaming ni tools, con output estructurado tipado y un solo attempt por turno. La medición del camino backend completo (HTTP → load → modelo → grafo → save → response) vive en el [Experimento 0003](../experiments/0003-gemini-baseline-latency.md) (host DEV) y el baseline in-region con una instancia warm en el [Experimento 0004](../experiments/0004-cloud-run-latency.md) (Cloud Run `us-east1`); ambos son baselines DEV, no un SLO.
-
-Debe evaluarse al menos una alternativa antes del 16-10-2026 mediante benchmarks CU013, priorizando latencia, calidad conversacional, selección/argumentos de tools, continuidad contextual y razonamiento cuando sea necesario.
+**IMPLEMENTED (baseline sintético, no validado en voz ni producción).**
+El motor real está integrado detrás del seam conversacional sobre Vertex AI
+con ADC, sin streaming ni tools, con output estructurado tipado y un solo
+attempt por turno. La identidad efectiva del baseline se deriva de
+`config.yaml` y `app/conversation`; el harness calcula su fingerprint en
+runtime sobre prompt, schemas, renderer, procedimiento, runtime, lock,
+corpus, runner, comparador y gate crítico. No existe manifiesto JSON
+canónico paralelo. La historia de selección vive en la ADR de selección
+vigente, el Experimento 0009 y Git. Las métricas futuras usan nombres
+observables completos y cada gate declara qué mide, qué casos incluye,
+numerador, denominador, tratamiento de INFRA y criterio de aceptación.
 
 ## Seguridad y observabilidad
 

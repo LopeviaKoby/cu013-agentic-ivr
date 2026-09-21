@@ -92,8 +92,8 @@ Security floor: raw DTMF never reaches the LLM, logs or durable state; secrets n
 
 | Change type | Mandatory skill/docs | Required evidence |
 |---|---|---|
-| prompt / policy / schema / model | `conversation-evaluation` + applicable SPEC | semantic comparison against the corpus, no critical regressions |
-| accepted voice-impacting change | `xcally-voice-validation` | correlated DEV caller evidence |
+| prompt / policy / schema / model / memory / tool choice | `conversation-evaluation` + applicable SPEC + accepted baseline | paired comparison against the corpus, no new critical violations, ACCEPT / REJECT / NEEDS OWNER DECISION |
+| accepted voice-impacting change | `conversation-evaluation` pre-voice gate, then `xcally-call-evidence-analysis` after the owner's real call | owner-executed XCALLY evidence with OBSERVED / DERIVED / NOT AVAILABLE findings |
 | state / side-effect architecture | applicable SPEC + ADR + deterministic tests | invariant coverage |
 | external action integration | account-actions + xcally boundary + gaps | observed contract, no guessed semantics |
 | iteration closeout | `iteration-closeout` | reconciled docs + gates |
@@ -105,7 +105,7 @@ Security floor: raw DTMF never reaches the LLM, logs or durable state; secrets n
 - Preserve unrelated local changes; never discard work silently.
 - Define observable properties before concrete contracts.
 - Run only gates applicable to artifacts that exist.
-- Validate accepted conversational changes with DEV voice calls.
+- Conversational candidates pass the `conversation-evaluation` pre-voice gate before any deploy authorization; after an authorized deploy the owner's real DEV call is analyzed with `xcally-call-evidence-analysis`.
 - Update [CONTEXT.md](CONTEXT.md) after an iteration is accepted and before integration.
 - Do not commit, push, deploy or run mutating cloud actions without explicit authorization.
 
@@ -163,6 +163,10 @@ Before an accepted iteration is committed or integrated:
 
 Do not preserve obsolete documentation merely for history. Git, ADRs and experiment records provide history. Current specs, runbooks, `AGENTS.md` and skills must describe the current system and workflow.
 
+Generated eval outputs are evidence, not canonical repository documentation. Current product truth lives in specs, accepted ADRs, code/config, and engineering standards.
+
+Do not retain obsolete aliases, manifests or instructions for compatibility unless an external contract requires them.
+
 ## Artifact language
 
 - Write `AGENTS.md`, `CHANGELOG.md` and every future `.agents/skills/**/SKILL.md` in English.
@@ -180,7 +184,7 @@ Decisions live in `docs/decisions/`, use `NNNN-short-kebab-title.md`, and use th
 The active CU013 skills are:
 
 - `iteration-closeout` — close and reconcile an iteration before commit, integration or handoff;
-- `conversation-evaluation` — mandatory for prompt, conversational schema, conversational policy or model changes;
-- `xcally-voice-validation` — mandatory for accepted voice-impacting changes.
+- `conversation-evaluation` — mandatory for prompt, conversational schema, conversational policy, model, memory or tool-choice changes; defines the paired candidate gate and the pre-voice gate;
+- `xcally-call-evidence-analysis` — post-hoc analysis of a real XCALLY call the owner already executed and supplied; it never places calls, monitors telephony or captures logs automatically.
 
 A future skill requires an explicit owner instruction and must represent a recurrent procedure, not a technology component, person, isolated bug or copy of a spec, ADR or `AGENTS.md`.

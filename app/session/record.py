@@ -18,18 +18,32 @@ from typing import Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
+from app.session.actions import Action
+from app.session.memory import (
+    ExperimentalProcedureState,
+    ExperimentalSuspendedProcedure,
+    ExperimentalTurnPair,
+)
+
+__all__ = [
+    "Action",
+    "AuthorizedDispatch",
+    "ConfirmationChallenge",
+    "ConversationGoal",
+    "DeliveryStatus",
+    "ExternalOperation",
+    "IdentityState",
+    "OperationStatus",
+    "SessionRecord",
+    "session_record_from_document",
+    "session_record_to_document",
+]
+
 SCHEMA_VERSION: Literal[2] = 2
 
 IDENTITY_TTL = timedelta(minutes=30)
 
 MAX_CALLER_IDENTITY_FAILURES = 3
-
-
-class Action(StrEnum):
-    """Account actions authorized for the first slice."""
-
-    RESET_PASSWORD = "RESET_PASSWORD"
-    UNLOCK_ACCOUNT = "UNLOCK_ACCOUNT"
 
 
 class OperationStatus(StrEnum):
@@ -133,7 +147,12 @@ class ExternalOperation(BaseModel):
 
 
 class SessionRecord(BaseModel):
-    """Small semantic session state; the closed document whitelist."""
+    """Small semantic session state; the closed document whitelist.
+
+    The three ``experimental_*`` planes belong to Exp 0009 only: they stay
+    ``None``/empty unless an explicit experimental opt-in populated them for
+    a synthetic session, and documents without them keep the exact v2 shape.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -146,6 +165,9 @@ class SessionRecord(BaseModel):
     confirmation: ConfirmationChallenge | None
     dispatch: AuthorizedDispatch | None
     external_operation: ExternalOperation | None
+    experimental_procedure: ExperimentalProcedureState | None = None
+    experimental_suspended: ExperimentalSuspendedProcedure | None = None
+    experimental_window: tuple[ExperimentalTurnPair, ...] = ()
     created_at: AwareDatetime
     updated_at: AwareDatetime
 
@@ -236,12 +258,17 @@ def _migrate_v1(document: Mapping[str, object]) -> SessionRecord:
 
 
 def session_record_to_document(record: SessionRecord) -> dict[str, object]:
-    """Map a record to the exact, closed Firestore document whitelist."""
+    """Map a record to the exact, closed Firestore document whitelist.
+
+    The v2 keys are always present. The experimental Exp 0009 keys are added
+    only when active, so documents without the experimental planes keep the
+    exact historical v2 shape.
+    """
     goal = record.goal
     confirmation = record.confirmation
     dispatch = record.dispatch
     operation = record.external_operation
-    return {
+    document: dict[str, object] = {
         "schema_version": record.schema_version,
         "conversation_id": record.conversation_id,
         "turn_count": record.turn_count,
@@ -288,6 +315,19 @@ def session_record_to_document(record: SessionRecord) -> dict[str, object]:
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     }
+    procedure = record.experimental_procedure
+    suspended = record.experimental_suspended
+    window = record.experimental_window
+    if procedure is not None or suspended is not None or len(window) > 0:
+        # mode="python" keeps datetimes native, like the rest of the document.
+        document["experimental_procedure"] = (
+            procedure.model_dump(mode="python") if procedure is not None else None
+        )
+        document["experimental_suspended"] = (
+            suspended.model_dump(mode="python") if suspended is not None else None
+        )
+        document["experimental_window"] = [pair.model_dump(mode="python") for pair in window]
+    return document
 
 
 def session_record_from_document(document: Mapping[str, object]) -> SessionRecord:

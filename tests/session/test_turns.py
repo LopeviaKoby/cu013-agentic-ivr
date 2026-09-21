@@ -30,13 +30,15 @@ def test_model_graph_runs_the_model_node_before_the_runtime_node() -> None:
 async def test_run_model_calls_the_model_once_with_transcript_and_projection() -> None:
     model = FakeTurnModel()
     update = await run_model(make_state(transcript="synthetic transcript 0000"), model=model)
-    assert update == {"model_decision": model.decision}
+    assert update == {"model_decision": model.decision, "memory_render_ms": None}
     assert len(model.calls) == 1
     assert model.calls[0]["transcript"] == "synthetic transcript 0000"
     assert model.calls[0]["identity_validated"] is False
     assert model.calls[0]["goal"] is None
     assert model.calls[0]["confirmation"] is None
     assert model.calls[0]["external_operation"] is None
+    # With no recent memory no experimental block is rendered into the input.
+    assert model.calls[0]["memory_context"] is None
 
 
 async def test_run_model_projects_goal_and_identity_validity_only() -> None:
@@ -69,13 +71,19 @@ async def test_graph_returns_the_ephemeral_state_in_memory() -> None:
 
 
 def test_model_contract_cannot_express_runtime_authority() -> None:
-    """Identity, dispatch, external truth and delivery are not model fields."""
+    """Identity, dispatch, external truth and delivery are not model fields.
+
+    The experimental ``procedure_observation`` is a proposal cue only: the
+    runtime validates it against the accepted guided slice and it never
+    authorizes, dispatches or creates business truth.
+    """
     assert set(ModelTurnDecision.model_fields) == {
         "message",
         "route",
         "goal",
         "confirmation_request",
         "confirmation_observation",
+        "procedure_observation",
         "handoff_cause",
         "claims",
     }

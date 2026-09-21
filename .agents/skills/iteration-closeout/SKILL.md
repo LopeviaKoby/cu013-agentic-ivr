@@ -54,6 +54,18 @@ Minimum set:
 - No stale active gaps left behind.
 - No contradiction between spec, Accepted ADR, implementation, and evidence.
 
+Repository readiness (short check):
+
+- canonical sources reconciled; no active legacy docs;
+- no broken local links;
+- config/code/docs consistent;
+- generated artifacts separated from canonical docs;
+- reproducible environment aligned with the lock;
+- gates green;
+- gaps reconciled;
+- `CONTEXT.md` updated last;
+- final diff reviewed before commit.
+
 ## Outputs
 
 Return:

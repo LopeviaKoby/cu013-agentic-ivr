@@ -21,8 +21,21 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.session.actions import Action
+from app.session.memory import (
+    ExperimentalMemoryConfig,
+    ExperimentalProcedureState,
+    ExperimentalSuspendedProcedure,
+    ExperimentalTurnPair,
+    ProcedureObservation,
+    append_pair,
+    apply_goal_lifecycle,
+    apply_procedure_observation,
+    decode_experimental,
+    make_pair,
+    render_memory_block,
+)
 from app.session.record import (
-    Action,
     AuthorizedDispatch,
     ConfirmationChallenge,
     ConversationGoal,
@@ -118,6 +131,14 @@ class ModelTurnDecision(BaseModel):
     goal: GoalProposal | None = None
     confirmation_request: bool = False
     confirmation_observation: ConfirmationObservation = ConfirmationObservation.NONE
+    procedure_observation: ProcedureObservation = Field(
+        default=ProcedureObservation.NONE,
+        description=(
+            "Propuesta de progreso del procedimiento guiado: ADVANCE sólo si "
+            "el llamante completó el paso actual; REGRESS si dice que no lo "
+            "terminó, sin cambiar el objetivo; NONE en otro caso."
+        ),
+    )
     handoff_cause: HandoffCause | None = None
     claims: tuple[Claim, ...] = Field(default=(), max_length=4)
 
@@ -194,6 +215,7 @@ class TurnModel(Protocol):
         identity_validated: bool,
         confirmation: ConfirmationChallenge | None,
         external_operation: ExternalOperation | None,
+        memory_context: str | None = None,
     ) -> ModelTurnDecision: ...
 
 
@@ -206,6 +228,13 @@ class GraphState(TypedDict):
     confirmation: ConfirmationChallenge | None
     dispatch: AuthorizedDispatch | None
     external_operation: ExternalOperation | None
+    experimental_config: ExperimentalMemoryConfig | None
+    experimental_procedure: ExperimentalProcedureState | None
+    experimental_suspended: ExperimentalSuspendedProcedure | None
+    experimental_window: tuple[ExperimentalTurnPair, ...]
+    memory_render_ms: float | None
+    memory_decode_ms: float
+    memory_encode_ms: float | None
     now: datetime
     transcript: str | None
     identity_outcome: IdentityOutcome | None
@@ -223,11 +252,26 @@ class TurnDelta(TypedDict):
     confirmation: ConfirmationChallenge | None
     dispatch: AuthorizedDispatch | None
     external_operation: ExternalOperation | None
+    experimental_procedure: ExperimentalProcedureState | None
+    experimental_suspended: ExperimentalSuspendedProcedure | None
+    experimental_window: tuple[ExperimentalTurnPair, ...]
+    memory_encode_ms: float | None
     outcome: TurnOutcomeState | None
 
 
-def initial_graph_state(record: SessionRecord, turn: TurnInput, *, now: datetime) -> GraphState:
+def initial_graph_state(
+    record: SessionRecord,
+    turn: TurnInput,
+    *,
+    now: datetime,
+    experimental: ExperimentalMemoryConfig | None = None,
+) -> GraphState:
     """Build the ephemeral state from durable state plus this turn's input."""
+    procedure, suspended, window, decode_ms = decode_experimental(
+        record.experimental_procedure,
+        record.experimental_suspended,
+        record.experimental_window,
+    )
     return GraphState(
         conversation_id=record.conversation_id,
         goal=record.goal,
@@ -235,6 +279,13 @@ def initial_graph_state(record: SessionRecord, turn: TurnInput, *, now: datetime
         confirmation=record.confirmation,
         dispatch=record.dispatch,
         external_operation=record.external_operation,
+        experimental_config=experimental,
+        experimental_procedure=procedure,
+        experimental_suspended=suspended,
+        experimental_window=window,
+        memory_render_ms=None,
+        memory_decode_ms=decode_ms,
+        memory_encode_ms=None,
         now=now,
         transcript=turn.transcript,
         identity_outcome=turn.identity_outcome,
@@ -245,23 +296,39 @@ def initial_graph_state(record: SessionRecord, turn: TurnInput, *, now: datetime
     )
 
 
-async def run_model(state: GraphState, *, model: TurnModel) -> dict[str, ModelTurnDecision | None]:
+async def run_model(
+    state: GraphState, *, model: TurnModel
+) -> dict[str, ModelTurnDecision | float | str | None]:
     """Produce the typed semantic proposal from the transcript and projection.
 
     The model owns language; it never validates identity, never authorizes a
     dispatch, never creates business results and never executes side effects.
+    Under the Exp 0009 opt-in the synthetic recent-pair/procedure block is
+    rendered into the model input; the default no-recent-memory path renders
+    nothing new.
     """
     transcript = state["transcript"]
     if transcript is None:
         return {"model_decision": None}
+    memory_context: str | None = None
+    render_ms: float | None = None
+    if state["experimental_config"] is not None:
+        memory_context, render_ms = render_memory_block(
+            state["experimental_window"],
+            state["experimental_procedure"],
+            state["experimental_suspended"],
+            window_n=state["experimental_config"].window_n,
+            strategy=state["experimental_config"].strategy,
+        )
     decision = await model.decide(
         transcript=transcript,
         goal=state["goal"],
         identity_validated=state["identity"].is_valid_at(state["now"]),
         confirmation=state["confirmation"],
         external_operation=state["external_operation"],
+        memory_context=memory_context,
     )
-    return {"model_decision": decision}
+    return {"model_decision": decision, "memory_render_ms": render_ms}
 
 
 def _apply_identity_outcome(
@@ -598,6 +665,26 @@ def advance_turn(state: GraphState) -> TurnDelta:
             )
     operation = _apply_external_event(operation, state["external_event"])
 
+    experimental = state["experimental_config"]
+    procedure = state["experimental_procedure"]
+    suspended = state["experimental_suspended"]
+    window = state["experimental_window"]
+    encode_ms: float | None = None
+    if experimental is not None:
+        previous_action = state["goal"].action if state["goal"] is not None else None
+        current_action = goal.action if goal is not None else None
+        current_revision = goal.revision if goal is not None else 0
+        procedure, suspended = apply_goal_lifecycle(
+            procedure,
+            suspended,
+            previous_action=previous_action,
+            current_action=current_action,
+            current_revision=current_revision,
+            now=now,
+        )
+        if decision is not None:
+            procedure = apply_procedure_observation(procedure, decision.procedure_observation)
+
     extra_violations = tuple(
         error for error in (proposal_error, binding_error) if error is not None
     )
@@ -611,12 +698,36 @@ def advance_turn(state: GraphState) -> TurnDelta:
         extra_violations=extra_violations,
     )
 
+    if (
+        experimental is not None
+        and experimental.with_window
+        and state["transcript"] is not None
+        and decision is not None
+        and outcome is not None
+    ):
+        # Only completed/validated pairs: the runtime-final message intended
+        # for the 200 response. Drafts, model JSON, technical polls,
+        # timeouts, retries, tool payloads and external secrets never land
+        # here; without a transcript or an outcome nothing is appended.
+        next_sequence = max((pair.sequence for pair in window), default=0) + 1
+        candidate = make_pair(
+            state["transcript"],
+            outcome.message,
+            sequence=next_sequence,
+            goal_revision=goal.revision if goal is not None else None,
+        )
+        window, encode_ms = append_pair(window, candidate, window_n=experimental.window_n)
+
     return TurnDelta(
         goal=goal,
         identity=identity,
         confirmation=challenge,
         dispatch=dispatch,
         external_operation=operation,
+        experimental_procedure=procedure,
+        experimental_suspended=suspended,
+        experimental_window=window,
+        memory_encode_ms=encode_ms,
         outcome=outcome,
     )
 

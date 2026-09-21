@@ -84,6 +84,7 @@ class FakeTurnModel:
         identity_validated: bool,
         confirmation: ConfirmationChallenge | None,
         external_operation: ExternalOperation | None,
+        memory_context: str | None = None,
     ) -> ModelTurnDecision:
         self.calls.append(
             {
@@ -92,6 +93,7 @@ class FakeTurnModel:
                 "identity_validated": identity_validated,
                 "confirmation": confirmation,
                 "external_operation": external_operation,
+                "memory_context": memory_context,
             }
         )
         if self.error is not None:
@@ -193,6 +195,13 @@ def make_state(**overrides: object) -> GraphState:
         "confirmation": None,
         "dispatch": None,
         "external_operation": None,
+        "experimental_config": None,
+        "experimental_procedure": None,
+        "experimental_suspended": None,
+        "experimental_window": (),
+        "memory_render_ms": None,
+        "memory_decode_ms": 0.0,
+        "memory_encode_ms": None,
         "now": NOW,
         "transcript": None,
         "identity_outcome": None,

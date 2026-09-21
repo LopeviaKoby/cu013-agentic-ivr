@@ -6,6 +6,13 @@ contract the model output must satisfy. It states general properties instead
 of utterance-specific patches: no keyword routing, no phrase lists, no spoken
 form FSM, no growing "answer this before that" special cases. The model owns
 language and the runtime owns legality, truth and state.
+
+This is the single active baseline text evaluated with Gemini 3.5
+Flash-Lite (Vertex AI, model location global, reasoning level MINIMAL),
+mandatory structured procedure classification and a recent-conversation
+window of three completed pairs in the synthetic lane. Discarded
+compact-prompt variants were removed from the active path after
+evaluation; their evidence lives in the experiment record.
 """
 
 SYSTEM_INSTRUCTIONS = "\n".join(

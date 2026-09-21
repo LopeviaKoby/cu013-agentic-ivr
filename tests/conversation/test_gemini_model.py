@@ -248,7 +248,7 @@ async def test_model_segment_is_recorded_even_on_failure() -> None:
     assert [name for name, _ in metrics.segments] == ["model"]
 
 
-def test_baseline_from_env_uses_the_session_defaults(
+def test_baseline_from_env_uses_the_active_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     for var in (
@@ -256,16 +256,19 @@ def test_baseline_from_env_uses_the_session_defaults(
         "CU013_VERTEX_LOCATION",
         "CU013_VERTEX_MODEL",
         "CU013_VERTEX_TIMEOUT_MS",
+        "CU013_VERTEX_THINKING_LEVEL",
+        "CU013_VERTEX_STRICT_PROC_OBS",
     ):
         monkeypatch.delenv(var, raising=False)
     baseline = GeminiBaseline.from_env()
     assert baseline.provider == "vertex_ai"
     assert baseline.project == "cu013-xcally-agentic"
-    assert baseline.location == "us-east1"
-    assert baseline.model == "gemini-2.5-flash-lite"
+    assert baseline.location == "global"
+    assert baseline.model == "gemini-3.5-flash-lite"
     assert baseline.api_version == "v1"
-    assert baseline.thinking_budget == 0
-    assert baseline.timeout_ms == 15000
+    assert baseline.thinking_level == "MINIMAL"
+    assert baseline.strict_procedure_observation is True
+    assert baseline.timeout_ms == 30000
     assert baseline.attempts == 1
 
 
@@ -276,10 +279,206 @@ def test_baseline_from_env_reads_operational_overrides(
     monkeypatch.setenv("CU013_VERTEX_LOCATION", "synthetic-location")
     monkeypatch.setenv("CU013_VERTEX_MODEL", "synthetic-model")
     monkeypatch.setenv("CU013_VERTEX_TIMEOUT_MS", "9000")
+    monkeypatch.setenv("CU013_VERTEX_THINKING_LEVEL", "MINIMAL")
     baseline = GeminiBaseline.from_env()
     assert baseline.project == "synthetic-project"
     assert baseline.location == "synthetic-location"
     assert baseline.model == "synthetic-model"
     assert baseline.timeout_ms == 9000
-    assert baseline.thinking_budget == 0
+    assert baseline.thinking_level == "MINIMAL"
     assert baseline.attempts == 1
+
+
+def test_active_conversation_baseline_is_explicit_and_reproducible() -> None:
+    from app.conversation.gemini import (
+        ACTIVE_API_VERSION,
+        ACTIVE_ATTEMPTS,
+        ACTIVE_CONVERSATION_MODEL,
+        ACTIVE_MODEL_LOCATION,
+        ACTIVE_THINKING_LEVEL,
+        ACTIVE_TIMEOUT_MS,
+        active_conversation_baseline,
+    )
+
+    baseline = active_conversation_baseline()
+    assert baseline.model == ACTIVE_CONVERSATION_MODEL == "gemini-3.5-flash-lite"
+    assert baseline.location == ACTIVE_MODEL_LOCATION == "global"
+    assert baseline.api_version == ACTIVE_API_VERSION == "v1"
+    assert baseline.thinking_level == ACTIVE_THINKING_LEVEL == "MINIMAL"
+    assert baseline.strict_procedure_observation is True
+    assert baseline.timeout_ms == ACTIVE_TIMEOUT_MS == 30000
+    assert baseline.attempts == ACTIVE_ATTEMPTS == 1
+    # Gemini 3 request carries only the level, never a budget.
+    from google.genai.types import ThinkingLevel
+
+    client = FakeGenaiClient()
+    active_config = GeminiTurnModel(client, baseline)._config()  # type: ignore[arg-type]
+    assert active_config.thinking_config is not None
+    assert active_config.thinking_config.thinking_level == ThinkingLevel.MINIMAL
+    assert active_config.thinking_config.thinking_budget is None
+
+
+def test_thinking_level_selects_the_gemini3_path_without_budget() -> None:
+    from google.genai.types import ThinkingLevel
+
+    client = FakeGenaiClient()
+    baseline = make_baseline(model="gemini-3.1-flash-lite", thinking_level="MINIMAL")
+    model = GeminiTurnModel(client, baseline)  # type: ignore[arg-type]
+    config = model._config()
+    assert config.thinking_config is not None
+    assert config.thinking_config.thinking_level == ThinkingLevel.MINIMAL
+    assert config.thinking_config.thinking_budget is None
+
+
+def test_budget_path_never_sends_a_thinking_level() -> None:
+    client = FakeGenaiClient()
+    model = make_model(client)
+    config = model._config()
+    assert config.thinking_config is not None
+    assert config.thinking_config.thinking_budget == 0
+    assert config.thinking_config.thinking_level is None
+
+
+def test_baseline_from_env_reads_thinking_level_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CU013_VERTEX_MODEL", "gemini-3.1-flash-lite")
+    monkeypatch.setenv("CU013_VERTEX_LOCATION", "us")
+    monkeypatch.setenv("CU013_VERTEX_THINKING_LEVEL", "MINIMAL")
+    baseline = GeminiBaseline.from_env()
+    assert baseline.model == "gemini-3.1-flash-lite"
+    assert baseline.location == "us"
+    assert baseline.thinking_level == "MINIMAL"
+
+
+async def test_thought_counts_are_recorded_as_reasoning_only() -> None:
+    class ThoughtUsage(FakeUsage):
+        def __init__(self) -> None:
+            super().__init__()
+            self.thoughts_token_count = 5
+
+    client = FakeGenaiClient()
+    client.response = FakeResponse(VALID_DECISION_JSON, usage=ThoughtUsage())
+    metrics = RecordingTurnMetrics()
+    model = make_model(client, metrics=metrics)
+    await decide(model)
+    assert dict(metrics.counters)["reasoning_tokens"] == 5
+
+
+async def test_absent_thought_counts_stay_missing() -> None:
+    client = FakeGenaiClient()
+    client.response = FakeResponse(VALID_DECISION_JSON, usage=FakeUsage())
+    metrics = RecordingTurnMetrics()
+    model = make_model(client, metrics=metrics)
+    await decide(model)
+    assert "reasoning_tokens" not in dict(metrics.counters)
+
+
+def _decision_json_with_procedure_observation() -> str:
+    return '{"message": "hola", "route": "CONTINUE", "procedure_observation": "REGRESS"}'
+
+
+async def test_emission_counter_records_an_explicit_cue_only() -> None:
+    client = FakeGenaiClient()
+    client.response = FakeResponse(_decision_json_with_procedure_observation())
+    metrics = RecordingTurnMetrics()
+    await decide(make_model(client, metrics=metrics))
+    assert ("procedure_observation_emitted", 1) in metrics.counters
+
+
+async def test_emission_counter_stays_absent_when_default_fills() -> None:
+    client = FakeGenaiClient()
+    client.response = FakeResponse(VALID_DECISION_JSON)
+    metrics = RecordingTurnMetrics()
+    await decide(make_model(client, metrics=metrics))
+    assert all(name != "procedure_observation_emitted" for name, _ in metrics.counters)
+
+
+def test_strict_schema_requires_and_reorders_the_cue() -> None:
+    from app.conversation.gemini import response_schema_for
+
+    base = response_schema_for(make_baseline(strict_procedure_observation=False))
+    assert base is ModelTurnDecision
+    strict = response_schema_for(make_baseline(strict_procedure_observation=True))
+    assert isinstance(strict, dict)
+    assert set(strict["properties"]) == set(ModelTurnDecision.model_fields)
+    assert list(strict["properties"]).index("procedure_observation") < list(
+        strict["properties"]
+    ).index("goal")
+    assert "procedure_observation" in strict["required"]
+    assert "default" not in strict["properties"]["procedure_observation"]
+    assert strict["propertyOrdering"].index("procedure_observation") < strict[
+        "propertyOrdering"
+    ].index("goal")
+
+
+def test_config_sends_the_strict_schema_only_when_flagged() -> None:
+    client = FakeGenaiClient()
+    strict_model = GeminiTurnModel(  # type: ignore[arg-type]
+        client, make_baseline(strict_procedure_observation=True)
+    )
+    assert isinstance(strict_model._config().response_schema, dict)
+    relaxed_model = GeminiTurnModel(  # type: ignore[arg-type]
+        client, make_baseline(strict_procedure_observation=False)
+    )
+    assert isinstance(relaxed_model._config().response_schema, type)
+
+
+def test_strict_flag_defaults_to_required_and_reads_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for var in ("CU013_VERTEX_STRICT_PROC_OBS",):
+        monkeypatch.delenv(var, raising=False)
+    assert GeminiBaseline.from_env().strict_procedure_observation is True
+    monkeypatch.setenv("CU013_VERTEX_STRICT_PROC_OBS", "1")
+    assert GeminiBaseline.from_env().strict_procedure_observation is True
+    monkeypatch.setenv("CU013_VERTEX_STRICT_PROC_OBS", "0")
+    assert GeminiBaseline.from_env().strict_procedure_observation is False
+
+
+def test_lenient_parsing_fills_defaults_without_procedure_cue() -> None:
+    decision = parse_decision(VALID_DECISION_JSON)
+    assert decision.confirmation_request is False
+    strict_decision = parse_decision(
+        '{"message": "hola", "route": "CONTINUE", "procedure_observation": "NONE"}'
+    )
+    assert strict_decision.confirmation_request is False
+    assert strict_decision.procedure_observation.value == "NONE"
+
+
+def test_decision_contract_shape_unchanged() -> None:
+    fields = ModelTurnDecision.model_fields
+    assert set(fields) == {
+        "message",
+        "route",
+        "goal",
+        "confirmation_request",
+        "confirmation_observation",
+        "procedure_observation",
+        "handoff_cause",
+        "claims",
+    }
+    assert ModelTurnDecision.model_config.get("extra") == "forbid"
+    goal_fields = fields["goal"]
+    assert goal_fields.annotation is not None
+
+
+def test_active_prompt_and_contents_are_single_baseline() -> None:
+    from app.conversation.gemini import contents_for, system_instructions_for
+    from app.conversation.prompts import SYSTEM_INSTRUCTIONS
+
+    assert system_instructions_for(make_baseline()) == SYSTEM_INSTRUCTIONS
+    assert system_instructions_for(make_baseline(strict_procedure_observation=False)) == (
+        SYSTEM_INSTRUCTIONS
+    )
+    contents = contents_for(state_block="objetivo: ninguno", transcript="hola")
+    assert "objetivo: ninguno" in contents
+    assert "hola" in contents
+
+
+def test_active_config_uses_single_baseline_prompt() -> None:
+    from app.conversation.prompts import SYSTEM_INSTRUCTIONS
+
+    client = FakeGenaiClient()
+    base_model = GeminiTurnModel(client, make_baseline())  # type: ignore[arg-type]
+    assert base_model._config().system_instruction == SYSTEM_INSTRUCTIONS

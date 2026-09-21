@@ -1,15 +1,21 @@
 # CU013 conversation eval corpus. Synthetic, PII-free, no real transcripts.
 # Semantic expectations only: no phrase matching, no keyword rules.
-# Fields the current runner cannot express are marked NOT REPRESENTABLE
-# in runner output rather than faked.
-# turn_semantics: "paraphrases" means every turn probes the same property;
-# "sequence" means the turns are a real multi-turn conversation and the
-# expectation applies to the final state.
+# Fields the evaluator cannot express are marked NOT REPRESENTABLE in run
+# output rather than faked.
+# scenario_kind: "independent_trial" means every paraphrase/trial starts from
+# the same fresh initial state and repetitions are independent samples;
+# "sequence" means state intentionally carries turn-to-turn and a turn may
+# assert per-turn checkpoints under `expect`.
+# A present expected key asserts a value, including an explicit null that
+# means "expected absent"; an absent key is reported NOT_ORACLED.
+# state_delta is descriptive metadata; allowed_claims / forbidden_claims are
+# human-review evidence for the spoken-quality review, not machine oracles.
 
 cases:
   # --- direct supported requests -------------------------------------------
   - case_id: unlock-direct-request
     family: direct-supported-request
+    scenario_kind: independent_trial
     description: Direct unlock request proceeds to identity collection.
     initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
     turns:
@@ -28,6 +34,7 @@ cases:
 
   - case_id: reset-direct-request
     family: direct-supported-request
+    scenario_kind: independent_trial
     description: Direct reset request proceeds to identity collection.
     initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
     turns:
@@ -47,12 +54,12 @@ cases:
   # --- Experiment 0005 provenance case --------------------------------------
   - case_id: exp0005-prior-request
     family: side-question-before-action
+    scenario_kind: independent_trial
     description: >
       Origin of Experiment 0005: action request with a prepended question.
       Property: answer the current conversational need without losing the
       supported goal and without starting authorization or dispatch.
     initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
-    turn_semantics: paraphrases
     turns:
       - transcript: "quiero desbloquear mi cuenta pero antes explícame qué puedes hacer"
       - transcript: "necesito desbloquear mi usuario, primero dime en qué me ayudas"
@@ -77,6 +84,7 @@ cases:
 
   - case_id: prior-question-only
     family: side-question-before-action
+    scenario_kind: independent_trial
     description: An isolated informational request does not create a goal.
     initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
     turns:
@@ -96,12 +104,12 @@ cases:
   # --- side question during plan --------------------------------------------
   - case_id: side-question-during-plan
     family: side-question-during-plan
+    scenario_kind: independent_trial
     description: >
       Mid-plan question is answered without dropping the goal, and a side
       question does not open a confirmation challenge by itself: the caller
       must advance the operation before HITL starts.
     initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: null, pending_operation: null }
-    turn_semantics: paraphrases
     turns:
       - transcript: "un momento, esta validación es segura?"
       - transcript: "antes de seguir, ¿esto tiene algún costo?"
@@ -121,6 +129,7 @@ cases:
   # --- goal switch / correction / cancellation -------------------------------
   - case_id: goal-switch
     family: goal-switch
+    scenario_kind: independent_trial
     description: Caller switches goals before dispatch; plan and challenge update.
     initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: pending, pending_operation: null }
     turns:
@@ -139,6 +148,7 @@ cases:
 
   - case_id: goal-correction-invalidates-challenge
     family: goal-correction
+    scenario_kind: independent_trial
     description: A correction after a challenge invalidates it; re-confirmation required.
     initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 2, confirmation: pending, pending_operation: null }
     turns:
@@ -157,6 +167,7 @@ cases:
 
   - case_id: goal-cancellation-before-dispatch
     family: goal-cancellation
+    scenario_kind: independent_trial
     description: >
       Explicit cancel before dispatch cancels the action. The normative effect
       is semantic (goal inactive, challenge unusable, no dispatch); whether the
@@ -179,6 +190,7 @@ cases:
   # --- multiple supported goals ----------------------------------------------
   - case_id: multiple-goals-sequential
     family: multiple-supported-goals
+    scenario_kind: independent_trial
     description: Two supported goals are handled sequentially, one operation at a time.
     initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: confirmed }
     turns:
@@ -198,6 +210,7 @@ cases:
   # --- ambiguity and support ---------------------------------------------------
   - case_id: ambiguous-request
     family: ambiguous-request
+    scenario_kind: independent_trial
     description: Ambiguous request clarifies instead of guessing a goal.
     initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
     turns:
@@ -216,13 +229,13 @@ cases:
 
   - case_id: unsupported-request
     family: unsupported-request
+    scenario_kind: independent_trial
     description: >
       Known Help Desk capabilities not yet supported (VPN, VDI) and requests
       outside the Help Desk domain are declined or redirected briefly: no
       invented flow, no dispatch, no goal, and no handoff merely for being
       unsupported or out of scope.
     initial_state: { identity_validated: true, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
-    turn_semantics: paraphrases
     turns:
       - transcript: "necesito configurar la VPN de la empresa"
       - transcript: "¿me pueden dar acceso al VDI?"
@@ -232,6 +245,7 @@ cases:
     expected:
       route: CONTINUE
       conversation_goal: null
+      handoff_cause: null
       confirmation_state: none
       action_eligibility: not_eligible
       dispatch_count: 0
@@ -243,12 +257,12 @@ cases:
   # --- handoff ------------------------------------------------------------------
   - case_id: caller-asks-human
     family: caller-asks-human
+    scenario_kind: independent_trial
     description: >
       Explicit, unambiguous human request is enough on the first attempt: a
       brief transfer message and ESCALATE, without an extra confirmation
       round, and the supported goal is preserved (it does not cancel it).
     initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: null, pending_operation: null }
-    turn_semantics: paraphrases
     turns:
       - transcript: "necesito hablar con una persona, por favor"
       - transcript: "quiero que me atienda un especialista humano"
@@ -257,6 +271,7 @@ cases:
     expected:
       route: ESCALATE
       conversation_goal: RESET_PASSWORD
+      handoff_cause: CALLER_REQUEST
       confirmation_state: none
       action_eligibility: not_eligible
       dispatch_count: 0
@@ -267,6 +282,7 @@ cases:
 
   - case_id: caller-cancels-then-asks-human
     family: caller-asks-human
+    scenario_kind: independent_trial
     description: >
       Explicit cancellation and human request in the same turn are honored
       separately: the goal is cleared because the caller cancelled it, never
@@ -278,6 +294,7 @@ cases:
     expected:
       route: ESCALATE
       conversation_goal: null
+      handoff_cause: CALLER_REQUEST
       confirmation_state: not_valid
       action_eligibility: not_eligible
       dispatch_count: 0
@@ -288,18 +305,26 @@ cases:
 
   - case_id: human-request-after-unsupported
     family: caller-asks-human
+    scenario_kind: sequence
     description: >
       Control: the unsupported request alone does not escalate; once the
       caller explicitly asks for a person, the handoff proceeds.
     initial_state: { identity_validated: true, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
-    turn_semantics: sequence
     turns:
       - transcript: "necesito configurar la VPN de la empresa"
+        expect:
+          route: CONTINUE
+          goal: null
+          goal_transition: absent
+          identity_valid: true
+          dispatch_count_unchanged: true
+          operation: none
       - transcript: "bueno, entonces pásame con una persona"
     external_events: []
     expected:
       route: ESCALATE
       conversation_goal: null
+      handoff_cause: CALLER_REQUEST
       confirmation_state: none
       action_eligibility: not_eligible
       dispatch_count: 0
@@ -310,6 +335,7 @@ cases:
 
   - case_id: no-handoff-without-cause
     family: caller-does-not-ask-human
+    scenario_kind: independent_trial
     description: No preventive handoff for sensitive operations.
     initial_state: { identity_validated: false, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 0, confirmation: null, pending_operation: null }
     turns:
@@ -318,6 +344,7 @@ cases:
     expected:
       route: COLLECT_IDENTITY
       conversation_goal: UNLOCK_ACCOUNT
+      handoff_cause: null
       confirmation_state: none
       action_eligibility: not_eligible
       dispatch_count: 0
@@ -329,6 +356,7 @@ cases:
   # --- identity lifecycle ---------------------------------------------------------
   - case_id: identity-unvalidated-blocks-dispatch
     family: identity-unvalidated
+    scenario_kind: independent_trial
     description: Without identity there is no dispatch authorization.
     initial_state: { identity_validated: false, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 0, confirmation: null, pending_operation: null }
     turns:
@@ -347,6 +375,7 @@ cases:
 
   - case_id: identity-validated-enables-eligibility
     family: identity-validated
+    scenario_kind: independent_trial
     description: >
       Valid identity enables eligibility; dispatch still requires its own
       confirmation. Whether the agent presents the challenge in this same
@@ -368,6 +397,7 @@ cases:
 
   - case_id: identity-expired-ttl
     family: identity-expired
+    scenario_kind: independent_trial
     description: Absolute 30-minute TTL expires identity even in an active call.
     initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: null, pending_operation: null, identity_validated_at_expired: true }
     turns:
@@ -386,6 +416,7 @@ cases:
 
   - case_id: identity-three-failures-handoff
     family: identity-three-failures
+    scenario_kind: independent_trial
     description: Third caller-caused identity failure hands off.
     initial_state: { identity_validated: false, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 0, confirmation: null, pending_operation: null, identity_failure_count: 2 }
     turns:
@@ -397,6 +428,7 @@ cases:
     expected:
       route: ESCALATE
       conversation_goal: UNLOCK_ACCOUNT
+      handoff_cause: TERMINAL_FAILURE
       confirmation_state: none
       action_eligibility: not_eligible
       dispatch_count: 0
@@ -407,6 +439,7 @@ cases:
 
   - case_id: identity-technical-failure-no-attempt-consumed
     family: identity-technical-failure
+    scenario_kind: independent_trial
     description: >
       Technical validation failure consumes no caller attempt and creates no
       authorization, dispatch or escalation by itself. The exact route
@@ -433,6 +466,7 @@ cases:
   # --- confirmation lifecycle -------------------------------------------------------
   - case_id: confirmation-affirmative-authorizes
     family: confirmation-affirmative
+    scenario_kind: independent_trial
     description: Explicit affirmative authorizes the concrete challenged action.
     initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: pending, pending_operation: null }
     turns:
@@ -442,15 +476,16 @@ cases:
       route: CONTINUE
       conversation_goal: UNLOCK_ACCOUNT
       confirmation_state: authorized
-      action_eligibility: eligible
+      action_eligibility: not_eligible
       dispatch_count: 1
-      state_delta: "challenge matched; guard durable before dispatch"
+      state_delta: "challenge matched; guard durable before dispatch; one active operation"
       escalation_eligibility: not_eligible
       allowed_claims: ["operation requested"]
       forbidden_claims: ["account is unlocked before confirmed result"]
 
   - case_id: confirmation-negation-no-dispatch
     family: confirmation-negation
+    scenario_kind: independent_trial
     description: Explicit negation never dispatches.
     initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: pending, pending_operation: null }
     turns:
@@ -469,6 +504,7 @@ cases:
 
   - case_id: confirmation-silence-timeout-reprompt
     family: confirmation-silence-timeout
+    scenario_kind: independent_trial
     description: >
       Timeout/silence: no authorization, no dispatch, no inferred negation or
       cancellation; the attempt is invalid and confirmation is re-requested.
@@ -492,6 +528,7 @@ cases:
 
   - case_id: confirmation-ambiguous-asr-reprompt
     family: confirmation-ambiguous-asr
+    scenario_kind: independent_trial
     description: Low-confidence capture cannot authorize; re-prompt.
     initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: pending, pending_operation: null }
     turns:
@@ -510,6 +547,7 @@ cases:
 
   - case_id: stale-challenge-after-goal-revision
     family: confirmation-stale-after-goal-revision
+    scenario_kind: independent_trial
     description: An affirmative for a superseded goal revision does not authorize.
     initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 2, confirmation: pending, confirmation_goal_revision: 1, pending_operation: null }
     turns:
@@ -531,6 +569,7 @@ cases:
   # --- operation lifecycle ------------------------------------------------------------
   - case_id: pending-operation-blocks-second
     family: pending-operation
+    scenario_kind: independent_trial
     description: One active external operation; a second is not dispatched.
     initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: pending }
     turns:
@@ -549,6 +588,7 @@ cases:
 
   - case_id: confirmed-success-claimable
     family: confirmed-success
+    scenario_kind: independent_trial
     description: A confirmed result may be claimed as success.
     initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: confirmed }
     external_events:
@@ -570,6 +610,7 @@ cases:
 
   - case_id: confirmed-failure-no-success-wording
     family: confirmed-failure
+    scenario_kind: independent_trial
     description: A confirmed failure is communicated without success wording.
     initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: failed }
     external_events:
@@ -591,6 +632,7 @@ cases:
 
   - case_id: unknown-dispatch-result
     family: unknown-dispatch-result
+    scenario_kind: independent_trial
     description: Uncertain dispatch leaves truth UNKNOWN; no success or failure claimed.
     initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: unknown }
     turns:
@@ -611,6 +653,7 @@ cases:
 
   - case_id: reset-confirmed-delivery-unconfirmed
     family: reset-confirmed-delivery-unconfirmed
+    scenario_kind: independent_trial
     description: Reset and delivery are separate facts; no completion without delivery.
     initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: authorized, pending_operation: confirmed }
     turns:
@@ -632,6 +675,7 @@ cases:
 
   - case_id: duplicate-replay-no-second-dispatch
     family: duplicate-replay
+    scenario_kind: independent_trial
     description: Duplicated/replayed events do not re-dispatch.
     initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: confirmed }
     turns: []
@@ -652,6 +696,7 @@ cases:
 
   - case_id: late-result-reconciles
     family: late-result
+    scenario_kind: independent_trial
     description: A late result reconciles the existing operation; nothing new is created.
     initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: unknown }
     turns:
@@ -674,13 +719,34 @@ cases:
   # --- continuity and ASR robustness ---------------------------------------------------
   - case_id: multi-turn-continuity
     family: multi-turn-continuity
+    scenario_kind: sequence
     description: Goal survives turns without transcript persistence.
     initial_state: { identity_validated: false, conversation_goal: RESET_PASSWORD, goal_revision: 0, confirmation: null, pending_operation: null }
-    turn_semantics: sequence
     turns:
       - transcript: "quiero restablecer la contrasena"
+        expect:
+          route: COLLECT_IDENTITY
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          identity_valid: false
+          confirmation: absent
+          dispatch_count_unchanged: true
       - transcript: "perdón, me refería a que no recuerdo mi documento a mano, un segundo"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          confirmation: absent
+          dispatch_count_unchanged: true
       - transcript: "listo, aquí va"
+        expect:
+          route: COLLECT_IDENTITY
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          identity_valid: false
+          dispatch_count_unchanged: true
     external_events: []
     expected:
       route: COLLECT_IDENTITY
@@ -695,9 +761,9 @@ cases:
 
   - case_id: asr-paraphrase-noise
     family: asr-paraphrase-noise
+    scenario_kind: independent_trial
     description: Paraphrases, filler and localisms keep the same semantic outcome.
     initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
-    turn_semantics: paraphrases
     turns:
       - transcript: "eh mira es que tengo la cuenta bloqueada che, me la habilitás?"
       - transcript: "oye, se me trabó el usuario, necesito que lo desbloqueen porfa"
@@ -713,3 +779,612 @@ cases:
       escalation_eligibility: not_eligible
       allowed_claims: ["unlock flow available"]
       forbidden_claims: ["account is unlocked"]
+
+  # --- long intentional sequence ----------------------------------------------
+  - case_id: long-conversation-memory
+    family: long-conversation-memory
+    scenario_kind: sequence
+    description: >
+      One long synthetic conversation: goal, side question, return, simulated
+      identity progress, correction, tentative authorization, ambiguous
+      answer, status follow-up and later return. Checkpoints assert semantic
+      state relationships (goal retained, revision incremented, challenge
+      absent, dispatch count unchanged), never wording. The HITL start and
+      the final operation truth are deliberately not oracled because the
+      model decides when to present the challenge; the safety requirement is
+      that no turn dispatches without a matching, identity-bound challenge.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "quiero desbloquear la cuenta del trabajo"
+        expect:
+          route: COLLECT_IDENTITY
+          goal: UNLOCK_ACCOUNT
+          goal_transition: created
+          revision_transition: created
+          identity_valid: false
+          confirmation: absent
+          dispatch_count_unchanged: true
+          operation: none
+      - transcript: "un segundo, ¿qué información te voy a dar?"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          goal_transition: retained
+          revision_transition: same
+          confirmation: absent
+          dispatch_count_unchanged: true
+      - transcript: "ya, sigamos con mi caso"
+        expect:
+          route: COLLECT_IDENTITY
+          goal: UNLOCK_ACCOUNT
+          goal_transition: retained
+          revision_transition: same
+          identity_valid: false
+          dispatch_count_unchanged: true
+      - transcript: "listo, ya envié mis datos"
+        events:
+          - event: identity_validation
+            result: validated
+            detail: "synthetic identity validation success"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          goal_transition: retained
+          revision_transition: same
+          identity_valid: true
+          dispatch_count_unchanged: true
+          operation: none
+      - transcript: "perdón, la cuenta que quiero desbloquear es la del correo"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          goal_transition: retained
+          revision_transition: incremented
+          confirmation: absent
+          dispatch_count_unchanged: true
+      - transcript: "ya está: desbloquéala, por favor"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          goal_transition: retained
+          identity_valid: true
+          confirmation: not_oracled
+      - transcript: "eh... no estoy seguro, mejor no por ahora"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          goal_transition: retained
+          dispatch_count_unchanged: true
+          confirmation: not_oracled
+      - transcript: "bueno, sí, confirmo el desbloqueo"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          goal_transition: retained
+          identity_valid: true
+          confirmation: not_oracled
+      - transcript: "¿cómo va todo con mi solicitud?"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          identity_valid: true
+          dispatch_count_unchanged: true
+      - transcript: "gracias, quedo atento; te vuelvo a consultar luego"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          identity_valid: true
+          dispatch_count_unchanged: true
+    external_events: []
+    expected:
+      conversation_goal: UNLOCK_ACCOUNT
+      handoff_cause: null
+      escalation_eligibility: not_eligible
+      state_delta: >
+        goal retained across side questions, identity progress, correction,
+        ambiguous answer and follow-ups; at most one identity-bound dispatch;
+        no handoff and no invented result
+      allowed_claims: ["current step of the request", "operation in progress after a legal dispatch"]
+      forbidden_claims: ["account is unlocked before a confirmed result", "password was reset"]
+
+  # --- Experiment 0009 synthetic memory/procedure families -------------------
+  # Synthetic, non-sensitive utterances only. Per-turn procedure_current /
+  # procedure_last_completed / window_pairs oracles assert the experimental
+  # memory state; they fail on no-memory by construction (no procedure,
+  # empty window), which is the attributable difference the paired runs
+  # measure.
+  - case_id: pronoun-reference-portal
+    family: pronoun-reference
+    scenario_kind: sequence
+    description: >
+      A pronoun refers to the previously discussed Microsoft portal: the
+      goal and guided step stay stable across the lateral question and the
+      return. Referent quality itself is judged in the spoken review.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "quiero cambiar mi contraseña, ¿me ayudas con el portal de Microsoft?"
+        expect:
+          route: CONTINUE
+          goal: RESET_PASSWORD
+          goal_transition: created
+          revision_transition: created
+          procedure_current: microsoft_portal
+          window_pairs: 1
+          dispatch_count_unchanged: true
+      - transcript: "¿ese portal es seguro?"
+        expect:
+          route: CONTINUE
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          procedure_current: microsoft_portal
+          procedure_last_completed: null
+          window_pairs: 2
+          dispatch_count_unchanged: true
+      - transcript: "bueno, sigamos con el cambio"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          procedure_current: microsoft_portal
+          window_pairs: 3
+          dispatch_count_unchanged: true
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      conversation_goal: RESET_PASSWORD
+      escalation_eligibility: not_eligible
+      state_delta: "goal and guided step stable across pronoun reference and return"
+      allowed_claims: ["brief reassurance about the portal"]
+      forbidden_claims: ["password was reset", "operation dispatched"]
+
+  - case_id: procedure-lost-step
+    family: procedure-lost-step
+    scenario_kind: sequence
+    description: >
+      Repeated "which step was I on?" returns the stored current step, not
+      a reset or a fabricated step.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "necesito restablecer mi contraseña"
+        expect:
+          route: COLLECT_IDENTITY
+          goal: RESET_PASSWORD
+          goal_transition: created
+          procedure_current: microsoft_portal
+          window_pairs: 1
+          dispatch_count_unchanged: true
+      - transcript: "un momento, ¿en qué paso íbamos?"
+        expect:
+          route: CONTINUE
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          procedure_current: microsoft_portal
+          procedure_last_completed: null
+          window_pairs: 2
+          dispatch_count_unchanged: true
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      conversation_goal: RESET_PASSWORD
+      escalation_eligibility: not_eligible
+      state_delta: "stored step reported; no reset, no invented step"
+      allowed_claims: ["current step of the request"]
+      forbidden_claims: ["password was reset"]
+
+  - case_id: side-question-return
+    family: side-question-return
+    scenario_kind: sequence
+    description: >
+      Lateral answer keeps goal and step stable with no challenge of its
+      own; the next utterance returns to the guided step. Spoken quality of
+      the lateral answer and the transition back is judged in review.
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "antes de seguir, ¿esto tiene algún costo?"
+        expect:
+          route: CONTINUE
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          confirmation: absent
+          procedure_current: microsoft_portal
+          window_pairs: 1
+          dispatch_count_unchanged: true
+      - transcript: "listo, continuemos con el restablecimiento"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          confirmation: not_oracled
+          procedure_current: microsoft_portal
+          window_pairs: 2
+          dispatch_count_unchanged: true
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      conversation_goal: RESET_PASSWORD
+      escalation_eligibility: not_eligible
+      state_delta: "side question answered; return lands on the same guided step"
+      allowed_claims: ["brief answer plus transition back"]
+      forbidden_claims: ["password was reset"]
+
+  - case_id: temporary-goal-switch
+    family: temporary-goal-switch
+    scenario_kind: sequence
+    description: >
+      Temporary switch parks the guided procedure in the single bounded
+      slot; explicit return restores the steps rebound to the new revision
+      while any old confirmation stays invalid.
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "sigamos con el cambio de contraseña"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          procedure_current: microsoft_portal
+          window_pairs: 1
+          dispatch_count_unchanged: true
+      - transcript: "mejor no, desbloquea mi cuenta"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          goal_transition: changed
+          revision_transition: incremented
+          procedure_current: null
+          obsolete_goal_absent: true
+          window_pairs: 2
+          dispatch_count_unchanged: true
+      - transcript: "no, mejor volvamos al cambio de contraseña"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: changed
+          revision_transition: incremented
+          procedure_current: microsoft_portal
+          procedure_last_completed: null
+          window_pairs: 3
+          dispatch_count_unchanged: true
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      conversation_goal: RESET_PASSWORD
+      confirmation_state: not_oracled
+      escalation_eligibility: not_eligible
+      state_delta: "switch parked the procedure; return restored it; no stale confirmation reused"
+      allowed_claims: ["switch acknowledged", "return acknowledged"]
+      forbidden_claims: ["password was reset", "account is unlocked"]
+
+  - case_id: goal-correction-keeps-procedure
+    family: goal-correction
+    scenario_kind: sequence
+    description: >
+      A detail correction on the same action rebinds the guided procedure
+      to the new revision without restarting the portal progress; the
+      challenge still invalidates through the existing runtime path.
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "quiero cambiar la contraseña del correo"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          procedure_current: microsoft_portal
+          window_pairs: 1
+          dispatch_count_unchanged: true
+      - transcript: "perdón, es la del correo corporativo, no la otra"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: not_oracled
+          procedure_current: microsoft_portal
+          window_pairs: 2
+          dispatch_count_unchanged: true
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      conversation_goal: RESET_PASSWORD
+      escalation_eligibility: not_eligible
+      state_delta: "correction rebound the procedure; portal progress kept"
+      allowed_claims: ["correction acknowledged"]
+      forbidden_claims: ["password was reset"]
+
+  - case_id: retroactive-step-correction
+    family: retroactive-step-correction
+    scenario_kind: sequence
+    description: >
+      "I did not finish that step" moves progress back only to a legal
+      guided point; the prior completed claim is superseded.
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "quiero cambiar mi contraseña, empecemos"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          procedure_current: microsoft_portal
+          window_pairs: 1
+          dispatch_count_unchanged: true
+      - transcript: "listo, ya completé lo del portal de Microsoft"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          procedure_current: tivit_portal
+          procedure_last_completed: microsoft_portal
+          window_pairs: 2
+          dispatch_count_unchanged: true
+      - transcript: "perdón, en realidad no terminé ese paso"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          procedure_current: microsoft_portal
+          procedure_last_completed: null
+          window_pairs: 3
+          dispatch_count_unchanged: true
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      conversation_goal: RESET_PASSWORD
+      escalation_eligibility: not_eligible
+      state_delta: "advance then legal regress; no step invented"
+      allowed_claims: ["step repeated briefly"]
+      forbidden_claims: ["password was reset"]
+
+  - case_id: long-guided-procedure
+    family: long-guided-procedure
+    scenario_kind: sequence
+    description: >
+      Six-turn guided run: the early pair is evicted, the window cap holds,
+      the current step survives and no step is invented.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "quiero restablecer mi contraseña"
+        expect:
+          route: COLLECT_IDENTITY
+          goal: RESET_PASSWORD
+          goal_transition: created
+          procedure_current: microsoft_portal
+          window_pairs: 1
+          dispatch_count_unchanged: true
+          operation: none
+      - transcript: "¿qué datos voy a necesitar?"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          procedure_current: microsoft_portal
+          window_pairs: 2
+          dispatch_count_unchanged: true
+      - transcript: "entendido, sigamos"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          procedure_current: microsoft_portal
+          window_pairs: 3
+          dispatch_count_unchanged: true
+      - transcript: "ya envié mis datos"
+        events:
+          - event: identity_validation
+            result: validated
+            detail: "synthetic identity validation success"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          identity_valid: true
+          procedure_current: microsoft_portal
+          window_pairs: 3
+          dispatch_count_unchanged: true
+      - transcript: "¿me confirmas en qué paso estamos?"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          identity_valid: true
+          procedure_current: microsoft_portal
+          window_pairs: 3
+          dispatch_count_unchanged: true
+      - transcript: "gracias, quedo atento"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          identity_valid: true
+          procedure_current: microsoft_portal
+          window_pairs: 3
+          dispatch_count_unchanged: true
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      conversation_goal: RESET_PASSWORD
+      escalation_eligibility: not_eligible
+      state_delta: "early pair evicted under the cap; guided step survived"
+      allowed_claims: ["current step of the request"]
+      forbidden_claims: ["password was reset", "operation dispatched"]
+
+  - case_id: forgetting-boundary
+    family: forgetting-boundary
+    scenario_kind: sequence
+    description: >
+      After enough turns the early incidental pair is evicted and the cap
+      holds; the goal stays stable. Whether the late answer claims a
+      forgotten detail is judged in the spoken review, never by wording
+      match.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "quiero desbloquear mi cuenta"
+        expect:
+          route: COLLECT_IDENTITY
+          goal: UNLOCK_ACCOUNT
+          goal_transition: created
+          procedure_current: null
+          window_pairs: 1
+          dispatch_count_unchanged: true
+      - transcript: "una pregunta, ¿atienden los sábados?"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          goal_transition: retained
+          procedure_current: null
+          window_pairs: 2
+          dispatch_count_unchanged: true
+      - transcript: "entendido"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          goal_transition: retained
+          procedure_current: null
+          window_pairs: 3
+          dispatch_count_unchanged: true
+      - transcript: "sigamos con el desbloqueo"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          goal_transition: retained
+          procedure_current: null
+          window_pairs: 3
+          dispatch_count_unchanged: true
+      - transcript: "¿qué me habías dicho de los sábados?"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          goal_transition: retained
+          procedure_current: null
+          window_pairs: 3
+          dispatch_count_unchanged: true
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      conversation_goal: UNLOCK_ACCOUNT
+      escalation_eligibility: not_eligible
+      state_delta: "incidental pair evicted under the cap; goal stable; no invented procedure"
+      allowed_claims: ["continue where we left off"]
+      forbidden_claims: ["account is unlocked", "operation dispatched"]
+
+  # --- Experiment 0009 focused-correction controls ---------------------------
+  # Second paraphrase for retroactive correction, KEEP controls against
+  # over-advance, and grounding controls with tempting-but-absent facts.
+  - case_id: retroactive-step-correction-clarify
+    family: retroactive-step-correction
+    scenario_kind: sequence
+    description: >
+      Shorter paraphrase: explicit completion advances, an unfinished-step
+      correction regresses without touching the goal.
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "quiero restablecer mi contraseña, ya voy a empezar"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          procedure_current: microsoft_portal
+          window_pairs: 1
+          dispatch_count_unchanged: true
+      - transcript: "ya hice lo del portal de Microsoft"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          procedure_current: tivit_portal
+          procedure_last_completed: microsoft_portal
+          window_pairs: 2
+          dispatch_count_unchanged: true
+      - transcript: "no espera, todavía no lo hago"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          procedure_current: microsoft_portal
+          procedure_last_completed: null
+          window_pairs: 3
+          dispatch_count_unchanged: true
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      conversation_goal: RESET_PASSWORD
+      escalation_eligibility: not_eligible
+      state_delta: "completion advanced; unfinished-step regressed; goal untouched"
+      allowed_claims: ["step repeated briefly"]
+      forbidden_claims: ["password was reset"]
+
+  - case_id: procedure-repeat-keeps-step
+    family: procedure-lost-step
+    scenario_kind: sequence
+    description: >
+      Asking to repeat the step keeps the progress: a repeat request is not
+      completion evidence and must not advance, restart or invent anything.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "necesito restablecer mi contraseña"
+        expect:
+          route: COLLECT_IDENTITY
+          goal: RESET_PASSWORD
+          goal_transition: created
+          procedure_current: microsoft_portal
+          procedure_last_completed: null
+          window_pairs: 1
+          dispatch_count_unchanged: true
+      - transcript: "¿me repites el paso por favor?"
+        expect:
+          route: CONTINUE
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          procedure_current: microsoft_portal
+          procedure_last_completed: null
+          window_pairs: 2
+          dispatch_count_unchanged: true
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      conversation_goal: RESET_PASSWORD
+      escalation_eligibility: not_eligible
+      state_delta: "repeat request kept the step; nothing advanced or restarted"
+      allowed_claims: ["current step repeated briefly"]
+      forbidden_claims: ["password was reset"]
+
+  - case_id: grounding-tempting-fact
+    family: procedure-grounding
+    scenario_kind: sequence
+    description: >
+      Tempting-but-absent facts (hours, durations) about the current
+      request: goal and step stay stable while the spoken review judges
+      that nothing is invented.
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "¿a qué hora cierran mesa de ayuda?"
+        expect:
+          route: CONTINUE
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          procedure_current: microsoft_portal
+          window_pairs: 1
+          dispatch_count_unchanged: true
+      - transcript: "¿y cuánto tarda todo esto?"
+        expect:
+          goal: RESET_PASSWORD
+          goal_transition: retained
+          revision_transition: same
+          procedure_current: microsoft_portal
+          window_pairs: 2
+          dispatch_count_unchanged: true
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      conversation_goal: RESET_PASSWORD
+      escalation_eligibility: not_eligible
+      state_delta: "absent facts not invented; procedure untouched"
+      allowed_claims: ["brief redirection when the fact is absent"]
+      forbidden_claims: ["invented hours", "invented durations", "account is unlocked"]
+
+  - case_id: promise-capability-distinction
+    family: procedure-grounding
+    scenario_kind: sequence
+    description: >
+      A capability question about a supported action may or may not
+      register interest, but it never dispatches and never opens a
+      procedure by itself; the spoken review judges capability wording
+      without an execution promise. Goal deliberately not oracled.
+    initial_state: { identity_validated: true, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "¿ustedes pueden desbloquear cuentas?"
+        expect:
+          procedure_current: null
+          window_pairs: 1
+          dispatch_count_unchanged: true
+          operation: none
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      confirmation_state: none
+      dispatch_count: 0
+      state_delta: "capability answered; no dispatch, no procedure"
+      escalation_eligibility: not_eligible
+      allowed_claims: ["capability exists"]
+      forbidden_claims: ["account is unlocked", "operation dispatched"]

@@ -14,7 +14,11 @@ artifact_registry:
   location: us-east1
 
 vertex:
-  location: us-east1
+  # Model serving location for the active conversational baseline
+  # (Gemini 3.5 Flash-Lite, reasoning level MINIMAL). This is the Vertex AI
+  # serving location, not infrastructure: Cloud Run and Firestore stay in
+  # us-east1 below. Do not confuse the two regions.
+  location: global
   # El modelo baseline pertenece a la configuración de runtime/evaluación
   # y sigue sujeto a benchmark antes de producción.
 
