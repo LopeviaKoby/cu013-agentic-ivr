@@ -30,15 +30,32 @@ Una obligación de los IOP sólo deja de aplicar cuando una decisión autorizada
 El mecanismo inicial aceptado es DTMF:
 
 1. capturar documento de identidad;
-2. capturar fecha de nacimiento mediante un flujo análogo;
-3. obtener un resultado positivo de validación;
-4. sólo entonces autorizar la solicitud de reset o desbloqueo.
+2. consultar el lookup externo por documento `GET /validauser/TIVIT/{DOCUMENTO}`;
+3. si la consulta devuelve un registro (`FOUND`), capturar la fecha de ingreso `DDMMYYYY` (ocho dígitos) y compararla en XCALLY contra `resposta2` del registro recuperado;
+4. obtener un resultado positivo de validación;
+5. sólo entonces autorizar la solicitud de reset o desbloqueo.
+
+**ACCEPTED (evidence).** El lookup real observado es `GET https://urawps.tivit.com/prod-v2/api/v1/resetunlock/validauser/TIVIT/{DOCUMENTO}`. El documento se captura por DTMF en XCALLY y nunca llega al backend CU013.
+
+El dominio externo conocido de esa consulta es `FOUND | NOT_FOUND`, separado de los errores técnicos (timeout, HTTP error, respuesta inesperada). `FOUND` sólo significa que el lookup encontró un registro para ese documento: no valida la fecha, no concede autorización y no equivale a identidad válida; puede existir antes de capturar la fecha de ingreso. `NOT_FOUND` sólo significa que la consulta no encontró coincidencia, y los errores técnicos no se reinterpretan como `NOT_FOUND`.
+
+La semántica local de CU013/XCALLY es un dominio distinto que no se atribuye a TIVIT: `VALID | INVALID | TECHNICAL_FAILURE` y el contador de intentos. XCALLY produce el outcome local:
+
+- lookup `NOT_FOUND`, o fecha de ingreso que no coincide con `resposta2` → `INVALID`;
+- lookup `FOUND` y fecha de ingreso correcta → `VALID`;
+- timeout, HTTP error o respuesta inesperada → `TECHNICAL_FAILURE`.
+
+El contador de intentos pertenece al runtime CU013: `INVALID` consume un intento imputable al caller, `TECHNICAL_FAILURE` no consume intento y `VALID` tampoco. RD/TIVIT no conoce ni devuelve ese contador.
+
+**PROVISIONAL (evidence).** La consulta por documento está acreditada; falta demostrar E2E el recorrido completo `FOUND → captura DDMMYYYY → comparación con resposta2 → evento VALID/INVALID → backend` (ID-001).
+
+**PROVISIONAL (boundary).** En el contrato backend↔TEST la captura ocurre dentro de XCALLY: CU013 no recibe documento, fecha ni DTMF crudo, sino un resultado PII-safe `IDENTITY_VALIDATION_RESULT` por `/integration-events`. El contrato técnico y la secuencia esperada de TEST viven en [Boundary HTTP XCALLY ↔ CU013](xcally-boundary.md#evento-de-identidad-pii-safe).
 
 La identidad validada concede derecho a solicitar una acción; no equivale al éxito de AD/TIVIT ni a la autorización de despacho, que exige además la confirmación HITL verbal de [system.md](system.md#confirmación-hitl-verbal).
 
 **ACCEPTED.** La identidad es válida sólo durante la llamada actual y por un TTL absoluto de 30 minutos. Un re-prompt de confirmación verbal no invalida la identidad y no consume intentos de validación; un timeout o ASR insuficiente de confirmación tampoco.
 
-Los valores crudos de documento y fecha de nacimiento:
+Los valores crudos de documento y fecha de ingreso:
 
 - no deben entrar al LLM;
 - no deben aparecer en logs o telemetría;
@@ -106,7 +123,7 @@ El agente no debe afirmar que la contraseña fue restablecida ni que su entrega 
 
 No existe una vía de autoservicio guiado aceptada para desbloquear una cuenta.
 
-Después de capturar por DTMF el documento y la fecha de nacimiento, obtener una validación positiva y obtener la confirmación verbal de esa acción concreta, el agente puede solicitar directamente el desbloqueo mediante XCALLY/Orchestrator. La respuesta al caller debe describir la acción y su resultado sin exponer nombres de servicios o componentes técnicos.
+Después de capturar por DTMF el documento, completar el lookup `FOUND` + fecha de ingreso `DDMMYYYY`, obtener una validación positiva y obtener la confirmación verbal de esa acción concreta, el agente puede solicitar directamente el desbloqueo mediante XCALLY/Orchestrator. La respuesta al caller debe describir la acción y su resultado sin exponer nombres de servicios o componentes técnicos.
 
 La solicitud usa el comando externo observado `desbloqueio` mediante los bloques REST de Cally Square hacia Orchestrator/TIVIT/AD. La respuesta al caller deriva exclusivamente del resultado externo observado; ni una intención del caller ni una inferencia del LLM prueban el éxito.
 
@@ -136,21 +153,25 @@ Orchestrator / TIVIT / AD
 
 CU013 no llama directamente a TIVIT en esta fase. No se implementará ahora la alternativa `CU013 → adapter desacoplado → Orchestrator/TIVIT/AD`.
 
+En el contrato técnico vigente la orden viaja como `command` en la respuesta `/turns` (`route=EXECUTE_ACTION`, `operation_id` opaco de CU013, `action` y `goal_revision`), y el resultado vuelve como evento PII-safe (`ACCOUNT_ACTION_STATUS` / `ACCOUNT_ACTION_ERROR`) por `/integration-events`; el mapeo `RESET_PASSWORD → reset` y `UNLOCK_ACCOUNT → desbloqueio` pertenece a XCALLY, nunca al LLM ni al backend. Los shapes reales de RD/AD siguen siendo evidencia E2E ([Boundary HTTP XCALLY ↔ CU013](xcally-boundary.md)).
+
 Esta ruta debe reevaluarse si la validación integrada demuestra problemas materiales de latencia, fiabilidad, retries, correlación, códigos de estado o complejidad del flujo Cally Square.
 
 ## Evidencia de integración conocida
 
-Los IOP enlazados anteriormente son la autoridad del procedimiento empresarial. La evidencia disponible del mecanismo de integración queda limitada a los PDF en `docs/iop/`, `DOC_API_RD.pdf`, los XML CU013/RD y los parámetros o comportamientos confirmados por el propietario. Esta evidencia está agotada para planificación; los puntos experimentales restantes viven en [Gaps de implementación](../gaps.md) y no implican que exista documentación adicional por descubrir.
+Los IOP enlazados anteriormente son la autoridad del procedimiento empresarial. La evidencia disponible del mecanismo de integración queda limitada a los PDF en `docs/iop/`, `DOC_API_RD.pdf`, los XML CU013/RD, el lookup real por documento confirmado por el propietario y los parámetros o comportamientos confirmados por el propietario. Esta evidencia está agotada para planificación; los puntos experimentales restantes viven en [Gaps de implementación](../gaps.md) y no implican que exista documentación adicional por descubrir.
 
 Rutas relativas observadas:
 
 ```text
-GET /validauser/{CLIENTE}/{DOCUMENTO}
+GET /validauser/{CLIENTE}/{DOCUMENTO}     (lookup real observado con CLIENTE=TIVIT)
 POST /call/{CALLERID(Name)}
 GET /consutcall/{CALLERID(Name)}
 ```
 
 Header observado: `api-key`.
+
+Estados externos observados del lookup por documento: `FOUND` y `NOT_FOUND`, separados de los errores técnicos. `FOUND` sólo acredita que existe un registro para el documento; no equivale a identidad válida (ver [Identidad y autorización](#identidad-y-autorización)).
 
 Comandos observados:
 
@@ -190,7 +211,7 @@ El runtime debe distinguir como mínimo:
 - resultado confirmado por XCALLY;
 - estado del envío cuando corresponda.
 
-No se fijan todavía nombres de nodos, GraphState keys, modelos Pydantic, endpoints ni payloads target para las órdenes y resultados de AD/TIVIT. El baseline DEV provisional del boundary conversacional XCALLY ↔ CU013 está materializado y tipado en [Boundary HTTP XCALLY ↔ CU013](xcally-boundary.md).
+No se fijan todavía nombres de nodos, GraphState keys, modelos Pydantic, endpoints ni payloads target para las órdenes y resultados de AD/TIVIT. El baseline DEV provisional del boundary conversacional y del boundary técnico XCALLY ↔ CU013 está materializado y tipado en [Boundary HTTP XCALLY ↔ CU013](xcally-boundary.md), que reutiliza los estados canónicos de operación de esta SPEC sin duplicarlos.
 
 Una afirmación del caller o del LLM no puede convertirse en resultado empresarial. El agente sólo comunica estados efectivamente devueltos por el boundary externo.
 
@@ -256,7 +277,7 @@ Los futuros goldens deben cubrir, sin fijar todavía un schema de runtime:
 1. reset solicitado antes de validar identidad: la acción directa no está autorizada, pero el autoservicio guiado conforme al IOP sigue disponible;
 2. desbloqueo solicitado antes de validar identidad: la acción directa no está autorizada y no se ofrece una vía de autoservicio guiado;
 3. documento capturado por DTMF y nunca enviado al LLM/logs;
-4. fecha de nacimiento capturada por DTMF y nunca enviada al LLM/logs;
+4. fecha de ingreso `DDMMYYYY` capturada por DTMF y nunca enviada al LLM/logs;
 5. identidad positiva seguida de `RESET_PASSWORD`;
 6. identidad positiva seguida de `UNLOCK_ACCOUNT`;
 7. identidad validada y operación externa fallida: no declarar éxito;

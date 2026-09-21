@@ -6,7 +6,7 @@ CU013 v0.2.0 es una reconstrucción arquitectónica nueva: monolito modular en P
 
 ## Estado actual
 
-Están implementados el núcleo productivo mínimo del Thin Session Repository (`app/session`), el baseline DEV provisional del boundary HTTP para Cally Square (`app/api`) y el primer motor real Gemini 2.5 Flash-Lite (`app/conversation`, con prompt versionado en `app/conversation/prompts.py`). El servicio Cloud Run DEV `cu013-runtime-dev` está desplegado en `us-east1` con `min=0` en reposo. Todavía no existe integración real XCALLY/Cally Square, AD/TIVIT ni SendMail.
+Están implementados el núcleo productivo mínimo del Thin Session Repository (`app/session`), el baseline DEV provisional del boundary HTTP para Cally Square (`app/api`) y el motor conversacional activo Gemini 3.5 Flash-Lite (`app/conversation`, Vertex AI, ubicación de modelo `global`, nivel de razonamiento `MINIMAL`, prompt versionado en `app/conversation/prompts.py`). El servicio Cloud Run DEV `cu013-runtime-dev` está desplegado en `us-east1` con `min=0` en reposo. Todavía no existe integración real XCALLY/Cally Square, AD/TIVIT ni SendMail; el perfil activo es baseline sintético de laboratorio, no validado en voz ni aceptado en producción.
 
 ## Arquitectura
 
@@ -14,27 +14,28 @@ Están implementados el núcleo productivo mínimo del Thin Session Repository (
 llamante
    │  voz
    ▼
-XCALLY Motion / Cally Square                ASR · TTS · DTMF
+XCALLY Motion / Cally Square                ASR · TTS · DTMF · validación de identidad
    │  POST /api/v1/conversations/{conversation_id}/turns · X-API-Key
+   │  POST /api/v1/conversations/{conversation_id}/integration-events · X-API-Key
    ▼
 Cloud Run · cu013-runtime-dev · us-east1 · min=0
 
   app/api            boundary FastAPI: contrato Pydantic 2, auth
-   │                 X-API-Key, errores seguros, contención de DTMF
+   │                 X-API-Key, errores seguros, eventos técnicos PII-safe
    ▼  ConversationEngine (seam)
   app/session        TurnService · grafo LangGraph en RAM sin
    │                 persistent checkpointer · 1 load + 1 save
    ├────────────────▶ Firestore (default) · SessionRecord durable
    ▼
-  app/conversation   GeminiTurnModel + prompt versionado
-   │
-   └────────────────▶ Vertex AI · gemini-2.5-flash-lite · ADC
+   app/conversation   GeminiTurnModel + prompt versionado
+    │
+    └────────────────▶ Vertex AI · Gemini 3.5 Flash-Lite · global · MINIMAL · ADC
 
 app/
 ├── main.py          composition root DEV: clientes Vertex/Firestore
 │                    reutilizados y cerrados en el lifespan
-├── api/             boundary HTTP: contratos, auth, errores, DTMF
-├── session/         Thin Session Repository: record, grafo, load/save
+├── api/             boundary HTTP: contratos, auth, errores, eventos técnicos
+├── session/         Thin Session Repository: record, grafo, load/save, operación externa
 └── conversation/    seam ConversationEngine, motor Gemini, prompt
 ```
 
@@ -47,20 +48,20 @@ POST /turns
 → run_model: 1 llamada a Gemini con output estructurado tipado
 → advance_turn: el runtime decide legalidad y estado; no reescribe route
 → consolidate + save antes del HTTP response
-→ {message, route, turn_id}
+→ {message, route, turn_id, command}
 ```
 
-El transcript es efímero y no se persiste. Un crash a mitad de turno reinicia desde la última sesión durable. El DTMF crudo queda contenido en el boundary: nunca se persiste, registra, devuelve ni alcanza al LLM, y su llegada no valida identidad.
+El transcript es efímero y no se persiste. Un crash a mitad de turno reinicia desde la última sesión durable. El DTMF crudo ya no forma parte del contrato activo: Cally Square captura y valida identidad y envía el resultado PII-safe por `POST /integration-events`, que nunca llama al modelo y sólo reconcilia verdad externa (`IDENTITY_VALIDATION_RESULT`, `VOICE_INPUT_FAILURE`, `ACCOUNT_ACTION_STATUS`, `ACCOUNT_ACTION_ERROR`). El contrato vigente está en [Boundary HTTP XCALLY ↔ CU013](docs/specs/xcally-boundary.md).
 
 ## Capacidades del sistema
 
 | Capacidad | Estado |
 |---|---|
-| Conversación telefónica natural en español | Implemented (Gemini 2.5 Flash-Lite, prompt versionado) |
-| Rutas cerradas `CONTINUE`, `COLLECT_IDENTITY`, `COMPLETE`, `ESCALATE` | Implemented |
-| `RESET_PASSWORD`: autoservicio guiado y acción directa tras validar identidad | Conversación habilitada; ejecución externa pendiente de AD/TIVIT |
-| `UNLOCK_ACCOUNT`: sólo acción directa tras validar identidad | Conversación habilitada; ejecución externa pendiente de AD/TIVIT |
-| Identidad por DTMF (documento + fecha de nacimiento) | Boundary contenido; validación positiva pendiente (`ID-001`); `IDENTITY_DATA` termina en 503 seguro |
+| Conversación telefónica natural en español | Implemented (Gemini 3.5 Flash-Lite en `global`, `MINIMAL`, prompt versionado) |
+| Rutas `CONTINUE`, `COLLECT_IDENTITY`, `COMPLETE`, `ESCALATE` y `EXECUTE_ACTION` | Implemented (la última sólo la produce el runtime con guard durable) |
+| `RESET_PASSWORD`: autoservicio guiado y acción directa tras validar identidad | Conversación y contrato backend listos; ejecución externa real pendiente de AD/TIVIT |
+| `UNLOCK_ACCOUNT`: sólo acción directa tras validar identidad | Conversación y contrato backend listos; ejecución externa real pendiente de AD/TIVIT |
+| Identidad por DTMF (documento + fecha de ingreso) | Captura/validación dentro de XCALLY: lookup `validauser/TIVIT/{DOCUMENTO}` → `FOUND` → fecha de ingreso `DDMMYYYY` comparada con `resposta2`; CU013 recibe sólo `IDENTITY_VALIDATION_RESULT` PII-safe; recorrido completo pendiente de E2E (`ID-001`) |
 | Continuidad durable por `conversation_id` | Implemented (Thin Firestore Session Repository) |
 | Autenticación `X-API-Key` y taxonomía segura de errores | Implemented (boundary `PROVISIONAL`) |
 | Métricas y logs estructurados PII-safe | Implemented (segmentos fijos y contadores de tokens) |
@@ -76,20 +77,23 @@ Fuera de alcance: ticketing ITSM, SendMail (Deferred), VPN (posterior) y acceso 
 | `evals/backend_latency.py` | Camino backend completo in-process (ASGI) contra Firestore y Vertex reales desde el host DEV | ADC con impersonación |
 | `evals/cloud_run_latency.py` | El mismo camino contra el servicio desplegado, por HTTPS real (`--url`) | `CU013_API_KEY` en el entorno y ventana warm |
 | `evals/conversation_policy_eval.py` | Política conversacional de petición previa contra el modelo real | ADC con impersonación |
-| `evals/conversation_baseline_eval.py` | Runtime semántico completo (modelo real + guards de legalidad) contra el corpus versionado de `evals/conversation/` | ADC con impersonación |
+| `evals/conversation_eval.py` | Laboratorio de evaluación: modelo real + runtime semántico contra el corpus versionado de `evals/conversation/`, con evidencia estructurada por run, caso/repetición y turno, warmups, INFRA por repetición y artefactos locales en `evals/results/` | ADC con impersonación |
+| `evals/conversation_compare.py` | Comparador pareado puro (sin modelo) contra el baseline aceptado: identidades, propiedades, rutas, divergencias, violaciones críticas, latencia/tokens y verdicto ACCEPT / REJECT / NEEDS OWNER DECISION | Ninguno (sin credenciales) |
 
-El corpus de evaluación conversacional (`evals/conversation/cases.yaml`, 34 casos, 30 familias, sintético y sin PII) expresa expectativas semánticas por familia — rutas, goals, confirmación, elegibilidad, claims — sin phrase matching. El runner compara rutas, estado y claims, nunca wording; los eventos de boundary son eventos de dominio simulados porque el contrato wire XCALLY/AD sigue abierto (ID-001, XC-001..XC-006). La metodología eval-driven está en [testing standards](docs/engineering/testing.md).
+El corpus de evaluación conversacional (`evals/conversation/cases.yaml`, 47 casos, 39 familias, sintético y sin PII) expresa expectativas semánticas por familia — rutas, goals, confirmación, elegibilidad, handoff y claims — sin phrase matching. Cada caso declara `scenario_kind` (`independent_trial` o `sequence`); una clave `expected` presente afirma su valor (incluido `null` como ausencia) y una clave ausente se reporta `NOT ORACLED`. El baseline activo (Gemini 3.5 Flash-Lite, `global`, `MINIMAL`, clasificación procedimental obligatoria, memoria reciente de tres pares) se deriva de `config.yaml` y `app/conversation`; el harness calcula su fingerprint en runtime. La historia de selección vive en la ADR vigente, el Experimento 0009 y Git. Las tres capas de validación (tests deterministas, gate pareado conversacional y análisis de evidencia de llamada real) están en [testing standards](docs/engineering/testing.md).
 
 Metodología del benchmark: 5 warmups y luego 30 requests secuenciales medidas (13 `RESET`, 13 `UNLOCK`, secuencia multi-turn de 4), percentiles por segmento y verificación de continuidad durable del `SessionRecord`. Resultados en el [Experimento 0003](docs/experiments/0003-gemini-baseline-latency.md) (local) y el [Experimento 0004](docs/experiments/0004-cloud-run-latency.md) (in-region).
 
 ```powershell
 .\.venv\Scripts\python.exe evals\backend_latency.py
 .\.venv\Scripts\python.exe evals\conversation_policy_eval.py
-.\.venv\Scripts\python.exe evals\conversation_baseline_eval.py
+.\.venv\Scripts\python.exe evals\conversation_eval.py --validate-only
+.\.venv\Scripts\python.exe evals\conversation_eval.py
+.\.venv\Scripts\python.exe evals\conversation_compare.py --baseline <run>.json --candidate <run>.json
 python evals\cloud_run_latency.py --url <service-url>   # ventana warm
 ```
 
-Los gates deterministas (193 tests con `pytest`, sin Gemini, Firestore ni credenciales) son la suite local, no el harness.
+Los gates deterministas (`pytest`, sin Gemini, Firestore ni credenciales) son la suite local y el CI de GitHub Actions, no el harness.
 
 ## Tecnologías e infraestructura
 
@@ -99,13 +103,13 @@ Los gates deterministas (193 tests con `pytest`, sin Gemini, Firestore ni creden
 | HTTP | FastAPI + Uvicorn | Boundary y servidor ASGI de un solo proceso |
 | Contratos | Pydantic 2 | Request/response, salida del LLM y `SessionRecord` |
 | Orquestación | LangGraph | Grafo del turno sin persistent checkpointer |
-| LLM | Vertex AI + `google-genai` | Gemini 2.5 Flash-Lite, `thinking_budget=0`, 1 llamada por turno |
+| LLM | Vertex AI + `google-genai` | Gemini 3.5 Flash-Lite en `global`, `thinking_level=MINIMAL`, 1 llamada por turno |
 | Persistencia | Firestore `(default)` | Único store durable (`cu013dev_sessions`) |
 | Cómputo | Cloud Run | `cu013-runtime-dev`: 1 vCPU/512 MiB, concurrency 1, min 0/max 1 |
 | Contenedor | Docker (`python:3.12-slim`) | Non-root, uvicorn con entrypoint factory |
 | Secretos | Secret Manager | `cu013-api-key-dev` referenciado por versión numérica |
 | Identidad | ADC impersonation | Sin claves JSON de service account |
-| Calidad | pytest · Ruff · MyPy strict | Gates locales; CI/CD objetivo GitHub Actions |
+| Calidad | pytest · Ruff · MyPy strict · GitHub Actions | Gates locales y CI sin credenciales; deploy pendiente de autorización |
 | Reproducibilidad | `requirements.lock` | Constraints exactos para runtime y DEV |
 
 Infraestructura GCP confirmada:

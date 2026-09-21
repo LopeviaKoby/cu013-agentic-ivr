@@ -49,7 +49,7 @@ No se exige wording exacto salvo que exista un contrato textual real. Las assert
   manifiesto JSON canónico paralelo; la historia vive en la ADR de
   selección, el Experimento 0009 y Git.
 - Las repeticiones son 3 válidas por trial o secuencia; el warmup es fijo, idéntico para ambos lados y se reporta aparte. `INFRA` se clasifica a nivel de repetición; el output estructurado inválido es fallo de modelo, nunca `INFRA`. Un rerun focalizado no borra el resultado original: el comparador registra la fusión y conserva los artefactos originales.
-- Los artefactos de ejecución viven en `evals/results/` (ignorados por Git) y no contienen transcripciones, mensajes, DTMF crudo, documento, fecha de nacimiento ni secretos; los tokens ausentes se registran como missing, nunca como 0. Son outputs generados de máquina, no documentación canónica.
+- Los artefactos de ejecución viven en `evals/results/` (ignorados por Git) y no contienen transcripciones, mensajes, DTMF crudo, documento, fecha de ingreso ni secretos; los tokens ausentes se registran como missing, nunca como 0. Son outputs generados de máquina, no documentación canónica.
 
 ## Gate pre-voz
 
