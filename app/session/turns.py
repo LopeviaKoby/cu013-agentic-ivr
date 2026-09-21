@@ -14,12 +14,12 @@ side effect, invents a wire payload or calls an external service.
 from datetime import datetime
 from enum import StrEnum
 from functools import partial
-from typing import Protocol, TypedDict
+from typing import Protocol, Self, TypedDict
 from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.session.actions import Action
 from app.session.memory import (
@@ -52,6 +52,8 @@ SAFE_FALLBACK_MESSAGE = (
 
 ESCALATION_MESSAGE = "No pudimos completar la validación de identidad. Te comunico con una persona."
 
+PROCESSING_MESSAGE = "Voy a procesar la solicitud. Puede tardar unos segundos."
+
 
 class Route(StrEnum):
     """Route the turn decision carries for the Cally Square boundary."""
@@ -60,6 +62,21 @@ class Route(StrEnum):
     COLLECT_IDENTITY = "COLLECT_IDENTITY"
     COMPLETE = "COMPLETE"
     ESCALATE = "ESCALATE"
+
+
+class BoundaryRoute(StrEnum):
+    """Route the boundary emits: the model-facing routes plus EXECUTE_ACTION.
+
+    The model-facing contract stays the closed four-value ``Route``; the
+    runtime alone creates ``EXECUTE_ACTION`` when it persists a legal
+    dispatch guard.
+    """
+
+    CONTINUE = "CONTINUE"
+    COLLECT_IDENTITY = "COLLECT_IDENTITY"
+    COMPLETE = "COMPLETE"
+    ESCALATE = "ESCALATE"
+    EXECUTE_ACTION = "EXECUTE_ACTION"
 
 
 class GoalIntent(StrEnum):
@@ -188,14 +205,41 @@ class TurnInput(BaseModel):
     external_event: ExternalEvent | None = None
 
 
+class ExternalActionCommand(BaseModel):
+    """Authorized external action the boundary orders XCALLY to execute.
+
+    The command is CU013-owned correlation: only the opaque ``operation_id``,
+    the closed ``action`` enum and the goal revision bound to the same guard.
+    It never carries document, date, phone, email, password, temporary
+    password, RD API key, RD URL, RD payload, CALLERID(Name), ``codigo`` or
+    ``callId``. The runtime creates it only after the dispatch guard is
+    durable; the model never proposes or executes it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    operation_id: str = Field(min_length=1)
+    action: Action
+    goal_revision: int = Field(ge=0)
+
+
 class TurnOutcomeState(BaseModel):
     """Runtime-validated outcome the boundary may emit; safe by construction."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     message: str = Field(min_length=1)
-    route: Route
+    route: BoundaryRoute
+    command: ExternalActionCommand | None = None
     violations: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _command_only_with_execute_action(self) -> Self:
+        if self.command is not None and self.route is not BoundaryRoute.EXECUTE_ACTION:
+            raise ValueError("command is only valid with EXECUTE_ACTION")
+        if self.route is BoundaryRoute.EXECUTE_ACTION and self.command is None:
+            raise ValueError("EXECUTE_ACTION requires a command")
+        return self
 
 
 class TurnModel(Protocol):
@@ -427,7 +471,12 @@ def _apply_confirmation_observation(
         challenge_id=challenge.challenge_id,
         authorized_at=now,
     )
-    opened = ExternalOperation(operation_id=operation_id, action=challenge.action)
+    opened = ExternalOperation(
+        operation_id=operation_id,
+        action=challenge.action,
+        last_progress_feedback_at=now,
+        progress_feedback_index=0,
+    )
     return None, authorized, opened, None
 
 
@@ -442,6 +491,8 @@ def _dispatch_binding_error(
     """Deterministic checks the dispatch guard requires before it may exist."""
     if not identity.is_valid_at(now):
         return "dispatch without a valid identity authorization"
+    if identity.requires_handoff():
+        return "dispatch after the identity attempts were exhausted"
     if goal is None:
         return "dispatch without a supported goal"
     if challenge.action is not goal.action or challenge.goal_revision != goal.revision:
@@ -469,6 +520,8 @@ def _maybe_open_challenge(
     if challenge is not None:
         return challenge
     if goal is None or validated_at is None or not identity.is_valid_at(now):
+        return None
+    if identity.requires_handoff():
         return None
     if operation is not None and operation.is_active():
         return None
@@ -589,7 +642,7 @@ def _guard_outcome(
     if identity.requires_handoff():
         return TurnOutcomeState(
             message=ESCALATION_MESSAGE,
-            route=Route.ESCALATE,
+            route=BoundaryRoute.ESCALATE,
             violations=tuple(violations),
         )
     if decision is None:
@@ -597,10 +650,10 @@ def _guard_outcome(
     if violations:
         return TurnOutcomeState(
             message=SAFE_FALLBACK_MESSAGE,
-            route=Route.CONTINUE,
+            route=BoundaryRoute.CONTINUE,
             violations=tuple(violations),
         )
-    return TurnOutcomeState(message=decision.message, route=decision.route)
+    return TurnOutcomeState(message=decision.message, route=BoundaryRoute(decision.route.value))
 
 
 def advance_turn(state: GraphState) -> TurnDelta:
@@ -688,15 +741,32 @@ def advance_turn(state: GraphState) -> TurnDelta:
     extra_violations = tuple(
         error for error in (proposal_error, binding_error) if error is not None
     )
-    outcome = _guard_outcome(
-        decision,
-        goal=goal,
-        identity=identity,
-        dispatch=dispatch,
-        operation=operation,
-        now=now,
-        extra_violations=extra_violations,
-    )
+    outcome: TurnOutcomeState | None
+    if dispatched_this_turn and dispatch is not None:
+        # The durable guard exists: the boundary must deliver its command even
+        # if the same model turn proposed something illegal. The runtime
+        # message replaces the model message, so no unbacked claim is spoken;
+        # any violation remains recorded as evidence.
+        outcome = TurnOutcomeState(
+            message=PROCESSING_MESSAGE,
+            route=BoundaryRoute.EXECUTE_ACTION,
+            command=ExternalActionCommand(
+                operation_id=dispatch.operation_id,
+                action=dispatch.action,
+                goal_revision=dispatch.goal_revision,
+            ),
+            violations=extra_violations,
+        )
+    else:
+        outcome = _guard_outcome(
+            decision,
+            goal=goal,
+            identity=identity,
+            dispatch=dispatch,
+            operation=operation,
+            now=now,
+            extra_violations=extra_violations,
+        )
 
     if (
         experimental is not None

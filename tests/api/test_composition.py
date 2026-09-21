@@ -10,6 +10,7 @@ import app.main as main
 from app.api.security import API_KEY_ENV_VAR
 from app.conversation.engine import SessionConversationEngine
 from app.main import DEFAULT_FIRESTORE_COLLECTION, build_app
+from app.session.integration import IntegrationEventService
 from app.session.metrics import RecordingTurnMetrics
 from tests.api.doubles import SYNTHETIC_API_KEY
 
@@ -20,11 +21,13 @@ async def test_build_app_wires_the_real_boundary(monkeypatch: pytest.MonkeyPatch
     app = build_app(metrics=metrics)
     try:
         assert isinstance(app.state.conversation_engine, SessionConversationEngine)
+        assert isinstance(app.state.integration_events, IntegrationEventService)
         assert app.state.turn_metrics is metrics
         assert app.state.genai_client is not None
         assert app.state.firestore_client is not None
         paths = app.openapi()["paths"]
         assert "/api/v1/conversations/{conversation_id}/turns" in paths
+        assert "/api/v1/conversations/{conversation_id}/integration-events" in paths
         assert DEFAULT_FIRESTORE_COLLECTION == "cu013dev_sessions"
     finally:
         await app.state.genai_client.aio.aclose()
@@ -52,6 +55,7 @@ async def test_build_app_uses_one_default_metrics_instance_everywhere(
         service = app.state.conversation_engine._service
         assert app.state.turn_metrics is metrics
         assert service._metrics is metrics
+        assert app.state.integration_events._metrics is metrics
         assert captured_model_metrics == [metrics]
     finally:
         await app.state.genai_client.aio.aclose()

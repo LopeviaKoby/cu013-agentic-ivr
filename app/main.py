@@ -17,6 +17,7 @@ from google.genai.types import HttpOptions
 from app.api.app import create_app
 from app.conversation.engine import SessionConversationEngine
 from app.conversation.gemini import GeminiBaseline, GeminiTurnModel
+from app.session.integration import IntegrationEventService
 from app.session.metrics import StructuredLogTurnMetrics, TurnMetrics
 from app.session.repository import FirestoreSessionDocumentStore, SessionRepository
 from app.session.service import TurnService
@@ -40,12 +41,16 @@ def build_app(*, metrics: TurnMetrics | None = None) -> FastAPI:
     firestore_client = FirestoreAsyncClient(project=baseline.project)
     store = FirestoreSessionDocumentStore(firestore_client, collection)
     model = GeminiTurnModel(genai_client, baseline, metrics=effective_metrics)
+    repository = SessionRepository(store)
     service = TurnService(
-        SessionRepository(store),
+        repository,
         build_turn_graph(model=model),
         metrics=effective_metrics,
     )
-    app = create_app(engine=SessionConversationEngine(service))
+    integration_events = IntegrationEventService(repository, metrics=effective_metrics)
+    app = create_app(
+        engine=SessionConversationEngine(service), integration_events=integration_events
+    )
     app.state.turn_metrics = effective_metrics
     app.state.genai_client = genai_client
     app.state.firestore_client = firestore_client

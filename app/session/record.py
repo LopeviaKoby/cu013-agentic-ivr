@@ -126,7 +126,14 @@ class AuthorizedDispatch(BaseModel):
 
 
 class ExternalOperation(BaseModel):
-    """Truth of the external operation; only boundary events change it."""
+    """Truth of the external operation; only boundary events change it.
+
+    ``last_progress_feedback_at`` and ``progress_feedback_index`` are the
+    minimal technical metadata the anti-silence policy persists while an
+    operation is pending: when the caller was last given progress feedback
+    and how many progress phrases were already used. They carry no business
+    meaning and never prove a result.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -134,6 +141,8 @@ class ExternalOperation(BaseModel):
     action: Action
     status: OperationStatus = OperationStatus.PENDING
     delivery: DeliveryStatus | None = None
+    last_progress_feedback_at: AwareDatetime | None = None
+    progress_feedback_index: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def _delivery_only_applies_to_reset(self) -> Self:
@@ -262,7 +271,8 @@ def session_record_to_document(record: SessionRecord) -> dict[str, object]:
 
     The v2 keys are always present. The experimental Exp 0009 keys are added
     only when active, so documents without the experimental planes keep the
-    exact historical v2 shape.
+    exact historical v2 shape. Stored v2 documents whose operation predates
+    the anti-silence metadata still validate: both fields default.
     """
     goal = record.goal
     confirmation = record.confirmation
@@ -308,6 +318,8 @@ def session_record_to_document(record: SessionRecord) -> dict[str, object]:
                 "action": operation.action.value,
                 "status": operation.status.value,
                 "delivery": operation.delivery.value if operation.delivery is not None else None,
+                "last_progress_feedback_at": operation.last_progress_feedback_at,
+                "progress_feedback_index": operation.progress_feedback_index,
             }
             if operation is not None
             else None

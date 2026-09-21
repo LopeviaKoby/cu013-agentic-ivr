@@ -38,12 +38,20 @@ class ApiKeyNotConfiguredError(ApiError):
     public_message = "internal error"
 
 
-class IdentityValidationUnavailableError(ApiError):
-    """Identity data arrived but no validation integration exists yet."""
+class IntegrationEventsUnavailableError(ApiError):
+    """No technical integration-events service is wired into this boundary."""
 
     code = ErrorCode.DEPENDENCY_UNAVAILABLE
     status_code = 503
-    public_message = "identity validation is not available"
+    public_message = "integration events are not available"
+
+
+class ConflictOrDuplicateError(ApiError):
+    """The event cannot be correlated with the durable session or operation."""
+
+    code = ErrorCode.CONFLICT_OR_DUPLICATE
+    status_code = 409
+    public_message = "event cannot be correlated with the conversation"
 
 
 class DependencyTimeoutError(ApiError):

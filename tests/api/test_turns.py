@@ -40,13 +40,6 @@ DEPENDENCY_UNAVAILABLE_ERROR = {
     "error": {"code": "dependency_unavailable", "message": "dependency is not available"},
 }
 
-DEPENDENCY_UNAVAILABLE_IDENTITY_ERROR = {
-    "error": {
-        "code": "dependency_unavailable",
-        "message": "identity validation is not available",
-    },
-}
-
 INTERNAL_ERROR = {"error": {"code": "internal", "message": "internal error"}}
 
 COLLECT_IDENTITY_WITH_GOAL = make_decision(
@@ -269,18 +262,6 @@ async def test_illegal_route_is_replaced_by_the_safe_fallback(client, model, sto
     assert response.json()["route"] == "CONTINUE"
     assert response.json()["message"] != model.decision.message
     assert store.documents["conversation-1"]["dispatch"] is None
-
-
-async def test_identity_data_event_still_terminates_safely(client, store) -> None:
-    response = await client.post(
-        turns_url("conversation-1"),
-        json={"event": "IDENTITY_DATA", "slots": {"document_id": SYNTHETIC_DTMF}},
-    )
-    assert response.status_code == 503
-    assert response.json() == DEPENDENCY_UNAVAILABLE_IDENTITY_ERROR
-    assert SYNTHETIC_DTMF not in response.text
-    assert store.writes == 0
-    assert store.documents == {}
 
 
 def test_action_enum_is_closed_to_the_supported_slice() -> None:

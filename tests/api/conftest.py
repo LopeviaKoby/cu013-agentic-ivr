@@ -9,11 +9,12 @@ from httpx import ASGITransport, AsyncClient
 from app.api.app import create_app
 from app.api.security import API_KEY_ENV_VAR
 from app.conversation.engine import SessionConversationEngine
+from app.session.integration import IntegrationEventService
 from app.session.repository import SessionRepository
 from app.session.service import TurnService
 from app.session.turns import build_turn_graph
 from tests.api.doubles import SYNTHETIC_API_KEY
-from tests.session.doubles import FakeTurnModel, InMemorySessionDocumentStore
+from tests.session.doubles import FakeTurnModel, FrozenClock, InMemorySessionDocumentStore
 
 BASE_URL = "http://testserver"
 
@@ -29,13 +30,30 @@ def model() -> FakeTurnModel:
 
 
 @pytest.fixture
-def service(store: InMemorySessionDocumentStore, model: FakeTurnModel) -> TurnService:
-    return TurnService(SessionRepository(store), build_turn_graph(model=model))
+def clock() -> FrozenClock:
+    return FrozenClock()
+
+
+@pytest.fixture
+def repository(store: InMemorySessionDocumentStore) -> SessionRepository:
+    return SessionRepository(store)
+
+
+@pytest.fixture
+def service(repository: SessionRepository, model: FakeTurnModel, clock: FrozenClock) -> TurnService:
+    return TurnService(repository, build_turn_graph(model=model), clock=clock)
 
 
 @pytest.fixture
 def engine(service: TurnService) -> SessionConversationEngine:
     return SessionConversationEngine(service)
+
+
+@pytest.fixture
+def integration_events(
+    repository: SessionRepository, clock: FrozenClock
+) -> IntegrationEventService:
+    return IntegrationEventService(repository, clock=clock)
 
 
 @pytest.fixture
@@ -45,8 +63,8 @@ def api_key(monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 @pytest.fixture
-def app(engine: SessionConversationEngine) -> FastAPI:
-    return create_app(engine=engine)
+def app(engine: SessionConversationEngine, integration_events: IntegrationEventService) -> FastAPI:
+    return create_app(engine=engine, integration_events=integration_events)
 
 
 def build_client(app: FastAPI, *, headers: dict[str, str] | None = None) -> AsyncClient:

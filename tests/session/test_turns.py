@@ -2,6 +2,7 @@
 
 from app.session.record import Action
 from app.session.turns import (
+    BoundaryRoute,
     ModelTurnDecision,
     Route,
     advance_turn,
@@ -101,7 +102,7 @@ async def test_safe_fallback_never_needs_a_second_model_call() -> None:
     assert len(model.calls) == 1
     outcome = final["outcome"]
     assert outcome is not None
-    assert outcome.route is Route.CONTINUE
+    assert outcome.route is BoundaryRoute.CONTINUE
     assert outcome.violations
 
 
@@ -134,4 +135,4 @@ def test_model_cannot_create_an_operation_without_a_boundary_event() -> None:
     )
     assert claimed["external_operation"] is None
     assert claimed["outcome"] is not None
-    assert claimed["outcome"].route is Route.CONTINUE
+    assert claimed["outcome"].route is BoundaryRoute.CONTINUE

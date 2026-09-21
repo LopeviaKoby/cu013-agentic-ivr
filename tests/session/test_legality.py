@@ -18,6 +18,7 @@ from app.session.record import (
 )
 from app.session.turns import (
     SAFE_FALLBACK_MESSAGE,
+    BoundaryRoute,
     ClaimKind,
     ConfirmationEvent,
     ConfirmationObservation,
@@ -46,7 +47,7 @@ def assert_fallback(delta) -> None:  # type: ignore[no-untyped-def]
     outcome = delta["outcome"]
     assert outcome is not None
     assert outcome.message == SAFE_FALLBACK_MESSAGE
-    assert outcome.route is Route.CONTINUE
+    assert outcome.route is BoundaryRoute.CONTINUE
     assert outcome.violations
 
 
@@ -69,7 +70,7 @@ def test_plan_registers_a_goal_before_identity() -> None:
     assert delta["dispatch"] is None
     assert delta["external_operation"] is None
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.COLLECT_IDENTITY
+    assert delta["outcome"].route is BoundaryRoute.COLLECT_IDENTITY
 
 
 def test_side_question_does_not_erase_the_goal() -> None:
@@ -77,7 +78,7 @@ def test_side_question_does_not_erase_the_goal() -> None:
     delta = advance_turn(make_state(goal=goal, model_decision=make_decision(route=Route.CONTINUE)))
     assert delta["goal"] == goal
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.CONTINUE
+    assert delta["outcome"].route is BoundaryRoute.CONTINUE
 
 
 def test_reiterating_the_same_goal_does_not_bump_the_revision() -> None:
@@ -138,7 +139,7 @@ def test_goal_cancellation_clears_the_plan_and_the_challenge() -> None:
     assert delta["confirmation"] is None
     assert delta["dispatch"] is None
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.COMPLETE
+    assert delta["outcome"].route is BoundaryRoute.COMPLETE
 
 
 def test_two_supported_goals_are_representable_sequentially() -> None:
@@ -198,7 +199,7 @@ def test_expired_identity_requires_revalidation_and_blocks_dispatch() -> None:
         )
     )
     assert revalidation["outcome"] is not None
-    assert revalidation["outcome"].route is Route.COLLECT_IDENTITY
+    assert revalidation["outcome"].route is BoundaryRoute.COLLECT_IDENTITY
     assert revalidation["outcome"].violations == ()
 
     expired_affirmation = advance_turn(
@@ -228,7 +229,7 @@ def test_third_caller_failure_forces_escalation() -> None:
     assert delta["identity"].caller_failures == 3
     assert delta["identity"].requires_handoff()
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.ESCALATE
+    assert delta["outcome"].route is BoundaryRoute.ESCALATE
 
 
 def test_technical_identity_failure_does_not_consume_an_attempt() -> None:
@@ -242,7 +243,7 @@ def test_technical_identity_failure_does_not_consume_an_attempt() -> None:
     )
     assert delta["identity"].caller_failures == 1
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.CONTINUE
+    assert delta["outcome"].route is BoundaryRoute.CONTINUE
 
 
 def test_technical_identity_failure_never_escalates_by_itself() -> None:
@@ -259,7 +260,7 @@ def test_technical_identity_failure_never_escalates_by_itself() -> None:
     assert delta["dispatch"] is None
     assert delta["external_operation"] is None
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.COLLECT_IDENTITY
+    assert delta["outcome"].route is BoundaryRoute.COLLECT_IDENTITY
 
 
 def test_validation_replaces_the_authorization_without_losing_attempts() -> None:
@@ -394,7 +395,7 @@ def test_stale_challenge_for_an_older_revision_never_authorizes() -> None:
     assert delta["external_operation"] is None
     assert delta["confirmation"] is None
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.CONTINUE
+    assert delta["outcome"].route is BoundaryRoute.CONTINUE
 
 
 def test_stale_challenge_is_repaired_even_without_a_model_decision() -> None:
@@ -442,7 +443,7 @@ def test_explicit_cancellation_cancels_the_action_and_the_challenge() -> None:
     assert delta["confirmation"] is None
     assert delta["dispatch"] is None
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.COMPLETE
+    assert delta["outcome"].route is BoundaryRoute.COMPLETE
     assert delta["outcome"].violations == ()
 
 
@@ -510,7 +511,7 @@ def test_side_question_opens_no_challenge_even_with_valid_identity() -> None:
     assert delta["confirmation"] is None
     assert delta["dispatch"] is None
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.CONTINUE
+    assert delta["outcome"].route is BoundaryRoute.CONTINUE
 
 
 def test_invalidated_challenge_is_replaced_by_a_new_one() -> None:
@@ -863,7 +864,7 @@ def test_caller_requested_handoff_is_permitted() -> None:
         )
     )
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.ESCALATE
+    assert delta["outcome"].route is BoundaryRoute.ESCALATE
     assert delta["outcome"].violations == ()
 
 
@@ -877,7 +878,7 @@ def test_terminal_failure_handoff_needs_a_terminal_failure() -> None:
         )
     )
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.ESCALATE
+    assert delta["outcome"].route is BoundaryRoute.ESCALATE
     assert delta["outcome"].violations == ()
 
 
@@ -909,7 +910,7 @@ def test_explicit_human_request_escalates_without_clearing_the_goal() -> None:
     assert delta["confirmation"] is None
     assert delta["dispatch"] is None
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.ESCALATE
+    assert delta["outcome"].route is BoundaryRoute.ESCALATE
     assert delta["outcome"].violations == ()
 
 
@@ -930,7 +931,7 @@ def test_cancellation_with_human_request_clears_the_goal_explicitly() -> None:
     assert delta["confirmation"] is None
     assert delta["dispatch"] is None
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.ESCALATE
+    assert delta["outcome"].route is BoundaryRoute.ESCALATE
     assert delta["outcome"].violations == ()
 
 
@@ -942,7 +943,7 @@ def test_collect_identity_needs_a_supported_goal_and_no_identity() -> None:
         )
     )
     assert legal["outcome"] is not None
-    assert legal["outcome"].route is Route.COLLECT_IDENTITY
+    assert legal["outcome"].route is BoundaryRoute.COLLECT_IDENTITY
 
     without_goal = advance_turn(
         make_state(model_decision=make_decision(route=Route.COLLECT_IDENTITY))
@@ -989,7 +990,7 @@ def test_complete_is_permitted_after_a_confirmed_unlock() -> None:
         )
     )
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.COMPLETE
+    assert delta["outcome"].route is BoundaryRoute.COMPLETE
     assert delta["outcome"].violations == ()
 
 
@@ -1003,7 +1004,7 @@ def test_third_failure_forces_escalation_over_any_model_route() -> None:
         )
     )
     assert delta["outcome"] is not None
-    assert delta["outcome"].route is Route.ESCALATE
+    assert delta["outcome"].route is BoundaryRoute.ESCALATE
     assert "unbacked claim IDENTITY_VALID" in delta["outcome"].violations
 
 

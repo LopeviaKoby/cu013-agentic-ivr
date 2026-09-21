@@ -21,6 +21,7 @@ from app.session.record import (
     SessionRecord,
 )
 from app.session.turns import (
+    BoundaryRoute,
     GraphState,
     ModelTurnDecision,
     Route,
@@ -147,12 +148,16 @@ def make_operation(
     *,
     delivery: DeliveryStatus | None = None,
     operation_id: str = "operation-1",
+    last_progress_feedback_at: datetime | None = None,
+    progress_feedback_index: int = 0,
 ) -> ExternalOperation:
     return ExternalOperation(
         operation_id=operation_id,
         action=action,
         status=status,
         delivery=delivery,
+        last_progress_feedback_at=last_progress_feedback_at,
+        progress_feedback_index=progress_feedback_index,
     )
 
 
@@ -181,7 +186,7 @@ def make_decision(**overrides: object) -> ModelTurnDecision:
 
 
 def make_outcome(**overrides: object) -> TurnOutcomeState:
-    values: dict[str, object] = {"message": "synthetic message", "route": Route.CONTINUE}
+    values: dict[str, object] = {"message": "synthetic message", "route": BoundaryRoute.CONTINUE}
     values.update(overrides)
     return TurnOutcomeState.model_validate(values)
 

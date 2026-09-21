@@ -6,24 +6,29 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.conversation.errors import InvalidModelOutputError
 from app.session.service import TurnService
-from app.session.turns import Route, TurnInput
+from app.session.turns import BoundaryRoute, ExternalActionCommand, TurnInput
 
 __all__ = [
+    "BoundaryRoute",
     "ConversationEngine",
     "ConversationTurn",
-    "Route",
     "SessionConversationEngine",
     "TurnOutcome",
 ]
 
 
 class TurnOutcome(BaseModel):
-    """Conversational result for one turn; the engine owns message and route."""
+    """Conversational result for one turn; the engine owns message and route.
+
+    ``command`` travels only with ``EXECUTE_ACTION``: it is the runtime's
+    authorized external order, never a model proposal.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     message: str
-    route: Route
+    route: BoundaryRoute
+    command: ExternalActionCommand | None = None
 
 
 class ConversationTurn(BaseModel):
@@ -61,4 +66,4 @@ class SessionConversationEngine:
         outcome = result.outcome
         if outcome is None:
             raise InvalidModelOutputError("turn completed without a model decision")
-        return TurnOutcome(message=outcome.message, route=outcome.route)
+        return TurnOutcome(message=outcome.message, route=outcome.route, command=outcome.command)

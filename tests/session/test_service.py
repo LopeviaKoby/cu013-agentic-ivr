@@ -162,6 +162,8 @@ async def test_operation_truth_is_durable_across_turns(service_with_model, model
         "action": "UNLOCK_ACCOUNT",
         "status": "pending",
         "delivery": None,
+        "last_progress_feedback_at": NOW,
+        "progress_feedback_index": 0,
     }
 
 

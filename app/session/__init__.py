@@ -4,6 +4,19 @@ Durable contract, ephemeral turn state and the one-read/one-write turn cycle.
 """
 
 from app.session.actions import Action
+from app.session.integration import (
+    AccountActionErrorEvent,
+    AccountActionStatusEvent,
+    IdentityValidationResultEvent,
+    IntegrationDirective,
+    IntegrationEvent,
+    IntegrationEventRejected,
+    IntegrationEventService,
+    IntegrationOperationState,
+    IntegrationOutcome,
+    VoiceInputFailureEvent,
+    project_operation_state,
+)
 from app.session.memory import (
     ACTIVE_PROMPT_POLICY,
     ACTIVE_RECENT_TURN_PAIRS,
@@ -54,6 +67,8 @@ from app.session.repository import (
 )
 from app.session.service import TurnService, consolidate
 from app.session.turns import (
+    BoundaryRoute,
+    ExternalActionCommand,
     GraphState,
     TurnGraph,
     TurnInput,
@@ -81,8 +96,11 @@ __all__ = [
     "PROMPT_POLICIES",
     "RECENT_CONVERSATION_MEMORY",
     "SESSION_BYTES_GUARD",
+    "AccountActionErrorEvent",
+    "AccountActionStatusEvent",
     "Action",
     "AuthorizedDispatch",
+    "BoundaryRoute",
     "ConfirmationChallenge",
     "ConversationGoal",
     "DeliveryStatus",
@@ -91,10 +109,18 @@ __all__ = [
     "ExperimentalSuspendedProcedure",
     "ExperimentalTurnMetrics",
     "ExperimentalTurnPair",
+    "ExternalActionCommand",
     "ExternalOperation",
     "FirestoreSessionDocumentStore",
     "GraphState",
     "IdentityState",
+    "IdentityValidationResultEvent",
+    "IntegrationDirective",
+    "IntegrationEvent",
+    "IntegrationEventRejected",
+    "IntegrationEventService",
+    "IntegrationOperationState",
+    "IntegrationOutcome",
     "OperationStatus",
     "ProcedureObservation",
     "SessionDocumentStore",
@@ -105,9 +131,11 @@ __all__ = [
     "TurnInput",
     "TurnOutcomeState",
     "TurnService",
+    "VoiceInputFailureEvent",
     "build_turn_graph",
     "consolidate",
     "memory_variant_identity",
+    "project_operation_state",
     "session_document_bytes",
     "session_record_from_document",
     "session_record_to_document",
