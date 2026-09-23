@@ -8,6 +8,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Add the `next-step-v1` pre-turn bootstrap: a valid v1 voice failure may
+  create the minimal session through a create-only precondition (never
+  overwriting a concurrent record) and advances a durable consecutive
+  voice-retry counter. No other first event creates a document, legacy gains
+  no bootstrap, and a valid persisted turn preserves the technical planes
+  while resetting the counter.
+- Add typed rejection reasons (`unknown_session`,
+  `pre_turn_event_not_allowed`, `operation_missing`, `operation_mismatch`,
+  `action_mismatch`, `dispatch_mismatch`, `revision_mismatch`,
+  `illegal_transition`, `poll_sequence_conflict`,
+  `password_presentation_conflict`) and a `(location, type)` projection of
+  validation failures; the public error taxonomy and responses are
+  unchanged.
+- Add the shared `cu013` logging topology with one stderr handler and closed
+  events (`response_contract_selected`, `turn_handled`,
+  `integration_event_received`/`accepted`/`rejected`, `http_result`,
+  `request_validation_failed`); baseline INFO carries no conversation, turn,
+  operation, trace or request identifiers, no paths and no payload values.
+- Add `load_existing` and `create_if_absent` to the thin session repository,
+  with the Firestore create-only precondition and a deterministic double.
+
 - Add the `next-step-v1` response contract: an explicit
   `CU013-Response-Contract` selector, a common
   `{message, next_step, operation_state, command}` envelope on both
@@ -192,6 +213,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Rename the response-contract selector to the canonical
+  `X-CU013-Response-Contract`; the name without `X-` is no longer read and is
+  not kept as an alias because it had no accredited real consumer. A real
+  call had been served the legacy envelope while the XCALLY switch expected
+  `next_step` (`HEADER_MISMATCH`), and its default branch transferred.
+- Derive `next_step` from the consolidated state instead of only the model
+  proposal: with a supported goal pending, no valid identity and no active
+  operation, the residual `CONTINUE` route projects onto `COLLECT_IDENTITY`
+  while the model message still answers the immediate need.
+- Bump the durable contract to v4 with `voice_retry_count` and a fail-closed
+  v3 to v4 migration; a valid turn preserves `polling` and
+  `password_presentation` instead of rebuilding the record partially.
 - Move the runtime outcome vocabulary to `NextStep`: the domain speaks the
   canonical step, the legacy adapter projects it onto `BoundaryRoute` and
   `IntegrationDirective`, and no domain logic consumes the legacy enums.

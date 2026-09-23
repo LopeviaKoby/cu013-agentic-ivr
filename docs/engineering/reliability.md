@@ -55,6 +55,19 @@ Estas invariantes complementan las transversales de la [SPEC del sistema](../spe
 - Un timeout, salida inválida o texto no admisible del composer produce silencio (`message=null`) con el estado empresarial intacto y sin segunda llamada ni re-POST.
 - La memoria textual reciente y la ventana experimental no se activan para callers reales en esta iteración.
 
+## Bootstrap de sesión y voz
+
+- La creación de una sesión desde el carril técnico usa una precondición de inexistencia (create-only); un conflicto se recarga y se aplica sobre el documento real, nunca se sobrescribe ni se convierte en 503 genérico.
+- Un fallo de persistencia del bootstrap es 503 seguro: no devuelve 200 ni deja un registro parcial.
+- El contador consecutivo de voice retry es durable, escalar y PII-safe; se reinicia sólo tras un `/turns` válido persistido. Su política de agotamiento está pendiente de decisión del owner y no se inventa.
+- Un turno válido preserva los planos técnicos (`polling`, `password_presentation`) y no reconstruye parcialmente el registro.
+
+## Logging
+
+- Un único namespace `cu013` con un handler a stderr, nivel INFO y sin propagación; los hijos (`cu013.app`, `cu013.metrics`) no añaden handlers.
+- Sólo se emiten eventos y campos cerrados. Nunca conversation ID, turn ID, operation ID, trace, request ID, rutas completas, payloads, transcripts, headers ni mensajes de excepción.
+- La proyección de un error de validación se limita a `(loc, type)`; el valor ofensor no se registra ni se devuelve.
+
 ## Errores
 
 Usar esta taxonomía mínima y estable:

@@ -38,10 +38,10 @@ X-Request-ID: <valor opaco de correlación>   (opcional)
 
 ## Selector de contrato de respuesta
 
-Header opcional:
+Header opcional canónico:
 
 ```text
-CU013-Response-Contract: next-step-v1
+X-CU013-Response-Contract: next-step-v1
 ```
 
 - La autenticación precede siempre al selector.
@@ -50,6 +50,9 @@ CU013-Response-Contract: next-step-v1
 - Header vacío, repetido o con una versión desconocida: `400` con
   `{"error": {"code": "unsupported_response_contract", "message": "unsupported response contract"}}`.
 - El selector es explícito: nunca se infiere por la existencia de `route`, `directive`, `next_step` ni por heurística alguna.
+- El nombre sin prefijo `X-` no se lee y no se conserva como alias: no tiene consumidor real acreditado. Un cliente que envíe el nombre antiguo recibe el contrato legacy (su header es ignorado), nunca el envelope v1.
+
+**Evidencia E2E (2026-09-23).** Una llamada real envió el nombre sin `X-` y recibió el envelope legacy (`route`, `turn_id`) pese a que el Switch esperaba `next_step`; el valor por defecto del Switch derivó en transferencia. El diagnóstico fue `HEADER_MISMATCH`, no un fallo de despliegue ni de la revisión servida.
 
 ## Contrato next-step-v1
 
@@ -107,6 +110,10 @@ Proyecciones por endpoint:
 | operación fallida o reset ya presentado | `LISTEN` |
 | presupuesto de polling agotado | `TRANSFER` |
 | `IDENTITY_INPUT_FAILURE` o máximo de fallos de identidad | `TRANSFER` |
+
+**Precedencia de estado (owner decision).** El runtime deriva `next_step` del estado consolidado, no sólo de la propuesta del modelo. Con un goal soportado pendiente, identidad no válida y ninguna operación activa, el `CONTINUE` residual se proyecta a `COLLECT_IDENTITY`: el mensaje del modelo sigue respondiendo la necesidad inmediata y el goal se conserva, pero XCALLY recibe la capacidad que el estado exige. Los guards de `COMPLETE` y `ESCALATE` conservan su precedencia.
+
+**Bootstrap pre-turno (next-step-v1).** Un `VOICE_INPUT_FAILURE` v1 válido puede crear la sesión ausente con un documento mínimo (`turn_count=0`, sin goal, sin identidad, sin challenge, sin dispatch ni operación) mediante un create condicional; nunca sobrescribe un documento concurrente. Cualquier otro primer evento produce `409` y cero escrituras, y el carril legacy no gana bootstrap. Mientras la sesión siga pre-turno, sólo un voice failure v1 se aplica; identidad, acción y password se rechazan con `409 pre_turn_event_not_allowed`. Un `/turns` válido posterior continúa la misma sesión y cierra el ciclo de reintentos.
 
 ## Turno conversacional — `POST /turns`
 
@@ -482,13 +489,23 @@ El shape exacto de errores que Cally Square interpreta sigue pendiente de eviden
 - El composer de feedback recibe sólo la proyección PII-safe descrita y nunca transcript, memoria textual, documento, fecha, identidad, `operation_id`, body RD, status desconocido crudo, contraseña ni email.
 - La memoria textual reciente y la ventana experimental no se activan para callers reales en esta iteración; el path productivo no persiste transcript.
 
+## Observabilidad
+
+- Un único namespace padre `cu013` con un `StreamHandler` a stderr, nivel INFO y sin propagación al root; `cu013.app` y `cu013.metrics` son hijos sin handlers propios. Cloud Run recoge stdout/stderr sin SDK ni agente.
+- Eventos cerrados: `response_contract_selected` (lane, response_contract), `turn_handled` (lane, response_contract, next_step), `integration_event_received` (lane, response_contract, event_type), `integration_event_accepted` (event_type, next_step, operation_state), `integration_event_rejected` (event_type, normalized_rejection_reason), `http_result` (lane, response_contract, http_status) y `request_validation_failed` (lane, facts de `loc`/`type`).
+- El baseline INFO no incluye conversation ID, turn ID, operation ID, trace, request ID ni rutas completas. Los rechazos usan un vocabulario cerrado (`unknown_session`, `pre_turn_event_not_allowed`, `operation_missing`, `operation_mismatch`, `action_mismatch`, `dispatch_mismatch`, `revision_mismatch`, `illegal_transition`, `poll_sequence_conflict`, `password_presentation_conflict`) y nunca el texto libre.
+- Una validación fallida registra sólo la ubicación y el tipo (`body.transcript:missing`, `ACCOUNT_ACTION_STATUS.email:extra_forbidden`, `body:json_invalid`), jamás el valor, el mensaje ni el contexto. Los responses públicos mantienen su taxonomía contractual.
+
 ## Persistencia
 
 - Reutiliza el Thin Firestore Session Repository de [ADR-0009](../decisions/0009-use-thin-firestore-session-repository.md): un load, el modelo dentro del grafo LangGraph en RAM sin persistent checkpointer y un save antes del HTTP response.
 - El grafo del turno es `START → run_model → advance_turn → END`; la consolidación durable excluye transcript y decisión del modelo.
 - `/integration-events` no usa el grafo ni el modelo conversacional: un load y, sólo si el evento muta estado, un save. No incrementa `turn_count` ni `revision`. La única llamada de modelo posible es la redacción estrecha de feedback de espera.
 - `external_operation` conserva la metadata técnica mínima de anti-silencio legacy (`last_progress_feedback_at`, `progress_feedback_index`).
-- El contrato durable es la versión 3. Añade dos planos separados: `polling` (operación, `started_at`, `observation_limit`, receipts de `sequence` + fingerprint SHA-256, `last_feedback_attempt_at` y hasta dos mensajes validados) y `password_presentation` (operación, acción, revisión, `voice`, `email_requested`, aceptación y entrega). Los documentos v1 y v2 migran en memoria fail-closed; un v2 con `delivery` no nulo se traduce sin reinterpretarlo y cualquier campo fuera del whitelist cerrado se rechaza.
+- El contrato durable es la versión 4. Añade planos separados: `polling` (operación, `started_at`, `observation_limit`, receipts de `sequence` + fingerprint SHA-256, `last_feedback_attempt_at` y hasta dos mensajes validados), `password_presentation` (operación, acción, revisión, `voice`, `email_requested`, aceptación y entrega) y `voice_retry_count`, el contador escalar, consecutivo y PII-safe de voice failures. Los documentos v1, v2 y v3 migran en memoria fail-closed; un v2 con `delivery` no nulo se traduce sin reinterpretarlo y cualquier campo fuera del whitelist cerrado se rechaza.
+- `voice_retry_count` empieza en 0, avanza con cada voice failure recibido y se reinicia a 0 sólo tras un `/turns` válido y persistido. No conserva reason ni texto, no reutiliza intentos de identidad, `turn_count`, `revision` ni la secuencia de polling, y no impone hoy un máximo: la política de agotamiento sigue pendiente de decisión del owner.
+- El bootstrap usa exclusivamente un create condicional (precondición de inexistencia); nunca un `set()` sobre un identificador que parecía ausente. Un conflicto de create no es un 503: se recarga el documento real y el evento se aplica sobre él.
+- Un `/turns` válido preserva `polling` y `password_presentation` del registro previo y sólo reinicia el contador de voz; no reconstruye parcialmente el documento.
 - El contrato de transporte (legacy o v1) no es estado durable: no se persiste.
 - **Precaución operativa.** Una revisión estable antigua no puede leer documentos v3. Durante la ventana E2E todos los bloques CU013 deben usar la tag URL, sin mezclar requests al hostname estable y al etiquetado en una misma llamada; no se promueve tráfico ni se declara rollback productivo compatible con sesiones v3 hasta diseñarlo explícitamente.
 

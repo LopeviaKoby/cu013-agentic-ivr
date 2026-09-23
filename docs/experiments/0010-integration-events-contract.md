@@ -178,6 +178,47 @@ a nivel de revisión, tag `e2e-4b72dfa` reasignado a la nueva revisión y la
 misma tag URL consumida por XCALLY; la revisión estable conserva el 100% del
 tráfico y el mínimo de servicio no cambia.
 
+## Evidencia E2E de llamadas reales (2026-09-23)
+
+Llamadas ejecutadas por el owner contra la tag `e2e-4b72dfa` (revisión
+`cu013-runtime-dev-00028-6rb`, digest `sha256:8cf04d98…`, commit `3d4b503`).
+Hechos observados en Cloud Run (request logs + stdout), sin transcript ni
+payloads:
+
+| Hora UTC | Endpoint | Resultado | Lectura |
+|---|---|---|---|
+| 14:01:52 | `/integration-events` | 409 | evento técnico sin turno previo: `unknown_session` |
+| 14:52:32 | `/turns` | 422 | body fuera del contrato cerrado |
+| 15:32:31 | `/turns` | 422 | body fuera del contrato cerrado |
+| 15:50:15 | `/turns` | 200 legacy, 1,2105 s | sesión creada; envelope legacy servido |
+
+Evidencia durable aportada por el owner para `Ivr01-1790178599.346002`
+(documento v3 en ese momento): `turn_count=1`, `revision=1`, goal
+`UNLOCK_ACCOUNT` revisión 1, identidad no validada y cero fallos, sin
+challenge, dispatch ni operación. El model decision creó correctamente el
+goal; el runtime devolvió `LISTEN/CONTINUE` en vez de exigir
+`COLLECT_IDENTITY`.
+
+Diagnóstico cerrado: **`HEADER_MISMATCH`**. La request llegó a la revisión
+correcta y esa revisión sólo reconoce `X-CU013-Response-Contract`; el flujo
+real no seleccionó el contrato v1 (nombre sin `X-` o ausencia de selector), la
+respuesta fue el envelope legacy, el Switch de XCALLY no encontró `next_step`
+y su rama por defecto derivó en transferencia. Ese hecho **no** es atención
+humana ni un handoff del runtime.
+
+Gaps de observabilidad detectados en la misma ventana: las líneas INFO de
+aplicación (`turn handled`, motivo del rechazo) no llegaban a Cloud Logging
+porque el root logger no tenía handler y sólo `cu013.metrics` configuraba el
+suyo; la request log sí permitía correlacionar por URL y trace.
+
+Correcciones implementadas en esta iteración: header canónico
+`X-CU013-Response-Contract` sin alias, `next_step` derivado del estado
+consolidado (goal pendiente sin autorización exige `COLLECT_IDENTITY`),
+bootstrap pre-turno v1 con create condicional y contador de voice retry,
+rejection reasons tipados, proyección segura de 422 y topología de logging
+`cu013` con eventos cerrados. La semántica externa de polling, presentación de
+contraseña, RD/TIVIT y SendMail sigue pendiente de evidencia.
+
 ## Trazabilidad
 
 - [Boundary HTTP XCALLY ↔ CU013](../specs/xcally-boundary.md)
