@@ -69,6 +69,21 @@ def test_model_facing_contract_never_exposes_execute_action() -> None:
     assert "EXECUTE_ACTION" not in strict_schema
 
 
+def test_model_facing_contract_never_exposes_next_step() -> None:
+    """The model cannot decide the next step: the runtime owns it."""
+    import json
+
+    from app.conversation.gemini import active_conversation_baseline, response_schema_for
+    from app.session.turns import ModelTurnDecision
+
+    decision_schema = json.dumps(ModelTurnDecision.model_json_schema())
+    strict_schema = json.dumps(response_schema_for(active_conversation_baseline()))
+    for schema in (decision_schema, strict_schema):
+        assert "next_step" not in schema
+        for step in ("POLL_RD", "DELIVER_PASSWORD", "TRANSFER", "LISTEN"):
+            assert step not in schema
+
+
 def test_command_only_exists_with_execute_action() -> None:
     command = ExternalActionCommand(
         operation_id="operation-1", action="UNLOCK_ACCOUNT", goal_revision=1

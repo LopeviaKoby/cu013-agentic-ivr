@@ -5,11 +5,11 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.conversation.errors import InvalidModelOutputError
+from app.session.outcome import NextStep
 from app.session.service import TurnService
-from app.session.turns import BoundaryRoute, ExternalActionCommand, TurnInput
+from app.session.turns import ExternalActionCommand, TurnInput
 
 __all__ = [
-    "BoundaryRoute",
     "ConversationEngine",
     "ConversationTurn",
     "SessionConversationEngine",
@@ -18,7 +18,7 @@ __all__ = [
 
 
 class TurnOutcome(BaseModel):
-    """Conversational result for one turn; the engine owns message and route.
+    """Conversational result for one turn; the engine owns message and step.
 
     ``command`` travels only with ``EXECUTE_ACTION``: it is the runtime's
     authorized external order, never a model proposal.
@@ -27,7 +27,7 @@ class TurnOutcome(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     message: str
-    route: BoundaryRoute
+    next_step: NextStep
     command: ExternalActionCommand | None = None
 
 
@@ -66,4 +66,6 @@ class SessionConversationEngine:
         outcome = result.outcome
         if outcome is None:
             raise InvalidModelOutputError("turn completed without a model decision")
-        return TurnOutcome(message=outcome.message, route=outcome.route, command=outcome.command)
+        return TurnOutcome(
+            message=outcome.message, next_step=outcome.next_step, command=outcome.command
+        )

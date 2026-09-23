@@ -9,6 +9,8 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from app.session.feedback import PollingFeedbackRequest
+from app.session.outcome import NextStep
 from app.session.record import (
     Action,
     AuthorizedDispatch,
@@ -21,7 +23,6 @@ from app.session.record import (
     SessionRecord,
 )
 from app.session.turns import (
-    BoundaryRoute,
     GraphState,
     ModelTurnDecision,
     Route,
@@ -67,6 +68,21 @@ class InMemorySessionDocumentStore:
         if self.fail_writes:
             raise RuntimeError("injected session write failure")
         self.documents[conversation_id] = dict(document)
+
+
+class FakePollingFeedbackComposer:
+    """Deterministic composer double; records calls, returns a canned message."""
+
+    def __init__(self) -> None:
+        self.calls: list[PollingFeedbackRequest] = []
+        self.message: str | None = None
+        self.error: Exception | None = None
+
+    async def compose(self, request: PollingFeedbackRequest) -> str | None:
+        self.calls.append(request)
+        if self.error is not None:
+            raise self.error
+        return self.message
 
 
 class FakeTurnModel:
@@ -186,7 +202,7 @@ def make_decision(**overrides: object) -> ModelTurnDecision:
 
 
 def make_outcome(**overrides: object) -> TurnOutcomeState:
-    values: dict[str, object] = {"message": "synthetic message", "route": BoundaryRoute.CONTINUE}
+    values: dict[str, object] = {"message": "synthetic message", "next_step": NextStep.LISTEN}
     values.update(overrides)
     return TurnOutcomeState.model_validate(values)
 

@@ -106,18 +106,35 @@ async def test_dispatch_without_identity_never_emits_a_command(client, model, st
     assert store.documents["conversation-1"]["dispatch"] is None
 
 
-async def test_valid_identity_without_confirmation_never_emits_a_command(
-    client, model, store
-) -> None:
+async def test_valid_identity_opens_the_challenge_before_any_command(client, model, store) -> None:
+    """The runtime, not a second model call, presents the confirmation.
+
+    Valid identity keeps the goal and its revision, opens the specific
+    challenge and answers with the action-specific confirmation; only the
+    caller's later affirmative can authorize the dispatch.
+    """
+    from app.session.integration import UNLOCK_CONFIRMATION_MESSAGE
+
     await _start_goal(client, model)
-    await _validate_identity(client)
+    validated = await client.post(
+        integration_events_url("conversation-1"), json=_identity_valid_body()
+    )
+    assert validated.status_code == 200
+    assert validated.json()["message"] == UNLOCK_CONFIRMATION_MESSAGE
+    document = store.documents["conversation-1"]
+    assert document["confirmation"] is not None
+    assert document["confirmation"]["action"] == "UNLOCK_ACCOUNT"
+    assert document["confirmation"]["goal_revision"] == 1
+    assert document["dispatch"] is None
+
     model.decision = make_decision(route="CONTINUE", confirmation_observation="AFFIRMATIVE")
     response = await client.post(
         turns_url("conversation-1"), json={"transcript": CONFIRMATION_TRANSCRIPT}
     )
     assert response.status_code == 200
-    assert response.json()["command"] is None
-    assert store.documents["conversation-1"]["dispatch"] is None
+    assert response.json()["route"] == "EXECUTE_ACTION"
+    assert response.json()["command"] is not None
+    assert store.documents["conversation-1"]["dispatch"] is not None
 
 
 async def test_ambiguous_confirmation_never_emits_a_command(client, model, store) -> None:

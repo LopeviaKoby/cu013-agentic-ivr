@@ -21,6 +21,7 @@ from app.session.integration import (
     PROGRESS_MESSAGES,
     RESET_CONFIRMED_MESSAGE,
     UNLOCK_COMPLETED_MESSAGE,
+    UNLOCK_CONFIRMATION_MESSAGE,
     VOICE_RETRY_MESSAGES,
     AccountActionErrorEvent,
     AccountActionStatusEvent,
@@ -33,6 +34,7 @@ from app.session.integration import (
     VoiceInputFailureEvent,
 )
 from app.session.metrics import RecordingTurnMetrics
+from app.session.outcome import NextStep
 from app.session.record import (
     MAX_CALLER_IDENTITY_FAILURES,
     OperationStatus,
@@ -134,7 +136,7 @@ async def test_unknown_conversation_is_rejected_without_writing() -> None:
     assert store.writes == 0
 
 
-async def test_identity_valid_marks_authorization_without_touching_turns() -> None:
+async def test_identity_valid_keeps_the_goal_and_opens_the_confirmation() -> None:
     store = InMemorySessionDocumentStore()
     _seed(
         store,
@@ -142,27 +144,49 @@ async def test_identity_valid_marks_authorization_without_touching_turns() -> No
     )
     outcome = await _service(store).handle_event("conversation-1", _identity_event("VALID"))
     assert outcome.directive is IntegrationDirective.RESUME_CONVERSATION
-    assert outcome.message == IDENTITY_VALID_MESSAGE
+    assert outcome.next_step is NextStep.LISTEN
+    assert outcome.message == UNLOCK_CONFIRMATION_MESSAGE
     assert outcome.operation_state is None
     stored = _stored(store)
     assert stored.identity.validated_at == NOW
     assert stored.identity.caller_failures == 0
     assert stored.turn_count == 2
     assert stored.revision == 2
+    assert stored.goal is not None and stored.goal.revision == 1
+    assert stored.confirmation is not None
+    assert stored.confirmation.action is Action.UNLOCK_ACCOUNT
+    assert stored.confirmation.goal_revision == 1
+    assert stored.confirmation.identity_validated_at == NOW
 
 
-async def test_identity_valid_clears_a_previous_challenge() -> None:
+async def test_identity_valid_replaces_a_previous_challenge_with_a_fresh_one() -> None:
     store = InMemorySessionDocumentStore()
     _seed(
         store,
         make_record(
             goal=make_goal(Action.UNLOCK_ACCOUNT, revision=1),
             identity=make_identity(),
-            confirmation=make_challenge(Action.UNLOCK_ACCOUNT, revision=1),
+            confirmation=make_challenge(
+                Action.UNLOCK_ACCOUNT, revision=1, challenge_id="challenge-old"
+            ),
         ),
     )
     await _service(store).handle_event("conversation-1", _identity_event("VALID"))
-    assert _stored(store).confirmation is None
+    confirmation = _stored(store).confirmation
+    assert confirmation is not None
+    assert confirmation.challenge_id != "challenge-old"
+
+
+async def test_identity_valid_without_a_goal_invents_none() -> None:
+    store = InMemorySessionDocumentStore()
+    _seed(store, make_record(goal=None, identity=make_identity()))
+    outcome = await _service(store).handle_event("conversation-1", _identity_event("VALID"))
+    assert outcome.message == IDENTITY_VALID_MESSAGE
+    assert outcome.next_step is NextStep.LISTEN
+    stored = _stored(store)
+    assert stored.goal is None
+    assert stored.confirmation is None
+    assert stored.identity.validated_at == NOW
 
 
 async def test_identity_invalid_counts_caller_failures_until_handoff() -> None:

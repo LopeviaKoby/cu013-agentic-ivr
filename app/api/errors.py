@@ -54,6 +54,26 @@ class ConflictOrDuplicateError(ApiError):
     public_message = "event cannot be correlated with the conversation"
 
 
+class UnsupportedResponseContractError(ApiError):
+    """The response-contract selector is empty, repeated or unknown."""
+
+    code = ErrorCode.UNSUPPORTED_RESPONSE_CONTRACT
+    status_code = 400
+    public_message = "unsupported response contract"
+
+
+class PayloadValidationError(ApiError):
+    """The selected closed request contract rejected the payload.
+
+    Used when the body is parsed after the contract selector; it renders the
+    same safe validation envelope and never echoes the payload.
+    """
+
+    code = ErrorCode.VALIDATION
+    status_code = 422
+    public_message = "request validation failed"
+
+
 class DependencyTimeoutError(ApiError):
     """An external dependency exceeded its deadline."""
 

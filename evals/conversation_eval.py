@@ -72,6 +72,7 @@ from app.session.memory import (
     window_bytes,
 )
 from app.session.metrics import RecordingTurnMetrics
+from app.session.outcome import legacy_route_value
 from app.session.record import (
     Action,
     AuthorizedDispatch,
@@ -443,7 +444,9 @@ def _observe_turn(
     memory_decode_ms: float | None,
     memory_render_ms: float | None,
 ) -> TurnObservation:
-    runtime_route = outcome.route.value if outcome is not None else None
+    # The corpus oracles use the legacy route vocabulary; the domain outcome
+    # speaks NextStep and this projection is the single mapping between them.
+    runtime_route = legacy_route_value(outcome.next_step) if outcome is not None else None
     confirmation_state, conclusion = confirmation_transition(
         state_before,
         state_after,

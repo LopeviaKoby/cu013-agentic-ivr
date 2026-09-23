@@ -23,7 +23,17 @@ from app.session.integration import (
     IntegrationEvent,
     IntegrationOperationState,
 )
+from app.session.outcome import NextStep, legacy_route_value
 from app.session.turns import BoundaryRoute, ExternalActionCommand
+
+
+def legacy_route_for(next_step: NextStep) -> BoundaryRoute:
+    """Project one domain step onto the legacy ``route`` vocabulary.
+
+    Only the conversational steps are representable; the polling and password
+    steps never occur on the ``/turns`` lane.
+    """
+    return BoundaryRoute(legacy_route_value(next_step))
 
 
 class TranscriptTurn(BaseModel):
@@ -81,6 +91,7 @@ class ErrorCode(StrEnum):
     VALIDATION = "validation"
     AUTHORIZATION = "authorization"
     CONFLICT_OR_DUPLICATE = "conflict_or_duplicate"
+    UNSUPPORTED_RESPONSE_CONTRACT = "unsupported_response_contract"
     DEPENDENCY_TIMEOUT = "dependency_timeout"
     DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
     INTERNAL = "internal"

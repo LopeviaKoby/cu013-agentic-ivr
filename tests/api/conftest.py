@@ -14,7 +14,12 @@ from app.session.repository import SessionRepository
 from app.session.service import TurnService
 from app.session.turns import build_turn_graph
 from tests.api.doubles import SYNTHETIC_API_KEY
-from tests.session.doubles import FakeTurnModel, FrozenClock, InMemorySessionDocumentStore
+from tests.session.doubles import (
+    FakePollingFeedbackComposer,
+    FakeTurnModel,
+    FrozenClock,
+    InMemorySessionDocumentStore,
+)
 
 BASE_URL = "http://testserver"
 
@@ -50,10 +55,15 @@ def engine(service: TurnService) -> SessionConversationEngine:
 
 
 @pytest.fixture
+def composer() -> FakePollingFeedbackComposer:
+    return FakePollingFeedbackComposer()
+
+
+@pytest.fixture
 def integration_events(
-    repository: SessionRepository, clock: FrozenClock
+    repository: SessionRepository, clock: FrozenClock, composer: FakePollingFeedbackComposer
 ) -> IntegrationEventService:
-    return IntegrationEventService(repository, clock=clock)
+    return IntegrationEventService(repository, clock=clock, composer=composer)
 
 
 @pytest.fixture

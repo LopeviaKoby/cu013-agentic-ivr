@@ -14,8 +14,8 @@ import pytest
 
 from app.session.integration import (
     IDENTITY_TECHNICAL_FAILURE_MESSAGE,
-    IDENTITY_VALID_MESSAGE,
     UNLOCK_COMPLETED_MESSAGE,
+    UNLOCK_CONFIRMATION_MESSAGE,
 )
 from app.session.record import session_record_to_document
 from tests.api.doubles import integration_events_url, turns_url
@@ -230,7 +230,7 @@ async def test_identity_valid_returns_a_safe_directive_without_a_model_call(
     assert set(body) == {"acknowledged", "operation_state", "directive", "message"}
     assert body["acknowledged"] is True
     assert body["directive"] == "RESUME_CONVERSATION"
-    assert body["message"] == IDENTITY_VALID_MESSAGE
+    assert body["message"] == UNLOCK_CONFIRMATION_MESSAGE
     assert body["operation_state"] is None
     assert model.calls == []
 

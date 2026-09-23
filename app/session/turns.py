@@ -35,6 +35,7 @@ from app.session.memory import (
     make_pair,
     render_memory_block,
 )
+from app.session.outcome import NextStep
 from app.session.record import (
     AuthorizedDispatch,
     ConfirmationChallenge,
@@ -65,11 +66,12 @@ class Route(StrEnum):
 
 
 class BoundaryRoute(StrEnum):
-    """Route the boundary emits: the model-facing routes plus EXECUTE_ACTION.
+    """Legacy wire vocabulary kept only for the legacy serializer.
 
-    The model-facing contract stays the closed four-value ``Route``; the
-    runtime alone creates ``EXECUTE_ACTION`` when it persists a legal
-    dispatch guard.
+    The runtime outcome speaks ``NextStep``; the legacy adapter projects it
+    onto this closed enum. The model-facing contract stays the closed
+    four-value ``Route``, and the runtime alone creates ``EXECUTE_ACTION``
+    when it persists a legal dispatch guard.
     """
 
     CONTINUE = "CONTINUE"
@@ -77,6 +79,14 @@ class BoundaryRoute(StrEnum):
     COMPLETE = "COMPLETE"
     ESCALATE = "ESCALATE"
     EXECUTE_ACTION = "EXECUTE_ACTION"
+
+
+_NEXT_STEP_BY_MODEL_ROUTE: dict[Route, NextStep] = {
+    Route.CONTINUE: NextStep.LISTEN,
+    Route.COLLECT_IDENTITY: NextStep.COLLECT_IDENTITY,
+    Route.COMPLETE: NextStep.COMPLETE,
+    Route.ESCALATE: NextStep.TRANSFER,
+}
 
 
 class GoalIntent(StrEnum):
@@ -224,20 +234,26 @@ class ExternalActionCommand(BaseModel):
 
 
 class TurnOutcomeState(BaseModel):
-    """Runtime-validated outcome the boundary may emit; safe by construction."""
+    """Runtime-validated outcome the boundary may emit; safe by construction.
+
+    The runtime decides ``next_step``; the conversational model cannot: it only
+    proposes the four conversational routes and the runtime maps them after
+    every legality check. ``command`` exists if and only if the step is
+    ``EXECUTE_ACTION`` and the durable guard was already persisted.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     message: str = Field(min_length=1)
-    route: BoundaryRoute
+    next_step: NextStep
     command: ExternalActionCommand | None = None
     violations: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _command_only_with_execute_action(self) -> Self:
-        if self.command is not None and self.route is not BoundaryRoute.EXECUTE_ACTION:
+        if self.command is not None and self.next_step is not NextStep.EXECUTE_ACTION:
             raise ValueError("command is only valid with EXECUTE_ACTION")
-        if self.route is BoundaryRoute.EXECUTE_ACTION and self.command is None:
+        if self.next_step is NextStep.EXECUTE_ACTION and self.command is None:
             raise ValueError("EXECUTE_ACTION requires a command")
         return self
 
@@ -642,7 +658,7 @@ def _guard_outcome(
     if identity.requires_handoff():
         return TurnOutcomeState(
             message=ESCALATION_MESSAGE,
-            route=BoundaryRoute.ESCALATE,
+            next_step=NextStep.TRANSFER,
             violations=tuple(violations),
         )
     if decision is None:
@@ -650,10 +666,12 @@ def _guard_outcome(
     if violations:
         return TurnOutcomeState(
             message=SAFE_FALLBACK_MESSAGE,
-            route=BoundaryRoute.CONTINUE,
+            next_step=NextStep.LISTEN,
             violations=tuple(violations),
         )
-    return TurnOutcomeState(message=decision.message, route=BoundaryRoute(decision.route.value))
+    return TurnOutcomeState(
+        message=decision.message, next_step=_NEXT_STEP_BY_MODEL_ROUTE[decision.route]
+    )
 
 
 def advance_turn(state: GraphState) -> TurnDelta:
@@ -749,7 +767,7 @@ def advance_turn(state: GraphState) -> TurnDelta:
         # any violation remains recorded as evidence.
         outcome = TurnOutcomeState(
             message=PROCESSING_MESSAGE,
-            route=BoundaryRoute.EXECUTE_ACTION,
+            next_step=NextStep.EXECUTE_ACTION,
             command=ExternalActionCommand(
                 operation_id=dispatch.operation_id,
                 action=dispatch.action,

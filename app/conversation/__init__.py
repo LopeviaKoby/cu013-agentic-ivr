@@ -5,14 +5,12 @@ engine contract is the only extension point for the Gemini iteration.
 """
 
 from app.conversation.engine import (
-    BoundaryRoute,
     ConversationEngine,
     ConversationTurn,
     TurnOutcome,
 )
 
 __all__ = [
-    "BoundaryRoute",
     "ConversationEngine",
     "ConversationTurn",
     "TurnOutcome",
