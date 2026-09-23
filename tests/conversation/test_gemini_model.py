@@ -482,3 +482,91 @@ def test_active_config_uses_single_baseline_prompt() -> None:
     client = FakeGenaiClient()
     base_model = GeminiTurnModel(client, make_baseline())  # type: ignore[arg-type]
     assert base_model._config().system_instruction == SYSTEM_INSTRUCTIONS
+
+
+# --- narrow polling feedback composer ---------------------------------------
+
+
+def make_composer(client: FakeGenaiClient, *, metrics: RecordingTurnMetrics | None = None):  # type: ignore[no-untyped-def]
+    from app.conversation.gemini import GeminiPollingFeedbackComposer
+
+    return GeminiPollingFeedbackComposer(client, make_baseline(), metrics=metrics)  # type: ignore[arg-type]
+
+
+def feedback_request():  # type: ignore[no-untyped-def]
+    from app.session.feedback import (
+        FeedbackObservationKind,
+        FeedbackOperationState,
+        PollingFeedbackRequest,
+    )
+
+    return PollingFeedbackRequest(
+        action=Action.UNLOCK_ACCOUNT,
+        goal_revision=2,
+        confirmation_obtained=True,
+        operation_state=FeedbackOperationState.PENDING,
+        observation_kind=FeedbackObservationKind.PENDING,
+        poll_sequence=3,
+        observations_used=3,
+        observation_limit=9,
+        previous_messages=("Sigo con tu solicitud.",),
+    )
+
+
+async def test_feedback_composer_calls_once_and_returns_the_message() -> None:
+    from app.conversation.gemini import PollingFeedbackOutput
+    from app.conversation.prompts import POLLING_FEEDBACK_INSTRUCTIONS
+
+    client = FakeGenaiClient()
+    client.response = FakeResponse('{"message": "Sigo con tu solicitud."}')
+    composer = make_composer(client)
+    message = await composer.compose(feedback_request())
+    assert message == "Sigo con tu solicitud."
+    assert len(client.calls) == 1
+    _, contents, config = client.calls[0]
+    assert config.system_instruction == POLLING_FEEDBACK_INSTRUCTIONS  # type: ignore[attr-defined]
+    assert config.response_schema is PollingFeedbackOutput  # type: ignore[attr-defined]
+    assert "UNLOCK_ACCOUNT" in contents
+    assert "PENDING" in contents
+    assert "Sigo con tu solicitud." in contents
+
+
+async def test_feedback_contents_never_carry_pii_or_internal_ids() -> None:
+    from app.conversation.gemini import feedback_contents_for
+
+    contents = feedback_contents_for(feedback_request())
+    for canary in (
+        "operation-1",
+        "SYNTHETIC-DOC-0000",
+        "1900-01-01-SYNTHETIC",
+        "SYNTHETIC-PASSWORD-0000",
+        "SYNTHETIC-TRANSCRIPT-0000",
+        "synthetic@example.test",
+    ):
+        assert canary not in contents
+
+
+async def test_feedback_composer_invalid_output_is_a_safe_failure() -> None:
+    client = FakeGenaiClient()
+    client.response = FakeResponse('{"message": "", "next_step": "COMPLETE"}')
+    composer = make_composer(client)
+    with pytest.raises(InvalidModelOutputError):
+        await composer.compose(feedback_request())
+
+
+async def test_feedback_composer_transport_errors_are_classified() -> None:
+    client = FakeGenaiClient()
+    client.error = TimeoutError()
+    composer = make_composer(client)
+    with pytest.raises(ModelTimeoutError):
+        await composer.compose(feedback_request())
+
+
+async def test_feedback_composer_records_its_own_segment_and_tokens() -> None:
+    client = FakeGenaiClient()
+    client.response = FakeResponse('{"message": "ok"}', usage=FakeUsage())
+    metrics = RecordingTurnMetrics()
+    composer = make_composer(client, metrics=metrics)
+    await composer.compose(feedback_request())
+    assert [name for name, _ in metrics.segments] == ["feedback_model"]
+    assert dict(metrics.counters) == {"feedback_total_tokens": 19}

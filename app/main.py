@@ -16,7 +16,11 @@ from google.genai.types import HttpOptions
 
 from app.api.app import create_app
 from app.conversation.engine import SessionConversationEngine
-from app.conversation.gemini import GeminiBaseline, GeminiTurnModel
+from app.conversation.gemini import (
+    GeminiBaseline,
+    GeminiPollingFeedbackComposer,
+    GeminiTurnModel,
+)
 from app.session.integration import IntegrationEventService
 from app.session.metrics import StructuredLogTurnMetrics, TurnMetrics
 from app.session.repository import FirestoreSessionDocumentStore, SessionRepository
@@ -47,7 +51,10 @@ def build_app(*, metrics: TurnMetrics | None = None) -> FastAPI:
         build_turn_graph(model=model),
         metrics=effective_metrics,
     )
-    integration_events = IntegrationEventService(repository, metrics=effective_metrics)
+    composer = GeminiPollingFeedbackComposer(genai_client, baseline, metrics=effective_metrics)
+    integration_events = IntegrationEventService(
+        repository, metrics=effective_metrics, composer=composer
+    )
     app = create_app(
         engine=SessionConversationEngine(service), integration_events=integration_events
     )

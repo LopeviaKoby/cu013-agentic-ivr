@@ -35,14 +35,15 @@ from google.genai.types import (
     ThinkingConfig,
     ThinkingLevel,
 )
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.conversation.errors import (
     InvalidModelOutputError,
     ModelTimeoutError,
     ModelUnavailableError,
 )
-from app.conversation.prompts import SYSTEM_INSTRUCTIONS
+from app.conversation.prompts import POLLING_FEEDBACK_INSTRUCTIONS, SYSTEM_INSTRUCTIONS
+from app.session.feedback import PollingFeedbackRequest
 from app.session.metrics import NullTurnMetrics, TurnMetrics
 from app.session.record import (
     ConfirmationChallenge,
@@ -227,6 +228,49 @@ def parse_decision(text: str) -> ModelTurnDecision:
         raise InvalidModelOutputError("model output violated the decision contract") from exc
 
 
+class PollingFeedbackOutput(BaseModel):
+    """The only field the narrow feedback composer may return."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    message: str = Field(min_length=1)
+
+
+def parse_feedback_output(text: str) -> PollingFeedbackOutput:
+    """Validate the composer JSON against its one-field contract."""
+    try:
+        return PollingFeedbackOutput.model_validate_json(text)
+    except ValidationError as exc:
+        raise InvalidModelOutputError("feedback output violated its contract") from exc
+
+
+def feedback_contents_for(request: PollingFeedbackRequest) -> str:
+    """Render the closed PII-safe projection the composer may see.
+
+    Only semantic operation facts travel: no transcript, no textual caller or
+    assistant memory, no identity values or timestamps, no ``operation_id``, no
+    RD body, no raw unknown status, no password, no email.
+    """
+    previous = (
+        "\n".join(f"- {message}" for message in request.previous_messages)
+        if request.previous_messages
+        else "(ninguno)"
+    )
+    return (
+        "Estado de la operación:\n"
+        f"accion: {request.action.value}\n"
+        f"revision: {request.goal_revision}\n"
+        f"confirmacion_obtenida: {'sí' if request.confirmation_obtained else 'no'}\n"
+        f"estado: {request.operation_state.value}\n"
+        f"observacion: {request.observation_kind.value}\n"
+        f"secuencia: {request.poll_sequence}\n"
+        f"observaciones_usadas: {request.observations_used} "
+        f"de {request.observation_limit}\n"
+        "mensajes_previos:\n"
+        f"{previous}"
+    )
+
+
 def _classify_transport_error(exc: Exception) -> Exception | None:
     """Map SDK transport errors by type name without importing httpx/httpx2."""
     for base in type(exc).__mro__:
@@ -355,3 +399,70 @@ class GeminiTurnModel:
         thoughts = getattr(usage, "thoughts_token_count", None)
         if thoughts is not None:
             self._metrics.record_counter("reasoning_tokens", thoughts)
+
+
+class GeminiPollingFeedbackComposer:
+    """Narrow Vertex AI adapter for one waiting-feedback message.
+
+    It receives only the closed PII-safe projection, returns only a message and
+    can never decide the next step, authorize, dispatch or touch identity.
+    Exactly one call per invocation, no streaming, no tools, no hidden retries;
+    a timeout or invalid output stays a failure the runtime turns into silence.
+    """
+
+    def __init__(
+        self,
+        client: Client,
+        baseline: GeminiBaseline,
+        *,
+        metrics: TurnMetrics | None = None,
+    ) -> None:
+        self._client = client
+        self._baseline = baseline
+        self._metrics: TurnMetrics = metrics or NullTurnMetrics()
+
+    async def compose(self, request: PollingFeedbackRequest) -> str | None:
+        start = time.monotonic()
+        try:
+            try:
+                response = await self._client.aio.models.generate_content(
+                    model=self._baseline.model,
+                    contents=feedback_contents_for(request),
+                    config=self._config(),
+                )
+            except APIError as exc:
+                raise ModelUnavailableError("vertex ai request failed") from exc
+            except Exception as exc:
+                classified = _classify_transport_error(exc)
+                if classified is not None:
+                    raise classified from exc
+                raise
+        finally:
+            self._metrics.record_segment("feedback_model", (time.monotonic() - start) * 1000.0)
+        usage = response.usage_metadata
+        if usage is not None and usage.total_token_count is not None:
+            self._metrics.record_counter("feedback_total_tokens", usage.total_token_count)
+        try:
+            text = response.text
+        except ValueError as exc:
+            raise InvalidModelOutputError("feedback model produced no text") from exc
+        if text is None:
+            raise InvalidModelOutputError("feedback model produced no text")
+        return parse_feedback_output(text).message
+
+    def _config(self) -> GenerateContentConfig:
+        baseline = self._baseline
+        if baseline.thinking_level is not None:
+            thinking = ThinkingConfig(thinking_level=ThinkingLevel(baseline.thinking_level))
+        else:
+            thinking = ThinkingConfig(thinking_budget=baseline.thinking_budget)
+        return GenerateContentConfig(
+            system_instruction=POLLING_FEEDBACK_INSTRUCTIONS,
+            response_mime_type="application/json",
+            response_schema=PollingFeedbackOutput,
+            thinking_config=thinking,
+            http_options=HttpOptions(
+                timeout=baseline.timeout_ms,
+                retry_options=HttpRetryOptions(attempts=baseline.attempts),
+            ),
+        )
