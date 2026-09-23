@@ -1,9 +1,12 @@
 """Next-step-v1 HTTP contract: one common envelope for both endpoints.
 
-The selector is explicit and never heuristic: without the header the legacy
-contract stays byte-compatible, the exact ``next-step-v1`` value selects the
-new envelope, and an empty, repeated or unknown version is rejected with 400
-before any handler runs. Authentication always precedes the selector.
+The selector is explicit and never heuristic: without the canonical
+``X-CU013-Response-Contract`` header the legacy contract stays
+byte-compatible, the exact ``next-step-v1`` value selects the new envelope,
+and an empty, repeated or unknown version is rejected with 400 before any
+handler runs. Authentication always precedes the selector. The header name
+without the ``X-`` prefix is not read and is not kept as an alias: it had no
+accredited real consumer.
 
 The runtime decides ``next_step``; the model cannot. ``command`` exists if and
 only if ``next_step`` is ``EXECUTE_ACTION``.
@@ -21,7 +24,7 @@ from app.session.outcome import NextStep
 from app.session.text import normalize_message
 from app.session.turns import ExternalActionCommand
 
-RESPONSE_CONTRACT_HEADER = "CU013-Response-Contract"
+RESPONSE_CONTRACT_HEADER = "X-CU013-Response-Contract"
 NEXT_STEP_CONTRACT = "next-step-v1"
 
 __all__ = [

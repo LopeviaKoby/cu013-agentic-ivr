@@ -44,6 +44,10 @@ VALIDATION_ERROR = {
 # --- selector unit contract -------------------------------------------------
 
 
+def test_canonical_header_name_is_the_x_prefixed_one() -> None:
+    assert RESPONSE_CONTRACT_HEADER == "X-CU013-Response-Contract"
+
+
 def test_absent_header_selects_the_legacy_contract() -> None:
     assert select_response_contract([]) is ResponseContract.LEGACY
 
@@ -154,6 +158,17 @@ async def test_a_repeated_contract_header_is_a_safe_400(client) -> None:
     )
     assert response.status_code == 400
     assert response.json() == UNSUPPORTED_CONTRACT_ERROR
+
+
+async def test_the_old_header_name_is_not_read_and_is_not_an_alias(client) -> None:
+    """The header without X- had no accredited consumer and is not kept."""
+    response = await client.post(
+        turns_url("conversation-1"),
+        json={"transcript": SYNTHETIC_TRANSCRIPT},
+        headers={"CU013-Response-Contract": NEXT_STEP_CONTRACT},
+    )
+    assert response.status_code == 200
+    assert set(response.json()) == {"message", "route", "turn_id", "command"}
 
 
 async def test_authentication_precedes_the_contract_selector(anonymous_client) -> None:
