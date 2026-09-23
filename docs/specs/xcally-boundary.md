@@ -11,6 +11,8 @@ Este documento describe los dos contratos HTTP implementados y probados hoy sobr
 
 El contrato de identidad deja de transportar DTMF crudo: Cally Square captura y valida dentro del flujo y CU013 sólo recibe un resultado PII-safe. El contrato de órdenes/resultados AD/TIVIT sigue siendo experimental en su semántica externa; lo materializado aquí es el contrato *local* backend↔TEST y sus reglas de correlación, no los shapes reales de RD/AD.
 
+Un único dominio de transición alimenta dos adaptadores HTTP temporales. Sin el header selector, la respuesta legacy permanece byte-compatible; con `CU013-Response-Contract: next-step-v1` ambos endpoints devuelven un envelope común cuyo `next_step` decide el runtime. Los vocabularios legacy `route` y `directive` quedan confinados a su adaptador; el contrato nuevo no los reutiliza. La rotación fija de frases de progreso sólo sobrevive en el carril legacy.
+
 Puede evolucionar con evidencia obtenida al integrar el flujo Cally Square rediseñado y AD/TIVIT, mediante caller tests/logs PII-safe y mediciones reales de latencia. Mientras conserve el estado `PROVISIONAL`, son aceptables cambios incompatibles respaldados por esa evidencia. No se modifica por especulación.
 
 Evidencia de origen: XML CU013/RD, `DOC_API_RD.pdf`, comportamiento confirmado por el propietario y el traspaso del flujo destino `TEST_XCALLY_CU013_API_APPROACH`. Los números de nodo de ese XML son evidencia de diseño, no contrato.
@@ -20,6 +22,7 @@ Evidencia de origen: XML CU013/RD, `DOC_API_RD.pdf`, comportamiento confirmado p
 - Cloud Run DEV validó el boundary pre-XCALLY de punta a punta en el [Experimento 0004](../experiments/0004-cloud-run-latency.md): autenticación, contrato y turno real con Gemini.
 - La latencia voice E2E (`end-of-speech → first useful audio`) sigue desconocida: no hay XCALLY, ASR ni TTS integrados.
 - El contrato técnico de esta iteración se validó con tests deterministas y dobles; no hay todavía evidencia E2E de identidad real, RD real, polling real ni handoff real ([Experimento 0010](../experiments/0010-integration-events-contract.md)).
+- El contrato `next-step-v1`, la secuencia de polling, la presentación de contraseña, el fallo de captura y el composer de feedback están implementados y cubiertos por tests deterministas; su semántica externa sigue sujeta a la evidencia E2E.
 
 ## Autenticación común
 
@@ -32,6 +35,78 @@ X-Request-ID: <valor opaco de correlación>   (opcional)
 - `X-API-Key` se valida contra un secreto leído únicamente del entorno (`CU013_API_KEY`), nunca de `config.yaml`, código, logs o fixtures, y se compara con `secrets.compare_digest`.
 - Sin secreto configurado el servicio falla cerrado (`internal`, 500). Ausente o incorrecta producen la misma respuesta `authorization` (401), sin distinguir el caso.
 - `X-Request-ID` es correlación HTTP, no una idempotency key del side effect, y no se registra.
+
+## Selector de contrato de respuesta
+
+Header opcional:
+
+```text
+CU013-Response-Contract: next-step-v1
+```
+
+- La autenticación precede siempre al selector.
+- Sin header: contrato legacy exacto, sin cambios de envelope ni de vocabulario.
+- Con el valor exacto `next-step-v1`: envelope común `next-step-v1` en ambos endpoints.
+- Header vacío, repetido o con una versión desconocida: `400` con
+  `{"error": {"code": "unsupported_response_contract", "message": "unsupported response contract"}}`.
+- El selector es explícito: nunca se infiere por la existencia de `route`, `directive`, `next_step` ni por heurística alguna.
+
+## Contrato next-step-v1
+
+Con el selector activo, ambos endpoints responden `2xx` con exactamente estas cuatro claves:
+
+```json
+{
+  "message": null,
+  "next_step": "LISTEN",
+  "operation_state": null,
+  "command": null
+}
+```
+
+`next_step` es un enum cerrado decidido por el runtime; el modelo no puede decidirlo ni proponerlo:
+
+```text
+LISTEN | COLLECT_IDENTITY | EXECUTE_ACTION | POLL_RD | DELIVER_PASSWORD | TRANSFER | COMPLETE
+```
+
+`operation_state` es `null` o la proyección de cable ya definida (`PENDING | UNKNOWN | SUCCEEDED | FAILED`). `command` sólo puede existir con `next_step=EXECUTE_ACTION`, y `EXECUTE_ACTION` siempre lleva `command`:
+
+```json
+{
+  "message": null,
+  "next_step": "EXECUTE_ACTION",
+  "operation_state": null,
+  "command": {
+    "operation_id": "<opaque>",
+    "action": "UNLOCK_ACCOUNT",
+    "goal_revision": 2
+  }
+}
+```
+
+`message` es `null` cuando TEST no debe sonar TTS. Antes de serializar, el adaptador v1 normaliza sólo espacios en blanco de control (CR/LF/tab colapsan a un espacio y se colapsan las corridas de espacios); preserva Unicode, apóstrofos, comillas ASCII y backslash. La normalización nunca se aplica a contraseñas, documentos ni fechas, que no entran al backend.
+
+Proyecciones por endpoint:
+
+| Origen | `next_step` |
+|---|---|
+| `/turns`, ruta conversacional `CONTINUE` | `LISTEN` |
+| `/turns`, ruta conversacional `COLLECT_IDENTITY` | `COLLECT_IDENTITY` |
+| `/turns`, ruta conversacional `COMPLETE` | `COMPLETE` |
+| `/turns`, ruta conversacional `ESCALATE` | `TRANSFER` |
+| `/turns`, guard de despacho persistido | `EXECUTE_ACTION` |
+| `IDENTITY_VALIDATION_RESULT` | `LISTEN` |
+| `IDENTITY_VALIDATION_RESULT/INVALID` bajo el máximo | `COLLECT_IDENTITY` |
+| `VOICE_INPUT_FAILURE` | `LISTEN` |
+| `ACCOUNT_ACTION_STATUS` no terminal | `POLL_RD` |
+| `ACCOUNT_ACTION_ERROR/POLL` no terminal | `POLL_RD` |
+| `ACCOUNT_ACTION_ERROR/DISPATCH` | `POLL_RD` |
+| `UNLOCK_ACCOUNT` confirmado | `COMPLETE` |
+| `RESET_PASSWORD` confirmado sin presentación | `DELIVER_PASSWORD` |
+| operación fallida o reset ya presentado | `LISTEN` |
+| presupuesto de polling agotado | `TRANSFER` |
+| `IDENTITY_INPUT_FAILURE` o máximo de fallos de identidad | `TRANSFER` |
 
 ## Turno conversacional — `POST /turns`
 
@@ -152,11 +227,13 @@ CU013/XCALLY identity outcome (lo que recibe el backend):
 
 Comportamiento, con cero llamadas al modelo:
 
-| `outcome` | Efecto durable | Directiva | Mensaje |
-|---|---|---|---|
-| `VALID` | marca `identity.validated_at = now` según TTL; invalida cualquier challenge anterior; no ejecuta acción | `RESUME_CONVERSATION` | sí |
-| `INVALID` | incrementa sólo los fallos imputables al caller; bajo el máximo pide nueva captura; al tercer fallo aplica el handoff ya definido por la SPEC | `COLLECT_IDENTITY` / `ESCALATE` | sí |
-| `TECHNICAL_FAILURE` | no consume intento, no autoriza y no inventa causa: la fase de identidad permanece abierta | `COLLECT_IDENTITY` | sí |
+| `outcome` | Efecto durable | Directiva legacy | `next_step` v1 | Mensaje |
+|---|---|---|---|---|
+| `VALID` | marca `identity.validated_at = now` según TTL; conserva goal y su revisión; invalida cualquier challenge anterior; crea un challenge nuevo ligado a la acción, revisión e identidad vigentes cuando el goal soportado está pendiente; no ejecuta acción | `RESUME_CONVERSATION` | `LISTEN` | sí |
+| `INVALID` | incrementa sólo los fallos imputables al caller; bajo el máximo pide nueva captura; al tercer fallo aplica el handoff ya definido por la SPEC | `COLLECT_IDENTITY` / `ESCALATE` | `COLLECT_IDENTITY` / `TRANSFER` | sí |
+| `TECHNICAL_FAILURE` | no consume intento, no autoriza y no inventa causa: la fase de identidad permanece abierta | `COLLECT_IDENTITY` | `COLLECT_IDENTITY` | sí |
+
+Tras `VALID`, el runtime produce la confirmación específica por acción (`UNLOCK_ACCOUNT` o `RESET_PASSWORD`) y abre el challenge sin una segunda llamada al modelo; una afirmación posterior sólo puede autorizar ese challenge. Si no existe goal, `VALID` no inventa uno y responde con la confirmación genérica.
 
 ### Secuencia de identidad aceptada para el diseño E2E
 
@@ -227,9 +304,80 @@ El backend no necesita el body RD completo. Este evento no transporta password, 
 
 Enums mínimos: `phase ∈ DISPATCH | POLL`; `error_kind ∈ TIMEOUT | HTTP_ERROR | INVALID_BODY | UNAVAILABLE`. No se devuelve ni persiste el body de error RD.
 
+### Secuencia de polling, deduplicación y presupuesto (next-step-v1)
+
+En el contrato v1, `ACCOUNT_ACTION_STATUS` y `ACCOUNT_ACTION_ERROR/POLL` exigen `poll_sequence`; `ACCOUNT_ACTION_ERROR/DISPATCH` no lo lleva y nunca consume presupuesto de GET. El contrato legacy sigue rechazando `poll_sequence` como campo desconocido.
+
+```json
+{
+  "event": "ACCOUNT_ACTION_STATUS",
+  "operation_id": "opaque-operation-id",
+  "action": "UNLOCK_ACCOUNT",
+  "goal_revision": 2,
+  "status": "NONE",
+  "poll_sequence": 1
+}
+```
+
+Reglas del piloto:
+
+- entero estricto mayor que cero; la primera secuencia es `1` y cada observación nueva es `last + 1`;
+- límite de `9` GET iniciados (`observation_limit`); el presupuesto y la cadencia de feedback son independientes entre sí y de cualquier deadline;
+- mismo `poll_sequence` con la misma observación (fingerprint SHA-256 del tipo cerrado) es un ACK idempotente que no consume presupuesto ni vuelve a sonar;
+- mismo `poll_sequence` con observación distinta, o un salto de secuencia, produce `conflict_or_duplicate` (409) sin mutación;
+- un replay nunca consume presupuesto;
+- un status desconocido y un error de GET consumen una observación; un error de dispatch no consume presupuesto de GET;
+- una observación terminal consume su secuencia y termina la operación;
+- al llegar a la novena observación no terminal, `next_step=TRANSFER` sin cambiar `PENDING`/`UNKNOWN` a `FAILED`; una observación no terminal posterior al límite es un 409 y un terminal posterior todavía reconcilia la misma operación;
+- nunca se repite el `POST /call`.
+
+El fingerprint se calcula sólo sobre el tipo cerrado de observación (y, en errores, sobre `phase`, `error_kind` y `http_status`): el literal RD desconocido nunca se persiste.
+
+### Fallo de captura de identidad (next-step-v1)
+
+```json
+{
+  "event": "IDENTITY_INPUT_FAILURE",
+  "reason": "CAPTURE_EXHAUSTED"
+}
+```
+
+Sólo `CAPTURE_EXHAUSTED`. No es `INVALID`, no suma intentos imputables al caller, conserva el goal, no toca la operación externa y responde `next_step=TRANSFER`. El contrato legacy lo rechaza.
+
+### Presentación de contraseña (next-step-v1)
+
+```json
+{
+  "event": "PASSWORD_PRESENTATION_RESULT",
+  "operation_id": "opaque-operation-id",
+  "action": "RESET_PASSWORD",
+  "goal_revision": 2,
+  "voice": "PLAYBACK_RETURNED",
+  "email_requested": 1,
+  "email_acceptance": "UNKNOWN",
+  "email_delivery": "UNKNOWN"
+}
+```
+
+- Sólo aplica a `RESET_PASSWORD` confirmado por el boundary; la contraseña nunca entra al backend.
+- `voice` sólo admite `PLAYBACK_RETURNED`; `email_requested` es un entero estricto `0/1`; aceptación y entrega comienzan sólo en `UNKNOWN`.
+- Un duplicado idéntico es un ACK idempotente; un evento incompatible o tardío es un 409. Un duplicado nunca reemite `DELIVER_PASSWORD`.
+- Mientras la entrega siga `UNKNOWN`, la respuesta es `next_step=LISTEN` sin afirmar envío ni entrega.
+- El contrato legacy lo rechaza.
+
+### Feedback de espera contextual (next-step-v1)
+
+En v1 no existe rotación fija de frases. El orden es: observación → correlación → verdad externa → terminalidad → presupuesto → `feedback_due` → redacción opcional → validación → persistencia → `200`.
+
+- No hay llamada al modelo cuando la observación es terminal, es un duplicado, el presupuesto está agotado o el feedback no está vencido.
+- Cuando corresponde, hay exactamente una llamada estrecha de redacción (`PollingFeedbackComposer`) cuya entrada PII-safe se limita a acción, revisión, confirmación obtenida, estado de operación, tipo de observación cerrado, secuencia, observaciones usadas, límite y hasta dos mensajes previos ya validados. Excluye transcript, ventana textual, documento, fecha, identidad, `operation_id`, body RD, status desconocido crudo, contraseña, email y PII espontánea.
+- La salida es sólo `message`: el composer no puede devolver ni modificar `next_step`, `operation_state`, autorización, despacho ni identidad.
+- Ante timeout, salida inválida o texto no admisible: `message=null`, estado empresarial intacto, metadata segura de polling preservada, sin frase rotatoria, sin segunda llamada y sin re-POST.
+- Se persisten como máximo dos mensajes validados; la cadencia candidata es de 10 s y no es un SLO.
+
 ### Response
 
-Respuesta plana para Cally Square:
+Respuesta legacy plana para Cally Square:
 
 ```json
 {
@@ -243,6 +391,8 @@ Respuesta plana para Cally Square:
 - `directive` ∈ `NOOP | RETRY_SPEECH | COLLECT_IDENTITY | POLL_RD | RESUME_CONVERSATION | COMPLETE | ESCALATE`. No reutiliza el enum `route` conversacional.
 - `operation_state` es la proyección de cable del estado durable canónico: `pending→PENDING`, `unknown→UNKNOWN`, `confirmed→SUCCEEDED`, `failed→FAILED`; es `null` cuando el evento no involucra una operación externa.
 - `message` es `null` cuando TEST no debe sonar TTS; en caso contrario es una frase PII-safe del runtime.
+
+Con el selector `next-step-v1` la respuesta es el envelope común descrito arriba; `directive` no viaja.
 
 ## Máquina de estado durable de la operación
 
@@ -286,10 +436,12 @@ El backend controla los mensajes y TEST controla el polling; ni `/turns` ni `/in
 
 1. El `/turns` que devuelve `EXECUTE_ACTION` incluye `"Voy a procesar la solicitud. Puede tardar unos segundos."`; TEST lo reproduce antes del POST RD.
 2. TEST hace POST RD, GET inmediato y envía a CU013 un evento terminal o `NONE`; no reproduce un mensaje de espera antes de comprobar si ya existe resultado terminal.
-3. Ante `NONE`, CU013 decide sin LLM si corresponde otro mensaje. Persiste sólo metadata técnica mínima (`last_progress_feedback_at`, `progress_feedback_index` del `external_operation`).
+3. Ante `NONE`, CU013 decide sin LLM si corresponde otro mensaje. Persiste sólo metadata técnica mínima.
 4. Intervalo experimental de progreso: 10 s iniciales, coherente con el `wait 10` observado. El valor final sólo se acepta tras E2E. El primer `GET` inmediato normalmente no produce segundo TTS.
 
-Frases de progreso permitidas:
+En el carril legacy (sin secuencia de polling) la decisión es determinista y persiste `last_progress_feedback_at` y `progress_feedback_index` del `external_operation`. En el carril `next-step-v1` la cadencia vive en el plano `polling` (`last_feedback_attempt_at`, hasta dos mensajes validados) y la redacción puede delegarse en el composer estrecho; la rotación fija no se usa.
+
+Frases de progreso permitidas (sólo carril legacy):
 
 - `"Sigo procesando tu solicitud. Gracias por esperar."`
 - `"La solicitud continúa en proceso. Te avisaré cuando tenga un resultado."`
@@ -311,6 +463,7 @@ Envelope estable; nunca se serializa detalle de Pydantic/FastAPI ni se ecoan tra
 |---|---|---|
 | `validation` | 422 | Payload inválido o JSON malformado |
 | `authorization` | 401 | `X-API-Key` ausente o incorrecta |
+| `unsupported_response_contract` | 400 | Header selector vacío, repetido o con versión desconocida |
 | `conflict_or_duplicate` | 409 | Evento técnico no correlacionable o transición ilegal |
 | `dependency_unavailable` | 503 | Motor conversacional o servicio técnico no configurado; fallo/indisponibilidad del modelo; fallo durable al cargar/guardar |
 | `dependency_timeout` | 504 | La llamada al modelo excedió su deadline |
@@ -325,21 +478,28 @@ El shape exacto de errores que Cally Square interpreta sigue pendiente de eviden
 - `validation_reference` se acepta y se descarta: no se persiste, no se registra, no se devuelve.
 - Nunca se persiste el body RD, la contraseña temporal ni un payload de error RD; la telemetría de un status desconocido es sólo un contador.
 - Los errores de validación no registran el payload; sólo se registra la ruta, el tipo de evento y el hecho del fallo.
+- El fingerprint de una observación hashea sólo el tipo cerrado (y los campos técnicos de error), nunca el literal externo crudo.
+- El composer de feedback recibe sólo la proyección PII-safe descrita y nunca transcript, memoria textual, documento, fecha, identidad, `operation_id`, body RD, status desconocido crudo, contraseña ni email.
+- La memoria textual reciente y la ventana experimental no se activan para callers reales en esta iteración; el path productivo no persiste transcript.
 
 ## Persistencia
 
 - Reutiliza el Thin Firestore Session Repository de [ADR-0009](../decisions/0009-use-thin-firestore-session-repository.md): un load, el modelo dentro del grafo LangGraph en RAM sin persistent checkpointer y un save antes del HTTP response.
 - El grafo del turno es `START → run_model → advance_turn → END`; la consolidación durable excluye transcript y decisión del modelo.
-- `/integration-events` no usa el grafo ni el modelo: un load y, sólo si el evento muta estado, un save. No incrementa `turn_count` ni `revision`.
-- `external_operation` añade la metadata técnica mínima de anti-silencio (`last_progress_feedback_at`, `progress_feedback_index`). Los documentos v2 previos sin esos campos siguen validando por default.
+- `/integration-events` no usa el grafo ni el modelo conversacional: un load y, sólo si el evento muta estado, un save. No incrementa `turn_count` ni `revision`. La única llamada de modelo posible es la redacción estrecha de feedback de espera.
+- `external_operation` conserva la metadata técnica mínima de anti-silencio legacy (`last_progress_feedback_at`, `progress_feedback_index`).
+- El contrato durable es la versión 3. Añade dos planos separados: `polling` (operación, `started_at`, `observation_limit`, receipts de `sequence` + fingerprint SHA-256, `last_feedback_attempt_at` y hasta dos mensajes validados) y `password_presentation` (operación, acción, revisión, `voice`, `email_requested`, aceptación y entrega). Los documentos v1 y v2 migran en memoria fail-closed; un v2 con `delivery` no nulo se traduce sin reinterpretarlo y cualquier campo fuera del whitelist cerrado se rechaza.
+- El contrato de transporte (legacy o v1) no es estado durable: no se persiste.
+- **Precaución operativa.** Una revisión estable antigua no puede leer documentos v3. Durante la ventana E2E todos los bloques CU013 deben usar la tag URL, sin mezclar requests al hostname estable y al etiquetado en una misma llamada; no se promueve tráfico ni se declara rollback productivo compatible con sesiones v3 hasta diseñarlo explícitamente.
 
 ## Abierto
 
 - Resultado positivo de validación de identidad y su integración con AD/TIVIT (ID-001).
-- Correlación, idempotencia, polling, reintentos y resultados tardíos de XCALLY (XC-002 a XC-004).
+- Correlación, idempotencia, polling, reintentos y resultados tardíos de XCALLY (XC-002 a XC-004); el contrato candidato de secuencia/dedupe/presupuesto sigue pendiente de evidencia real.
 - Shape real de responses/errors y mapeo de estados externos (XC-005, XC-006).
 - Deadline explícito de Firestore (FS-002).
-- Mapeo final status RD → experiencia/handoff y validación E2E de anti-silencia y terminales.
+- Mapeo final status RD → experiencia/handoff y validación E2E de anti-silencia, feedback contextual, presentación de contraseña y terminales.
+- Valor final de la cadencia de feedback (10 s candidatos) y del presupuesto de observaciones (9 candidatas).
 
 ## Trazabilidad
 

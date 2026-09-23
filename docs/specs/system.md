@@ -96,6 +96,8 @@ Ante un crash a mitad del turno, el siguiente request reinicia desde la última 
 
 **PROVISIONAL — implemented DEV baseline.** CU013 materializa un boundary HTTP mínimo para DEV. El contrato implementado, sus restricciones y su evolución basada en evidencia viven en [Boundary HTTP XCALLY ↔ CU013](xcally-boundary.md); no constituye todavía el contrato integrado final con Cally Square ni define órdenes/resultados AD/TIVIT.
 
+**PROVISIONAL — two temporary serializers.** Un único dominio de transición alimenta el envelope legacy y el envelope común `next-step-v1` seleccionado por header. El runtime decide `next_step`; el modelo no puede decidirlo. La rotación fija de frases de progreso sobrevive sólo en el carril legacy y el feedback contextual v1 puede delegar una única redacción estrecha sin cambiar estado empresarial.
+
 ## Entorno GCP actual
 
 **IMPLEMENTED AND VERIFIED BY OWNER.**

@@ -1,6 +1,6 @@
 # Experimento 0010: contrato backend de eventos técnicos para TEST_XCALLY_CU013_API_APPROACH
 
-- Status: Running (contrato local implementado y probado; diseño Cally Square, deploy coordinado y caller tests E2E pendientes)
+- Status: Running (contrato local y next-step-v1 implementados y probados; deploy etiquetado y caller tests E2E pendientes)
 - Lifecycle: Planned → Running → Completed / Failed / Inconclusive
 - Authority: evidencia experimental; no es una decisión arquitectónica
 - Date: 2026-09-21
@@ -133,6 +133,50 @@ diseño.
 - La consulta por documento está observada; la captura de la fecha, la
   comparación y el evento local siguen pendientes de demostración E2E
   (ID-001). El experimento permanece `Running` hasta los caller tests.
+
+## Iteración next-step-v1 (2026-09-23)
+
+Candidato medido localmente:
+
+- selector explícito `CU013-Response-Contract: next-step-v1` con envelope común
+  `{message, next_step, operation_state, command}` en ambos endpoints; sin
+  header el contrato legacy permanece byte-compatible y un header vacío,
+  repetido o desconocido responde 400 `unsupported_response_contract`;
+- continuidad post-identidad sin segunda llamada al modelo: goal y revisión
+  conservados, challenge anterior invalidado, challenge nuevo ligado a
+  acción/revisión/identidad y confirmación específica por acción;
+- secuencia de polling estricta, dedupe por fingerprint SHA-256 del tipo
+  cerrado y presupuesto de 9 observaciones; el agotamiento responde `TRANSFER`
+  sin convertir `PENDING`/`UNKNOWN` en `FAILED` y sin re-POST;
+- `IDENTITY_INPUT_FAILURE/CAPTURE_EXHAUSTED` (sin intento, sin operación,
+  `TRANSFER`) y `PASSWORD_PRESENTATION_RESULT` (hechos de presentación;
+  `DELIVER_PASSWORD` sólo para reset confirmado sin presentación; duplicado
+  ACK idempotente, incompatible 409);
+- feedback de espera contextual en v1 mediante un composer estrecho con
+  entrada PII-safe cerrada y salida sólo `message`; la rotación fija se retira
+  del carril v1 y sobrevive sólo en legacy;
+- contrato durable v3 con planos separados `polling` y
+  `password_presentation` y migración v1/v2 fail-closed;
+- wording aceptado fecha de ingreso con guard determinista que impide
+  reintroducir el wording descartado.
+
+Evidencia local: `pytest` 548 pasando (dos fallos de entorno preexistentes por
+`google-cloud-firestore` 2.28.1 instalado frente al pin 2.30.0 del lock),
+Ruff, `ruff format --check`, MyPy y `--validate-only` (47 casos) en verde;
+canarios PII ausentes del input del modelo, estado durable, respuesta HTTP y
+logs.
+
+Límite explícito: la evaluación económica sustituye al full paired de esta
+iteración porque no cambia la semántica de decisión del modelo conversacional
+(el prompt sólo cambia wording y el decision schema queda intacto); el smoke
+real acotado se ejecuta contra la revisión etiquetada antes de los caller
+tests. La semántica externa de secuencia, presentación y feedback sigue
+pendiente de evidencia E2E.
+
+Despliegue E2E: nueva revisión Cloud Run con 0% de tráfico, `min instances = 1`
+a nivel de revisión, tag `e2e-4b72dfa` reasignado a la nueva revisión y la
+misma tag URL consumida por XCALLY; la revisión estable conserva el 100% del
+tráfico y el mínimo de servicio no cambia.
 
 ## Trazabilidad
 

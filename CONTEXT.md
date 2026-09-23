@@ -10,6 +10,8 @@ Esta iteración materializó el **laboratorio de evaluación** y el **baseline c
 
 La iteración de integración materializó los **contratos backend para el flujo destino `TEST_XCALLY_CU013_API_APPROACH`**: el patrón command/event (`EXECUTE_ACTION` + `command` opaco en `/turns` y boundary técnico `/integration-events` con eventos PII-safe de identidad, canal de voz, estado y error de la operación externa), la máquina durable de operación sin duplicar enums, la política anti-silencio experimental y la retirada del DTMF crudo del contrato activo. La evidencia local vive en [Experimento 0010](docs/experiments/0010-integration-events-contract.md) y el contrato en [Boundary HTTP XCALLY↔CU013](docs/specs/xcally-boundary.md). No se modificó ningún XML XCALLY, no se llamó a RD/AD y no hubo deploy ni commit; el diseño Cally Square, el deploy coordinado y los caller tests E2E quedan pendientes.
 
+La iteración `next-step-v1` materializó el contrato común de respuesta para la ventana E2E: selector explícito por header (`CU013-Response-Contract`), envelope `{message, next_step, operation_state, command}` en ambos endpoints con el legacy intacto sin header, continuidad post-identidad sin segunda llamada al modelo, secuencia de polling con dedupe por fingerprint y presupuesto de 9 observaciones, `IDENTITY_INPUT_FAILURE`, hechos de presentación de contraseña, feedback de espera contextual por composer estrecho, contrato durable v3 con planos `polling` y `password_presentation` y wording aceptado fecha de ingreso. La evaluación de esta iteración es económica (tests deterministas, contrato, replay y evaluadores de código), no un full paired: no cambia la semántica de decisión del modelo. La revisión Cloud Run E2E se despliega con 0% de tráfico, `min=1` a nivel de revisión y el tag `e2e-4b72dfa` reasignado a la misma tag URL; la revisión estable conserva el 100%.
+
 El primer corte de acciones de cuenta es `RESET_PASSWORD` + `UNLOCK_ACCOUNT`, sin prioridad obligatoria entre ambas.
 
 ## Pila y entorno
@@ -64,8 +66,8 @@ Servicios habilitados y materializados en DEV:
 - La Opción A resultó viable experimentalmente, pero fue descartada para el voice path productivo por latencia, amplificación de escrituras, complejidad de persistencia/retención y acoplamiento a LangGraph.
 - El security floor productivo está resuelto en `langgraph>=1.0.10` y `langgraph-checkpoint>=4.1.1`; el lock exacto está fijado en [requirements.lock](requirements.lock) con `langgraph==1.2.11`, `langgraph-checkpoint==4.2.0` y `google-cloud-firestore==2.30.0`.
 - El núcleo productivo mínimo del Thin Session Repository está integrado y committeado en `app/session`: contrato durable cerrado, grafo LangGraph determinista sin persistent checkpointer y 1 load + 1 save por turno normal.
-- El `SessionRecord` schema v2 materializa [ADR-0010](docs/decisions/0010-durable-semantic-plan-separate-from-authorization.md): plan conversacional durable pre-auth, autorización de identidad con TTL absoluto de 30 minutos, challenge de confirmación por operación, guard de despacho durable y verdad de operación externa, en planos separados con whitelist cerrada y migración v1→v2 fail-closed. Los guards deterministas rechazan rutas y claims ilegales sin segunda llamada al modelo, existe como máximo una operación externa activa y `UNKNOWN` no se redespacha automáticamente.
-- El boundary HTTP XCALLY↔CU013 está implementado en el worktree como baseline DEV `PROVISIONAL` y tipado en [Boundary HTTP XCALLY↔CU013](docs/specs/xcally-boundary.md): `POST /api/v1/conversations/{conversation_id}/turns` con transcript ASR y `POST /api/v1/conversations/{conversation_id}/integration-events` con eventos técnicos PII-safe, autenticación `X-API-Key` sólo desde entorno, `turn_id` único por request, `command` opaco sólo con `EXECUTE_ACTION` y errores con taxonomía segura. No es el contrato integrado final.
+- El `SessionRecord` schema v3 materializa [ADR-0010](docs/decisions/0010-durable-semantic-plan-separate-from-authorization.md): plan conversacional durable pre-auth, autorización de identidad con TTL absoluto de 30 minutos, challenge de confirmación por operación, guard de despacho durable y verdad de operación externa, más los planos separados `polling` (receipts de secuencia + fingerprint SHA-256, cadencia de feedback y hasta dos mensajes validados) y `password_presentation` (voice, email solicitado, aceptación y entrega inicialmente `UNKNOWN`), con whitelist cerrada y migración v1/v2 fail-closed. Los guards deterministas rechazan rutas y claims ilegales sin segunda llamada al modelo, existe como máximo una operación externa activa y `UNKNOWN` no se redespacha automáticamente.
+- El boundary HTTP XCALLY↔CU013 está implementado como baseline DEV `PROVISIONAL` y tipado en [Boundary HTTP XCALLY↔CU013](docs/specs/xcally-boundary.md): `POST /api/v1/conversations/{conversation_id}/turns` con transcript ASR y `POST /api/v1/conversations/{conversation_id}/integration-events` con eventos técnicos PII-safe, autenticación `X-API-Key` sólo desde entorno, `turn_id` único por request, `command` opaco sólo con `EXECUTE_ACTION` y errores con taxonomía segura. Un único dominio alimenta dos serializadores temporales: el legacy sin header y el envelope común `next-step-v1` seleccionado explícitamente. No es el contrato integrado final.
 - El transcript es efímero y no se persiste; el DTMF crudo ya no existe en el contrato activo (Cally Square captura y valida), y nunca marca identidad validada.
 - El primer motor activo es `GeminiTurnModel` (`app/conversation`): Vertex AI sobre ADC, ubicación de modelo `global`, `thinking_level=MINIMAL` sin `thinking_budget`, output estructurado tipado `ModelTurnDecision` (`message`, `route`, propuesta de plan, clasificación procedimental estructurada obligatoria, `confirmation_request`, observación de confirmación, causa de handoff y claims), una llamada y un attempt por turno normal, sin streaming ni tools. El prompt del sistema vive versionado en `app/conversation/prompts.py` (sin framework de prompts ni config dinámica) e incluye la política de petición previa, la precedencia de la necesidad inmediata, la preservación del goal ante una petición de persona, la redirección de alcance sin handoff y la clasificación de la confirmación HITL como principios generales. El grafo del turno es `START → run_model → advance_turn → END`; el modelo sugiere, el runtime decide, y el contrato del modelo no incluye `EXECUTE_ACTION`.
 - La validación positiva de identidad sigue sin integración real; el contrato PII-safe `IDENTITY_VALIDATION_RESULT` está implementado y probado sólo con dobles (ID-001).
@@ -170,6 +172,13 @@ Validado el 21-09-2026 (contratos backend del flujo TEST, sin commit):
 - aliases experimentales eliminados de código/harness/tests/docs activos y bloqueados por el gate de readiness; oráculo `confirmation-affirmative-authorizes` reconciliado a `not_eligible` tras despacho legal;
 - gates deterministas, corpus y mypy en verde; sin XML XCALLY modificado, sin llamada RD/AD, sin deploy ni commit.
 
+Validado el 23-09-2026 (next-step-v1, evaluación económica y deploy E2E):
+
+- selector explícito, envelope común, continuidad post-identidad, secuencia/dedupe/presupuesto de polling, `IDENTITY_INPUT_FAILURE`, presentación de contraseña y composer de feedback implementados y cubiertos por tests deterministas de contrato, estado, máquina de polling, normalización, canarios PII y wording;
+- contrato durable v3 con migración v1/v2 fail-closed y fingerprints PII-safe; sin persistir transcript, body RD, status desconocido crudo, documento, fecha, email ni contraseña;
+- gates deterministas en verde: `pytest` 548 pasando (dos fallos de entorno preexistentes por `google-cloud-firestore` 2.28.1 instalado frente al pin 2.30.0 del lock), Ruff, `ruff format --check`, MyPy y corpus `--validate-only` (47 casos, 0 problemas);
+- sin full paired por cambio de wording: la semántica de decisión del modelo conversacional no cambia; smoke real acotado contra la revisión etiquetada y deploy E2E con 0% de tráfico, `min=1` de revisión y tag `e2e-4b72dfa` reasignado.
+
 Pendiente:
 
 - aceptación del owner de los contratos backend implementados y del [Experimento 0010](docs/experiments/0010-integration-events-contract.md);
@@ -204,19 +213,20 @@ SendMail permanece Deferred y fuera del alcance inmediato. Los valores predeterm
 | Componente | Estado |
 |---|---|
 | Thin Session Repository | accepted + implemented |
-| Boundary HTTP/XCALLY | implemented, PROVISIONAL (`/turns` + `/integration-events`) |
+| Boundary HTTP/XCALLY | implemented, PROVISIONAL (`/turns` + `/integration-events`, legacy + `next-step-v1`) |
+| Contrato durable | schema v3 (`polling` + `password_presentation`; migración v1/v2 fail-closed) |
 | Gemini baseline | integrated (Gemini 3.5 Flash-Lite, `global`, `MINIMAL`, sintético; no voz-validado) |
 | Cloud Run DEV | implemented; estado de reposo `min=0` |
 | Experimento 0004 | completed |
 | Experimento 0005 | completed (corrección de prompt committeada, pendiente deploy y revalidación de voz) |
 | Experimento 0006 | completed (runtime semántico candidato, sin regresiones críticas; validación de voz DEV pendiente) |
 | Experimento 0007 | completed (laboratorio de evaluación materializado y validado; sin comparación de candidato todavía) |
-| Experimento 0010 | running (contratos backend de integración implementados y probados localmente; diseño Cally Square, deploy coordinado y E2E pendientes) |
+| Experimento 0010 | running (contratos backend de integración y `next-step-v1` implementados y probados localmente; revisión E2E etiquetada con 0% de tráfico y `min=1` de revisión; caller tests pendientes) |
 | Baseline conversacional activo | Gemini 3.5 Flash-Lite, Vertex `global`, `MINIMAL`, sintético; no voz-validado ni producción |
 | FS-002 | open |
 | CNV-001 | resolved (schema v2 durable pre-auth + continuidad + correcciones/cancelación implementados y verificados; eliminado de `docs/gaps.md`) |
 | Laboratorio de evaluación | `conversation_eval.py` + `conversation_compare.py` + corpus de 47 casos / 39 familias; `scenario_kind`, oráculos nulos/ausentes, evidencia por run/caso/turno, INFRA por repetición, reruns focalizados y CI sin credenciales |
-| Próximo gate | aceptación del owner del contrato del Experimento 0010, diseño Cally Square de TEST y deploy coordinado; después, caller tests E2E |
+| Próximo gate | caller tests E2E del owner contra la tag `e2e-4b72dfa` y análisis con `xcally-call-evidence-analysis`; cierre de la ventana E2E con autorización posterior |
 | AD/TIVIT | después del baseline de voz XCALLY aislado |
 
 El próximo objetivo de medición es el camino completo de voz, todavía no medido:
@@ -250,6 +260,6 @@ No añadir a esta instantánea trabajo especulativo o no aceptado.
 
 ## Hitos anteriores
 
+- `next-step-v1`: contrato común de respuesta con selector explícito, continuidad post-identidad, polling secuenciado/deduplicado/acotado, presentación de contraseña, composer de feedback estrecho, schema v3 y wording fecha de ingreso; evaluación económica y revisión E2E etiquetada con 0% de tráfico y `min=1` de revisión.
 - Contratos backend del flujo `TEST_XCALLY_CU013_API_APPROACH`: command/event (`EXECUTE_ACTION` + `command` opaco, `/integration-events` con eventos PII-safe), máquina durable de operación, anti-silencio experimental y retirada del DTMF crudo; Experimento 0010 en curso y readiness de aliases/oráculo reconciliada.
 - Laboratorio de evaluación y baseline activo: runner real-model y comparador pareado puro, `scenario_kind`, oráculos nulos/ausentes, evidencia sanitizada, fingerprint en runtime, reruns focalizados, CI sin credenciales y skill `xcally-call-evidence-analysis`; validación de harness real sin violaciones críticas registrada en el Experimento 0007.
-- Owner decisions y semantic runtime: peticiones no soportadas o fuera de alcance sin handoff automático, petición explícita de persona sin cancelar el goal, fallo técnico de identidad sin oráculo de ruta, side question sin challenge HITL, challenge invalidado nunca reutilizado y cancelación semántica; schema v2 durable, migración v1→v2 fail-closed, guards de legalidad y evaluación real-model registrada en el Experimento 0006; `CNV-001` resuelto.

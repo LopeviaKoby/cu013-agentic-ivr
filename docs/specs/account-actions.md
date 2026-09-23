@@ -53,6 +53,8 @@ El contador de intentos pertenece al runtime CU013: `INVALID` consume un intento
 
 La identidad validada concede derecho a solicitar una acción; no equivale al éxito de AD/TIVIT ni a la autorización de despacho, que exige además la confirmación HITL verbal de [system.md](system.md#confirmación-hitl-verbal).
 
+**ACCEPTED (continuity).** Tras un resultado local `VALID`, el runtime conserva el goal y su revisión, invalida cualquier challenge anterior y abre el challenge de confirmación ligado a la acción, la revisión y la identidad vigentes, con una confirmación específica por acción. La presentación de la confirmación pertenece al runtime y no exige una segunda llamada al modelo; una afirmación posterior sólo puede autorizar ese challenge. Si no existe goal soportado, `VALID` no inventa uno.
+
 **ACCEPTED.** La identidad es válida sólo durante la llamada actual y por un TTL absoluto de 30 minutos. Un re-prompt de confirmación verbal no invalida la identidad y no consume intentos de validación; un timeout o ASR insuficiente de confirmación tampoco.
 
 Los valores crudos de documento y fecha de ingreso:
@@ -242,6 +244,8 @@ La contraseña temporal nunca debe:
 - enviarse al LLM;
 - registrarse en logs o telemetría;
 - conservarse en fixtures.
+
+**PROVISIONAL (presentation facts).** El boundary puede informar el hecho de presentación al llamante (`PASSWORD_PRESENTATION_RESULT`): reproducción devuelta y, cuando corresponda, si se solicitó email y su aceptación y entrega, inicialmente `UNKNOWN`. Es un hecho separado del resultado del reset y de la entrega SendMail: presentar la contraseña no equivale a entregarla, y el runtime no afirma envío ni entrega mientras la entrega siga `UNKNOWN`.
 
 El resultado exacto de SendMail permanece Deferred y fuera del alcance inmediato. No bloquea el baseline de voz XCALLY aislado ni la integración AD/TIVIT posterior.
 

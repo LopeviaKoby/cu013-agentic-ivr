@@ -16,6 +16,16 @@ Las tres capas responden preguntas distintas y ninguna sustituye a otra:
 - La capa 2 responde cómo se comporta el agente y si mejoró; no sustituye ASR/TTS ni una llamada real y no acepta wording exacto como oráculo.
 - La capa 3 responde qué cambia con el canal de voz real; requiere que el owner ya haya ejecutado la llamada y aportado su evidencia. No coloca llamadas, no escucha en segundo plano ni captura logs automáticamente.
 
+## Escalera basada en riesgo
+
+La validación escala con el riesgo del cambio, no con la ceremonia:
+
+1. **Determinista (siempre).** Tests unitarios, de contrato y de máquina de estados, modelo/stub, evaluadores de código deterministas y replay/regresión offline con artefactos sanitizados existentes. Cero llamadas al modelo. Un gate determinista rojo detiene la iteración.
+2. **Smoke real focalizado (cuando el cambio toca lenguaje o una llamada de modelo concreta y el nivel 1 está verde).** Un conjunto pequeño de casos core, una repetición por caso, sin LLM judge, con revisión manual y evaluador de código. Presupuesto explícito y acotado; un fallo semántico detiene y se reporta.
+3. **Evaluación pareada completa (sólo cuando cambia la semántica de decisión).** Obligatoria si el cambio altera modelo, decision schema, tool choice, routing semántico, autorización, memory semantics o system policy amplia, y para el gate pre-voz de un candidato conversacional.
+
+Un cambio verificable por assertions deterministas y corpus offline (por ejemplo el wording aceptado de fecha de ingreso) no requiere por sí solo la escalera completa. Un cambio de semántica de decisión no se acepta con smoke.
+
 ## Metodología eval-driven
 
 Todo cambio conversacional sigue este ciclo:
@@ -27,7 +37,7 @@ Todo cambio conversacional sigue este ciclo:
 5. **identify general missing property**: determinar la propiedad general ausente o incorrecta (no el wording);
 6. **change smallest correct layer**: corregir la capa mínima correcta (prompt, policy, schema o runtime);
 7. **deterministic tests**: cubrir la propiedad con tests deterministas;
-8. **real-model paired eval**: validar contra el modelo real con el procedimiento `conversation-evaluation`, comparando el candidato contra el baseline aceptado con el comparador puro;
+8. **real-model validation**: aplicar la escalera basada en riesgo — smoke focalizado para cambios de lenguaje acotados o evaluación pareada completa contra el baseline aceptado cuando cambia la semántica de decisión — con el procedimiento `conversation-evaluation`;
 9. **DEV voice validation**: solicitar autorización explícita de deploy y, tras la llamada del owner, analizar su evidencia con `xcally-call-evidence-analysis`;
 10. **accept/reject**: aceptar o rechazar con evidencia.
 

@@ -46,6 +46,15 @@ Estas invariantes complementan las transversales de la [SPEC del sistema](../spe
 - Una sola operación externa activa por conversación; el guard durable precede a todo side effect ([ADR-0010](../decisions/0010-durable-semantic-plan-separate-from-authorization.md)).
 - El timing exacto de voz (endpointing, barge-in, timeouts de confirmación en el canal XCALLY/ASR/TTS) sigue dependiendo de evidencia XCALLY: no se inventan valores de polling, retry ni deadline externos; los gaps XC-002 a XC-006 gobiernan su obtención.
 
+## Polling, presupuesto y feedback de espera
+
+- El presupuesto de observaciones de polling (9 GET candidatos), la cadencia de feedback (10 s candidatos) y cualquier deadline son valores independientes entre sí; ninguno es un SLO y su valor final depende de evidencia E2E.
+- Un replay de observación nunca consume presupuesto; un error de dispatch nunca consume presupuesto de GET; un status desconocido o un error de GET sí consumen una observación.
+- El agotamiento del presupuesto no convierte `PENDING`/`UNKNOWN` en `FAILED`: la verdad de la operación permanece sin confirmar.
+- El composer de feedback es la única llamada de modelo posible en `/integration-events`: recibe una proyección PII-safe cerrada, devuelve sólo `message` y nunca decide `next_step`, autoriza, despacha ni toca identidad.
+- Un timeout, salida inválida o texto no admisible del composer produce silencio (`message=null`) con el estado empresarial intacto y sin segunda llamada ni re-POST.
+- La memoria textual reciente y la ventana experimental no se activan para callers reales en esta iteración.
+
 ## Errores
 
 Usar esta taxonomía mínima y estable:

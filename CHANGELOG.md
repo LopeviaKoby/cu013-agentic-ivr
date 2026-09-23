@@ -8,6 +8,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Add the `next-step-v1` response contract: an explicit
+  `CU013-Response-Contract` selector, a common
+  `{message, next_step, operation_state, command}` envelope on both
+  endpoints, a safe 400 `unsupported_response_contract` for empty, repeated
+  or unknown versions, an unchanged legacy envelope without the header, and
+  one domain transition feeding both temporary serializers.
+- Add post-identity continuity: `IDENTITY_VALIDATION_RESULT/VALID` keeps the
+  goal and its revision, replaces any previous challenge with one bound to
+  the current action, revision and identity, and answers with the
+  action-specific confirmation without a second model call.
+- Add strict poll sequencing, SHA-256 fingerprint dedupe and a
+  nine-observation budget to `next-step-v1`: exact replays are idempotent
+  ACKs that consume no budget, jumps and mismatches are safe 409s, a
+  dispatch error consumes no GET budget, and exhaustion answers `TRANSFER`
+  without turning `PENDING`/`UNKNOWN` into `FAILED` and without re-POST.
+- Add `IDENTITY_INPUT_FAILURE/CAPTURE_EXHAUSTED` (no attempt, no operation
+  change, `TRANSFER`) and `PASSWORD_PRESENTATION_RESULT`
+  (`DELIVER_PASSWORD` only for a confirmed reset without presentation,
+  idempotent duplicate ACK, safe 409 for incompatible or late events, no
+  delivery claim while `UNKNOWN`).
+- Add the narrow polling feedback composer: closed PII-safe input, a
+  message-only output that can never decide `next_step`, authorize or touch
+  identity, validated and bounded to two persisted messages, silence with
+  intact business state on timeout or inadmissible text, no fixed rotation
+  and no second model call.
+- Add `SessionRecord` v3 with separate `polling` and
+  `password_presentation` planes and a fail-closed v1/v2 migration.
+- Add whitespace normalization for the v1 envelope: CR/LF/tab collapse to a
+  space while Unicode, apostrophes, ASCII quotes and backslash are
+  preserved; passwords, documents and dates are never normalized.
+- Add the deterministic next-step test suite: selector and envelope
+  contract, poll sequence/dedupe/budget, capture exhaustion, password
+  presentation, composer cadence and silence, PII canaries and prompt
+  wording guard.
+
 - Add the technical XCALLY ↔ CU013 account-action contract: `/turns` emits
   `EXECUTE_ACTION` with an opaque `command` only after the durable dispatch
   guard, and `/integration-events` carries the closed PII-safe event union
@@ -156,6 +191,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   from the environment only, and the operations runbook.
 
 ### Changed
+
+- Move the runtime outcome vocabulary to `NextStep`: the domain speaks the
+  canonical step, the legacy adapter projects it onto `BoundaryRoute` and
+  `IntegrationDirective`, and no domain logic consumes the legacy enums.
+- Change the active prompt wording from fecha de nacimiento to fecha de
+  ingreso with a deterministic guard test; the decision schema, model and
+  model selection are unchanged.
+- Scale conversational validation by risk in the testing standard and the
+  `conversation-evaluation` skill: deterministic/unit/contract/replay, then
+  targeted live smoke, and full paired evaluation only when decision
+  semantics change.
+- Reconcile the boundary, account-action, system, reliability and testing
+  specifications and Experiment 0010 with the `next-step-v1` candidate, its
+  open E2E questions and the v3 durable contract.
 
 - Rename the XCALLY skill to `xcally-call-evidence-analysis`: it analyzes the
   evidence of a real call the owner already executed and supplied and never

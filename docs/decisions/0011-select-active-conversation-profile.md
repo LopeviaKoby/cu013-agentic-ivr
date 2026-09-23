@@ -57,6 +57,15 @@ retención de texto real de callers.
 - Los guards de autorización y despacho quedan intactos; la memoria
   textual real sigue desactivada sin política de retención.
 
+**Aclaración 2026-09-23 (no cambia la selección).** Bajo el contrato
+`next-step-v1`, `/integration-events` puede realizar exactamente una
+llamada estrecha de redacción de feedback de espera cuando el runtime
+decide que corresponde. Esa capacidad usa el mismo perfil activo
+(modelo, ubicación, nivel de razonamiento y salida estructurada), no
+sustituye la llamada del transcript, no decide `next_step` ni toca
+autorización, despacho o identidad. La selección del perfil no se
+reabre por esta aclaración.
+
 ## Criterios de revocación
 
 Se reconsiderará ante regresión material no delimitable, necesidad de

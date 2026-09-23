@@ -34,6 +34,28 @@ Mandatory before accepting any change to:
 Not for pure runtime refactors with no behavioral surface, or for
 infrastructure changes.
 
+## Risk-based validation ladder
+
+Evidence scales with the risk of the change, never with ceremony:
+
+1. **Deterministic (always).** Unit, contract, state-machine, fake/stub-model
+   and deterministic code-evaluator tests plus offline replay/regression on
+   existing sanitized artifacts. Zero real model calls. A red deterministic
+   gate stops the iteration.
+2. **Targeted live smoke (when the change touches language or one concrete
+   model call, and level 1 is green).** A small core case set, one repetition
+   per case, no LLM judge, manual review plus code evaluator, explicit bounded
+   budget. A semantic failure stops the iteration.
+3. **Full paired evaluation (only when decision semantics change).** Required
+   for model, decision schema, tool choice, semantic routing, authorization,
+   memory semantics or broad system-policy changes, and for the pre-voice gate
+   of a conversational candidate.
+
+A change verifiable by deterministic assertions and the offline corpus (for
+example accepted wording such as entry-date phrasing) does not require the
+full ladder by itself. A decision-semantics change is never accepted on a
+smoke alone.
+
 ## Required inputs
 
 - The baselines: the active reproducible profile is derived from
@@ -66,10 +88,12 @@ infrastructure changes.
    diagnosed rerun.
 5. **Run deterministic gates first.** Corpus validation, deterministic tests,
    Ruff, MyPy. A red deterministic gate stops the evaluation.
-6. **Run the real-model paired evaluation when applicable.** Default three
-   valid repetitions per independent trial or sequence, one fixed warmup for
-   both sides, events simulated as domain events. No ADC means the honest
-   verdict is "not executable", never fabricated evidence.
+6. **Run the real-model validation at the level the risk demands.** Apply the
+   risk-based ladder above: targeted live smoke for narrow language changes,
+   full paired evaluation when decision semantics change. For a full paired
+   run, default three valid repetitions per independent trial or sequence,
+   one fixed warmup for both sides, events simulated as domain events. No ADC
+   means the honest verdict is "not executable", never fabricated evidence.
 7. **Separate INFRA.** INFRA is classified at repetition level, valid
    repetitions are preserved and only the missing paired repetition is
    re-run; invalid structured model output is a model failure, not INFRA.
