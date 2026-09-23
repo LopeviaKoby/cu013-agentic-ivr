@@ -31,6 +31,7 @@ from app.session.integration import (
     IntegrationEventRejected,
     IntegrationEventService,
     IntegrationOperationState,
+    RejectionReason,
     VoiceInputFailureEvent,
 )
 from app.session.metrics import RecordingTurnMetrics
@@ -252,14 +253,15 @@ async def test_voice_failure_invalidates_the_challenge_and_keeps_identity() -> N
     assert stored.dispatch is None
 
 
-async def test_voice_failure_without_a_challenge_only_retries() -> None:
+async def test_voice_failure_without_a_challenge_retries_and_counts() -> None:
     store = InMemorySessionDocumentStore()
     _seed(store, make_record(goal=make_goal(Action.UNLOCK_ACCOUNT, revision=1)))
     writes_before = store.writes
     outcome = await _service(store).handle_event("conversation-1", _voice_event("NO_SPEECH"))
     assert outcome.directive is IntegrationDirective.RETRY_SPEECH
     assert outcome.message == VOICE_RETRY_MESSAGES["NO_SPEECH"]
-    assert store.writes == writes_before
+    assert store.writes == writes_before + 1
+    assert _stored(store).voice_retry_count == 1
 
 
 @pytest.mark.parametrize("reason", ["NO_SPEECH", "LOW_CONFIDENCE", "TIMEOUT"])
@@ -670,4 +672,133 @@ def test_record_status_enum_is_reused_not_duplicated() -> None:
         "unknown",
         "confirmed",
         "failed",
+    }
+
+
+# --- pre-turn bootstrap (next-step-v1) --------------------------------------
+
+
+async def test_v1_voice_failure_bootstraps_a_minimal_pre_turn_record() -> None:
+    store = InMemorySessionDocumentStore()
+    outcome = await _service(store).handle_event(
+        "conversation-1", _voice_event("NO_SPEECH"), bootstrap=True
+    )
+    assert outcome.directive is IntegrationDirective.RETRY_SPEECH
+    assert outcome.next_step is NextStep.LISTEN
+    assert outcome.message == VOICE_RETRY_MESSAGES["NO_SPEECH"]
+    assert outcome.operation_state is None
+    assert store.writes == 1
+    stored = _stored(store)
+    assert stored.schema_version == 4
+    assert stored.turn_count == 0
+    assert stored.goal is None
+    assert stored.identity.validated_at is None
+    assert stored.confirmation is None
+    assert stored.dispatch is None
+    assert stored.external_operation is None
+    assert stored.polling is None
+    assert stored.voice_retry_count == 1
+
+
+async def test_legacy_voice_failure_never_bootstraps() -> None:
+    store = InMemorySessionDocumentStore()
+    with pytest.raises(IntegrationEventRejected) as excinfo:
+        await _service(store).handle_event("conversation-1", _voice_event("NO_SPEECH"))
+    assert excinfo.value.reason is RejectionReason.UNKNOWN_SESSION
+    assert store.writes == 0
+    assert store.documents == {}
+
+
+async def test_pre_turn_record_increments_the_counter_on_v1_voice_failure() -> None:
+    store = InMemorySessionDocumentStore()
+    service = _service(store)
+    await service.handle_event("conversation-1", _voice_event("NO_SPEECH"), bootstrap=True)
+    await service.handle_event("conversation-1", _voice_event("TIMEOUT"), bootstrap=True)
+    stored = _stored(store)
+    assert stored.turn_count == 0
+    assert stored.voice_retry_count == 2
+    assert stored.goal is None
+    assert stored.dispatch is None
+
+
+@pytest.mark.parametrize("reason", ["NO_SPEECH", "LOW_CONFIDENCE", "TIMEOUT"])
+async def test_every_v1_voice_failure_reason_bootstraps_safely(reason: str) -> None:
+    store = InMemorySessionDocumentStore()
+    outcome = await _service(store).handle_event(
+        "conversation-1", _voice_event(reason), bootstrap=True
+    )
+    assert outcome.message == VOICE_RETRY_MESSAGES[reason]
+    assert outcome.next_step is NextStep.LISTEN
+
+
+async def test_pre_turn_record_rejects_identity_and_action_events() -> None:
+    store = InMemorySessionDocumentStore()
+    service = _service(store)
+    await service.handle_event("conversation-1", _voice_event("NO_SPEECH"), bootstrap=True)
+    writes_before = store.writes
+    for event in (_identity_event("VALID"), _status_event()):
+        with pytest.raises(IntegrationEventRejected) as excinfo:
+            await service.handle_event("conversation-1", event, bootstrap=True)
+        assert excinfo.value.reason is RejectionReason.PRE_TURN_EVENT_NOT_ALLOWED
+    assert store.writes == writes_before
+
+
+async def test_other_first_events_never_create_a_document() -> None:
+    store = InMemorySessionDocumentStore()
+    service = _service(store)
+    for event in (
+        _identity_event("VALID"),
+        _identity_event("INVALID"),
+        _identity_event("TECHNICAL_FAILURE"),
+        _status_event(),
+        _error_event(),
+    ):
+        with pytest.raises(IntegrationEventRejected):
+            await service.handle_event("conversation-1", event, bootstrap=True)
+    with pytest.raises(IntegrationEventRejected):
+        await service.handle_event("conversation-1", _voice_event("NO_SPEECH"))
+    assert store.writes == 0
+    assert store.documents == {}
+
+
+class _RacingStore(InMemorySessionDocumentStore):
+    """Reads as absent once while a concurrent writer already stored a record."""
+
+    def __init__(self, concurrent: SessionRecord) -> None:
+        super().__init__()
+        self.documents[concurrent.conversation_id] = session_record_to_document(concurrent)
+        self._first_read = True
+
+    async def read(self, conversation_id: str):  # type: ignore[no-untyped-def]
+        if self._first_read:
+            self._first_read = False
+            return None
+        return await super().read(conversation_id)
+
+
+async def test_bootstrap_never_overwrites_a_concurrent_record() -> None:
+    concurrent = make_record(goal=make_goal(Action.UNLOCK_ACCOUNT, revision=1))
+    store = _RacingStore(concurrent)
+    outcome = await _service(store).handle_event(
+        "conversation-1", _voice_event("LOW_CONFIDENCE"), bootstrap=True
+    )
+    assert outcome.next_step is NextStep.LISTEN
+    stored = _stored(store)
+    assert stored.turn_count == concurrent.turn_count
+    assert stored.goal == concurrent.goal
+    assert stored.voice_retry_count == 1
+
+
+async def test_rejection_reasons_are_a_closed_vocabulary() -> None:
+    assert {reason.value for reason in RejectionReason} == {
+        "unknown_session",
+        "pre_turn_event_not_allowed",
+        "operation_missing",
+        "operation_mismatch",
+        "action_mismatch",
+        "dispatch_mismatch",
+        "revision_mismatch",
+        "illegal_transition",
+        "poll_sequence_conflict",
+        "password_presentation_conflict",
     }

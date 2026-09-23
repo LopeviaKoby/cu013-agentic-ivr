@@ -1,19 +1,20 @@
 """Durable session contract for the Thin Firestore Session Repository.
 
-Version 3 separates the semantic planes ADR-0010 requires without fusing
+Version 4 separates the semantic planes ADR-0010 requires without fusing
 them: the conversational plan, the identity authorization with its absolute
 TTL, the per-operation confirmation challenge and dispatch guard, the truth
 of the external operation, the bounded polling plane (sequence receipts and
-validated waiting feedback) and the password-presentation facts. The record
+validated waiting feedback), the password-presentation facts and the
+consecutive voice-retry counter the pre-turn bootstrap needs. The record
 stays small, closed and PII-free: only these fields reach Firestore, and raw
 DTMF, transcripts, raw RD bodies, unknown raw statuses, documents, entry
 dates, email addresses, passwords, tools, tool schemas, SDK clients and
 LangGraph internals never belong here.
 
-Version 1 and version 2 documents migrate in memory, fail-closed, on the
-next legitimate save; nothing here rewrites stored documents in bulk. A
-version 2 document is rejected when a field it carries cannot be translated
-honestly into the v3 planes instead of being silently dropped.
+Versions 1, 2 and 3 migrate in memory, fail-closed, on the next legitimate
+save; nothing here rewrites stored documents in bulk. A document is rejected
+when a field it carries cannot be translated honestly into the current
+planes instead of being silently dropped.
 """
 
 from collections.abc import Mapping
@@ -52,7 +53,7 @@ __all__ = [
     "session_record_to_document",
 ]
 
-SCHEMA_VERSION: Literal[3] = 3
+SCHEMA_VERSION: Literal[4] = 4
 
 IDENTITY_TTL = timedelta(minutes=30)
 
@@ -266,16 +267,18 @@ class ExternalOperation(BaseModel):
 class SessionRecord(BaseModel):
     """Small semantic session state; the closed document whitelist.
 
-    ``polling`` and ``password_presentation`` are the v3 planes for the
-    next-step-v1 lane; they stay ``None`` until the corresponding v1 events
-    populate them. The three ``experimental_*`` planes belong to Exp 0009
-    only: they stay ``None``/empty unless an explicit experimental opt-in
-    populated them for a synthetic session.
+    ``polling`` and ``password_presentation`` are the next-step-v1 planes;
+    they stay ``None`` until the corresponding v1 events populate them.
+    ``voice_retry_count`` is the consecutive voice-failure counter the v1
+    pre-turn bootstrap owns; it resets to zero only after a valid persisted
+    ``/turns``. The three ``experimental_*`` planes belong to Exp 0009 only:
+    they stay ``None``/empty unless an explicit experimental opt-in populated
+    them for a synthetic session.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[3] = SCHEMA_VERSION
+    schema_version: Literal[4] = SCHEMA_VERSION
     conversation_id: str = Field(min_length=1)
     turn_count: int = Field(ge=0)
     revision: int = Field(ge=0)
@@ -286,6 +289,7 @@ class SessionRecord(BaseModel):
     external_operation: ExternalOperation | None
     polling: PollingState | None = None
     password_presentation: PasswordPresentation | None = None
+    voice_retry_count: int = Field(default=0, ge=0)
     experimental_procedure: ExperimentalProcedureState | None = None
     experimental_suspended: ExperimentalSuspendedProcedure | None = None
     experimental_window: tuple[ExperimentalTurnPair, ...] = ()
@@ -366,6 +370,34 @@ class _LegacySessionRecordV2(BaseModel):
     updated_at: AwareDatetime
 
 
+class _LegacySessionRecordV3(BaseModel):
+    """Version 3 durable contract, validated with the closed v3 whitelist.
+
+    Every v3 field exists in v4 unchanged, so the migration only adds the
+    voice-retry counter at zero; the polling and password-presentation planes
+    keep their exact stored values.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[3] = 3
+    conversation_id: str = Field(min_length=1)
+    turn_count: int = Field(ge=0)
+    revision: int = Field(ge=0)
+    goal: ConversationGoal | None
+    identity: IdentityState
+    confirmation: ConfirmationChallenge | None
+    dispatch: AuthorizedDispatch | None
+    external_operation: ExternalOperation | None
+    polling: PollingState | None = None
+    password_presentation: PasswordPresentation | None = None
+    experimental_procedure: ExperimentalProcedureState | None = None
+    experimental_suspended: ExperimentalSuspendedProcedure | None = None
+    experimental_window: tuple[ExperimentalTurnPair, ...] = ()
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+
+
 def _migrate_v1(document: Mapping[str, object]) -> SessionRecord:
     """Migrate a version 1 document fail-closed.
 
@@ -427,6 +459,35 @@ def _migrate_v2(document: Mapping[str, object]) -> SessionRecord:
         external_operation=legacy.external_operation,
         polling=None,
         password_presentation=None,
+        experimental_procedure=legacy.experimental_procedure,
+        experimental_suspended=legacy.experimental_suspended,
+        experimental_window=legacy.experimental_window,
+        created_at=legacy.created_at,
+        updated_at=legacy.updated_at,
+    )
+
+
+def _migrate_v3(document: Mapping[str, object]) -> SessionRecord:
+    """Migrate a version 3 document fail-closed into the v4 contract.
+
+    The translation is honest by construction: every v3 plane exists in v4
+    unchanged, and the only new v4 field starts at zero because a v3 document
+    never observed a voice-retry cycle. A v3 document with a field the closed
+    v3 whitelist does not define is rejected instead of migrated.
+    """
+    legacy = _LegacySessionRecordV3.model_validate(dict(document))
+    return SessionRecord(
+        conversation_id=legacy.conversation_id,
+        turn_count=legacy.turn_count,
+        revision=legacy.revision,
+        goal=legacy.goal,
+        identity=legacy.identity,
+        confirmation=legacy.confirmation,
+        dispatch=legacy.dispatch,
+        external_operation=legacy.external_operation,
+        polling=legacy.polling,
+        password_presentation=legacy.password_presentation,
+        voice_retry_count=0,
         experimental_procedure=legacy.experimental_procedure,
         experimental_suspended=legacy.experimental_suspended,
         experimental_window=legacy.experimental_window,
@@ -522,6 +583,7 @@ def session_record_to_document(record: SessionRecord) -> dict[str, object]:
             if record.password_presentation is not None
             else None
         ),
+        "voice_retry_count": record.voice_retry_count,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     }
@@ -541,12 +603,14 @@ def session_record_to_document(record: SessionRecord) -> dict[str, object]:
 
 
 def session_record_from_document(document: Mapping[str, object]) -> SessionRecord:
-    """Validate a stored document; versions 1 and 2 migrate in memory, fail-closed."""
+    """Validate a stored document; versions 1-3 migrate in memory, fail-closed."""
     version = document.get("schema_version")
     if version == 1:
         return _migrate_v1(document)
     if version == 2:
         return _migrate_v2(document)
+    if version == 3:
+        return _migrate_v3(document)
     if version == SCHEMA_VERSION:
         return SessionRecord.model_validate(dict(document))
     raise ValueError("unsupported durable schema version")

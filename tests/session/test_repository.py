@@ -86,6 +86,13 @@ class FakeDocumentReference:
     async def set(self, document: dict[str, object]) -> None:
         self._documents[self._conversation_id] = document
 
+    async def create(self, document: dict[str, object]) -> None:
+        if self._conversation_id in self._documents:
+            from google.api_core.exceptions import AlreadyExists
+
+            raise AlreadyExists("document already exists")
+        self._documents[self._conversation_id] = document
+
 
 class FakeCollectionReference:
     def __init__(self, documents: dict[str, dict[str, object]]) -> None:
@@ -110,7 +117,7 @@ class FakeAsyncClient:
 async def test_missing_session_loads_as_a_fresh_semantic_record(store) -> None:
     repository = SessionRepository(store)
     record = await repository.load("conversation-1")
-    assert record.schema_version == 3
+    assert record.schema_version == 4
     assert record.conversation_id == "conversation-1"
     assert record.turn_count == 0
     assert record.revision == 0
@@ -137,7 +144,7 @@ async def test_load_migrates_a_v1_document_in_memory_without_rewriting_it(store)
     store.documents["conversation-1"] = dict(V1_DOCUMENT)
     repository = SessionRepository(store)
     record = await repository.load("conversation-1")
-    assert record.schema_version == 3
+    assert record.schema_version == 4
     assert record.goal is not None
     assert record.goal.action is Action.UNLOCK_ACCOUNT
     assert record.identity.validated_at is None
@@ -148,18 +155,19 @@ async def test_load_migrates_a_v1_document_in_memory_without_rewriting_it(store)
     assert store.writes == 0
 
 
-async def test_saving_a_migrated_record_writes_the_v3_document(store) -> None:
+async def test_saving_a_migrated_record_writes_the_v4_document(store) -> None:
     store.documents["conversation-1"] = dict(V1_DOCUMENT)
     repository = SessionRepository(store)
     record = await repository.load("conversation-1")
     await repository.save(record)
-    assert store.documents["conversation-1"]["schema_version"] == 3
+    assert store.documents["conversation-1"]["schema_version"] == 4
     assert store.documents["conversation-1"]["identity"] == {
         "validated_at": None,
         "caller_failures": 0,
     }
     assert store.documents["conversation-1"]["polling"] is None
     assert store.documents["conversation-1"]["password_presentation"] is None
+    assert store.documents["conversation-1"]["voice_retry_count"] == 0
 
 
 async def test_load_rejects_a_document_with_unwhitelisted_fields(store) -> None:
@@ -204,5 +212,57 @@ async def test_firestore_adapter_reads_and_writes_one_collection() -> None:
 def test_repository_and_adapter_surfaces_are_async() -> None:
     assert inspect.iscoroutinefunction(SessionRepository.load)
     assert inspect.iscoroutinefunction(SessionRepository.save)
+    assert inspect.iscoroutinefunction(SessionRepository.load_existing)
+    assert inspect.iscoroutinefunction(SessionRepository.create_if_absent)
     assert inspect.iscoroutinefunction(FirestoreSessionDocumentStore.read)
     assert inspect.iscoroutinefunction(FirestoreSessionDocumentStore.write)
+    assert inspect.iscoroutinefunction(FirestoreSessionDocumentStore.create)
+
+
+async def test_load_existing_answers_real_existence(store) -> None:
+    repository = SessionRepository(store)
+    assert await repository.load_existing("conversation-1") is None
+    record = make_record()
+    await repository.save(record)
+    assert await repository.load_existing("conversation-1") == record
+    assert store.writes == 1
+
+
+async def test_create_if_absent_creates_once_and_reports_the_conflict(store) -> None:
+    repository = SessionRepository(store)
+    record = SessionRecord.new("conversation-1", now=NOW)
+    assert await repository.create_if_absent(record) is True
+    assert store.writes == 1
+    assert await repository.create_if_absent(record) is False
+    assert store.writes == 1
+    assert store.documents["conversation-1"]["turn_count"] == 0
+
+
+async def test_create_if_absent_never_overwrites_a_concurrent_record(store) -> None:
+    repository = SessionRepository(store)
+    existing = make_record()
+    await repository.save(existing)
+    fresh = SessionRecord.new("conversation-1", now=NOW)
+    assert await repository.create_if_absent(fresh) is False
+    stored = await repository.load("conversation-1")
+    assert stored.turn_count == existing.turn_count
+    assert stored.identity == existing.identity
+
+
+async def test_create_failure_is_a_safe_persistence_error(store) -> None:
+    store.fail_writes = True
+    repository = SessionRepository(store)
+    with pytest.raises(SessionPersistenceError):
+        await repository.create_if_absent(SessionRecord.new("conversation-1", now=NOW))
+
+
+async def test_firestore_adapter_create_is_conditional() -> None:
+    client = FakeAsyncClient()
+    document_store = FirestoreSessionDocumentStore(
+        client,  # type: ignore[arg-type]
+        "cu013_test_sessions",
+    )
+    document: dict[str, object] = {"conversation_id": "conversation-1", "schema_version": 4}
+    assert await document_store.create("conversation-1", document) is True
+    assert await document_store.create("conversation-1", document) is False
+    assert await document_store.read("conversation-1") == document

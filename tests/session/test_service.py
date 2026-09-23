@@ -8,7 +8,12 @@ from pydantic import ValidationError
 
 from app.conversation.errors import ModelTimeoutError
 from app.session.metrics import RecordingTurnMetrics
-from app.session.record import Action, OperationStatus, SessionRecord
+from app.session.record import (
+    Action,
+    OperationStatus,
+    SessionRecord,
+    session_record_to_document,
+)
 from app.session.repository import SessionPersistenceError
 from app.session.service import TurnService
 from app.session.turns import (
@@ -18,7 +23,15 @@ from app.session.turns import (
     build_turn_graph,
     initial_graph_state,
 )
-from tests.session.doubles import NOW, make_decision
+from tests.session.doubles import (
+    NOW,
+    make_decision,
+    make_dispatch,
+    make_goal,
+    make_identity,
+    make_operation,
+    make_record,
+)
 
 DOCUMENT_WHITELIST = {
     "schema_version",
@@ -32,6 +45,7 @@ DOCUMENT_WHITELIST = {
     "external_operation",
     "polling",
     "password_presentation",
+    "voice_retry_count",
     "created_at",
     "updated_at",
 }
@@ -78,7 +92,7 @@ async def test_first_turn_creates_a_valid_semantic_session(service, store) -> No
     result = await service.handle_turn("conversation-new", TurnInput())
     record = result.record
     assert record.conversation_id == "conversation-new"
-    assert record.schema_version == 3
+    assert record.schema_version == 4
     assert record.turn_count == 1
     assert record.revision == 1
     assert record.identity.validated_at is None
@@ -307,7 +321,7 @@ async def test_migrated_legacy_identity_never_authorizes_through_the_service(
     assert result.record.identity.validated_at is None
     assert result.record.confirmation is None
     assert result.record.dispatch is None
-    assert store.documents["conversation-legacy"]["schema_version"] == 3
+    assert store.documents["conversation-legacy"]["schema_version"] == 4
 
 
 async def test_pending_operation_legacy_status_is_preserved_on_migration(service, store) -> None:
@@ -317,6 +331,47 @@ async def test_pending_operation_legacy_status_is_preserved_on_migration(service
     assert result.record.external_operation.operation_id == "operation-legacy"
     assert result.record.external_operation.status is OperationStatus.PENDING
     assert result.record.dispatch is None
+
+
+async def test_a_valid_turn_preserves_technical_planes_and_resets_voice_retries(
+    service, store
+) -> None:
+    """The turn owns the plan/authorization planes, never the technical ones."""
+    seeded = make_record(
+        goal=make_goal(Action.RESET_PASSWORD, revision=1),
+        identity=make_identity(),
+        dispatch=make_dispatch(Action.RESET_PASSWORD, revision=1, operation_id="operation-1"),
+        external_operation=make_operation(Action.RESET_PASSWORD, operation_id="operation-1"),
+        polling={
+            "operation_id": "operation-1",
+            "started_at": NOW,
+            "observation_limit": 9,
+            "receipts": [{"sequence": 1, "fingerprint": "c" * 64}],
+            "last_feedback_attempt_at": NOW,
+            "feedback_messages": ["Sigo con tu solicitud."],
+        },
+        password_presentation={
+            "operation_id": "operation-1",
+            "action": "RESET_PASSWORD",
+            "goal_revision": 1,
+            "voice": "PLAYBACK_RETURNED",
+            "email_requested": 1,
+            "email_acceptance": "UNKNOWN",
+            "email_delivery": "UNKNOWN",
+            "presented_at": NOW,
+        },
+        voice_retry_count=2,
+    )
+    store.documents["conversation-1"] = session_record_to_document(seeded)
+    result = await service.handle_turn("conversation-1", TurnInput())
+    record = result.record
+    assert record.voice_retry_count == 0
+    assert record.polling is not None
+    assert record.polling.observations_used == 1
+    assert record.polling.feedback_messages == ("Sigo con tu solicitud.",)
+    assert record.password_presentation is not None
+    assert record.password_presentation.email_requested == 1
+    assert record.turn_count == 3
 
 
 async def test_segments_are_recorded_through_the_metrics_seam(repository, clock) -> None:

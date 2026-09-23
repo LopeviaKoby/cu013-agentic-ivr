@@ -69,6 +69,16 @@ class InMemorySessionDocumentStore:
             raise RuntimeError("injected session write failure")
         self.documents[conversation_id] = dict(document)
 
+    async def create(self, conversation_id: str, document: Mapping[str, object]) -> bool:
+        """Create only when absent, like the backend create-only precondition."""
+        if conversation_id in self.documents:
+            return False
+        self.writes += 1
+        if self.fail_writes:
+            raise RuntimeError("injected session create failure")
+        self.documents[conversation_id] = dict(document)
+        return True
+
 
 class FakePollingFeedbackComposer:
     """Deterministic composer double; records calls, returns a canned message."""

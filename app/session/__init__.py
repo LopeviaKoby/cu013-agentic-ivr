@@ -25,6 +25,7 @@ from app.session.integration import (
     IntegrationOutcome,
     NextStepIntegrationEvent,
     PasswordPresentationResultEvent,
+    RejectionReason,
     VoiceInputFailureEvent,
     project_operation_state,
 )
@@ -162,6 +163,7 @@ __all__ = [
     "PollingFeedbackRequest",
     "PollingState",
     "ProcedureObservation",
+    "RejectionReason",
     "SequenceDecision",
     "SessionDocumentStore",
     "SessionPersistenceError",

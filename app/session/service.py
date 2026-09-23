@@ -43,7 +43,10 @@ def consolidate(
 
     The SessionRecord constructor validates every value, so a malformed
     ephemeral state fails before anything is persisted. Transcripts and model
-    decisions never enter this projection.
+    decisions never enter this projection. Planes the turn does not own
+    (polling and password presentation) are preserved from the previous
+    record instead of being partially rebuilt, and a valid persisted turn
+    closes the consecutive voice-retry cycle.
     """
     return SessionRecord(
         conversation_id=previous.conversation_id,
@@ -54,6 +57,9 @@ def consolidate(
         confirmation=state["confirmation"],
         dispatch=state["dispatch"],
         external_operation=state["external_operation"],
+        polling=previous.polling,
+        password_presentation=previous.password_presentation,
+        voice_retry_count=0,
         experimental_procedure=state["experimental_procedure"],
         experimental_suspended=state["experimental_suspended"],
         experimental_window=state["experimental_window"],

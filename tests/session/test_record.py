@@ -32,6 +32,7 @@ DOCUMENT_WHITELIST = {
     "external_operation",
     "polling",
     "password_presentation",
+    "voice_retry_count",
     "created_at",
     "updated_at",
 }
@@ -271,6 +272,71 @@ def test_migration_rejects_an_unknown_legacy_status() -> None:
     )
     with pytest.raises(ValidationError):
         session_record_from_document(document)
+
+
+def make_v3_document(**overrides: object) -> dict[str, object]:
+    document: dict[str, object] = {
+        "schema_version": 3,
+        "conversation_id": "conversation-1",
+        "turn_count": 5,
+        "revision": 5,
+        "goal": {"action": "UNLOCK_ACCOUNT", "revision": 2},
+        "identity": {"validated_at": NOW, "caller_failures": 0},
+        "confirmation": None,
+        "dispatch": {
+            "operation_id": "operation-1",
+            "action": "UNLOCK_ACCOUNT",
+            "goal_revision": 2,
+            "challenge_id": "challenge-1",
+            "authorized_at": NOW,
+        },
+        "external_operation": {
+            "operation_id": "operation-1",
+            "action": "UNLOCK_ACCOUNT",
+            "status": "pending",
+            "delivery": None,
+            "last_progress_feedback_at": None,
+            "progress_feedback_index": 0,
+        },
+        "polling": {
+            "operation_id": "operation-1",
+            "started_at": NOW,
+            "observation_limit": 9,
+            "receipts": [{"sequence": 1, "fingerprint": "b" * 64}],
+            "last_feedback_attempt_at": NOW,
+            "feedback_messages": ["Sigo con tu solicitud."],
+        },
+        "password_presentation": None,
+        "created_at": NOW,
+        "updated_at": NOW,
+    }
+    document.update(overrides)
+    return document
+
+
+def test_v3_document_migrates_to_v4_with_zero_voice_retries() -> None:
+    record = session_record_from_document(make_v3_document())
+    assert record.schema_version == SCHEMA_VERSION
+    assert record.voice_retry_count == 0
+    assert record.polling is not None
+    assert record.polling.observations_used == 1
+    assert record.polling.feedback_messages == ("Sigo con tu solicitud.",)
+    assert record.dispatch is not None
+    assert record.turn_count == 5
+
+
+def test_v3_document_with_an_unwhitelisted_field_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        session_record_from_document(make_v3_document(voice_retry_count=3))
+
+
+def test_voice_retry_count_round_trips_and_is_never_negative() -> None:
+    record = make_record(voice_retry_count=2)
+    document = session_record_to_document(record)
+    assert document["voice_retry_count"] == 2
+    assert session_record_from_document(document) == record
+    with pytest.raises(ValidationError):
+        make_record(voice_retry_count=-1)
 
 
 def test_v2_document_migrates_to_v3_with_empty_new_planes() -> None:

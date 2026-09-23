@@ -390,14 +390,34 @@ class IntegrationOutcome(BaseModel):
     command: ExternalActionCommand | None = None
 
 
+class RejectionReason(StrEnum):
+    """Closed rejection reasons; only these values are ever logged or raised.
+
+    The public HTTP response keeps its own contractual taxonomy; this enum is
+    the normalized internal vocabulary telemetry uses, so no payload value,
+    operation id or free text can reach a log line through a rejection.
+    """
+
+    UNKNOWN_SESSION = "unknown_session"
+    PRE_TURN_EVENT_NOT_ALLOWED = "pre_turn_event_not_allowed"
+    OPERATION_MISSING = "operation_missing"
+    OPERATION_MISMATCH = "operation_mismatch"
+    ACTION_MISMATCH = "action_mismatch"
+    DISPATCH_MISMATCH = "dispatch_mismatch"
+    REVISION_MISMATCH = "revision_mismatch"
+    ILLEGAL_TRANSITION = "illegal_transition"
+    POLL_SEQUENCE_CONFLICT = "poll_sequence_conflict"
+    PASSWORD_PRESENTATION_CONFLICT = "password_presentation_conflict"
+
+
 class IntegrationEventRejected(Exception):
     """The event cannot be correlated with the durable session or operation.
 
-    Only a static reason travels; payload values never do.
+    Only a closed reason travels; payload values never do.
     """
 
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
+    def __init__(self, reason: RejectionReason) -> None:
+        super().__init__(reason.value)
         self.reason = reason
 
 
@@ -432,17 +452,78 @@ class IntegrationEventService:
         self._composer: PollingFeedbackComposer = composer or NullPollingFeedbackComposer()
 
     async def handle_event(
-        self, conversation_id: str, event: IntegrationEvent | NextStepIntegrationEvent
+        self,
+        conversation_id: str,
+        event: IntegrationEvent | NextStepIntegrationEvent,
+        *,
+        bootstrap: bool = False,
     ) -> IntegrationOutcome:
-        """Apply one technical event after correlating it with the session."""
+        """Apply one technical event after correlating it with the session.
+
+        ``bootstrap`` is the next-step-v1 policy: only a closed v1 voice
+        failure may create a missing session. Existence is answered by
+        ``load_existing`` so a durable pre-turn record is never confused with
+        an absent one, and no other first event ever creates a document.
+        """
         now = self._clock()
-        record = await self._repository.load(conversation_id, now=now)
-        if record.turn_count == 0:
-            raise IntegrationEventRejected("unknown session")
-        updated, outcome, changed = await self._apply(record, event, now=now)
+        existing = await self._repository.load_existing(conversation_id)
+        if existing is None:
+            if bootstrap and isinstance(event, VoiceInputFailureEvent):
+                return await self._bootstrap_voice_failure(conversation_id, event, now=now)
+            raise IntegrationEventRejected(RejectionReason.UNKNOWN_SESSION)
+        if existing.turn_count == 0:
+            if bootstrap and isinstance(event, VoiceInputFailureEvent):
+                return await self._apply_pre_turn_voice_failure(existing, event, now=now)
+            raise IntegrationEventRejected(RejectionReason.PRE_TURN_EVENT_NOT_ALLOWED)
+        updated, outcome, changed = await self._apply(existing, event, now=now)
         if changed:
             await self._repository.save(updated)
         return outcome
+
+    async def _bootstrap_voice_failure(
+        self,
+        conversation_id: str,
+        event: VoiceInputFailureEvent,
+        *,
+        now: datetime,
+    ) -> IntegrationOutcome:
+        """Create the minimal pre-turn record for one v1 voice failure.
+
+        The create is conditional: a record that appeared during the race is
+        never overwritten, and the event is then applied to the real record.
+        """
+        record = SessionRecord.new(conversation_id, now=now).model_copy(
+            update={"voice_retry_count": 1}
+        )
+        created = await self._repository.create_if_absent(record)
+        if created:
+            return self._voice_failure_outcome(record, event)
+        existing = await self._repository.load_existing(conversation_id)
+        if existing is None:
+            raise IntegrationEventRejected(RejectionReason.UNKNOWN_SESSION)
+        if existing.turn_count == 0:
+            return await self._apply_pre_turn_voice_failure(existing, event, now=now)
+        updated, outcome, changed = await self._apply(existing, event, now=now)
+        if changed:
+            await self._repository.save(updated)
+        return outcome
+
+    async def _apply_pre_turn_voice_failure(
+        self,
+        record: SessionRecord,
+        event: VoiceInputFailureEvent,
+        *,
+        now: datetime,
+    ) -> IntegrationOutcome:
+        """Increment the consecutive voice-retry counter before the first turn."""
+        updated = record.model_copy(
+            update={
+                "voice_retry_count": record.voice_retry_count + 1,
+                "updated_at": now,
+            }
+        )
+        await self._repository.save(updated)
+        return self._voice_failure_outcome(updated, event)
 
     async def _apply(
         self,
@@ -593,26 +674,32 @@ class IntegrationEventService:
     def _apply_voice_failure(
         self, record: SessionRecord, event: VoiceInputFailureEvent, *, now: datetime
     ) -> tuple[SessionRecord, IntegrationOutcome, bool]:
-        """A failed voice capture never authorizes and never consumes identity."""
-        challenged = record.confirmation is not None
-        if challenged:
-            # SPEC: timeout, silence or insufficient ASR invalidates the
-            # confirmation attempt; identity stays valid and the caller is
-            # asked again without consuming identity attempts.
-            updated = record.model_copy(update={"confirmation": None, "updated_at": now})
-            changed = True
-        else:
-            updated = record
-            changed = False
-        return (
-            updated,
-            IntegrationOutcome(
-                directive=IntegrationDirective.RETRY_SPEECH,
-                next_step=NextStep.LISTEN,
-                message=VOICE_RETRY_MESSAGES[event.reason],
-                operation_state=project_operation_state(record.external_operation),
-            ),
-            changed,
+        """A failed voice capture never authorizes and never consumes identity.
+
+        SPEC: timeout, silence or insufficient ASR invalidates the confirmation
+        attempt; identity stays valid and the caller is asked again without
+        consuming identity attempts. Every received voice failure advances the
+        consecutive voice-retry counter, which only a valid persisted turn
+        resets.
+        """
+        updated = record.model_copy(
+            update={
+                "confirmation": None,
+                "voice_retry_count": record.voice_retry_count + 1,
+                "updated_at": now,
+            }
+        )
+        return (updated, self._voice_failure_outcome(updated, event), True)
+
+    def _voice_failure_outcome(
+        self, record: SessionRecord, event: VoiceInputFailureEvent
+    ) -> IntegrationOutcome:
+        """Deterministic retry prompt; it never creates or changes business state."""
+        return IntegrationOutcome(
+            directive=IntegrationDirective.RETRY_SPEECH,
+            next_step=NextStep.LISTEN,
+            message=VOICE_RETRY_MESSAGES[event.reason],
+            operation_state=project_operation_state(record.external_operation),
         )
 
     # --- legacy action events --------------------------------------------
@@ -642,15 +729,15 @@ class IntegrationEventService:
         operation = record.external_operation
         dispatch = record.dispatch
         if operation is None:
-            raise IntegrationEventRejected("operation")
+            raise IntegrationEventRejected(RejectionReason.OPERATION_MISSING)
         if operation.operation_id != event.operation_id:
-            raise IntegrationEventRejected("operation_id")
+            raise IntegrationEventRejected(RejectionReason.OPERATION_MISMATCH)
         if operation.action is not event.action:
-            raise IntegrationEventRejected("action")
+            raise IntegrationEventRejected(RejectionReason.ACTION_MISMATCH)
         if dispatch is None or dispatch.operation_id != operation.operation_id:
-            raise IntegrationEventRejected("dispatch")
+            raise IntegrationEventRejected(RejectionReason.DISPATCH_MISMATCH)
         if dispatch.action is not event.action or dispatch.goal_revision != event.goal_revision:
-            raise IntegrationEventRejected("revision")
+            raise IntegrationEventRejected(RejectionReason.REVISION_MISMATCH)
         return operation, dispatch
 
     def _apply_action_status(
@@ -711,7 +798,7 @@ class IntegrationEventService:
                 )
             if operation.status is OperationStatus.CONFIRMED:
                 return (record, self._terminal_outcome(record, operation, speak=True), False)
-            raise IntegrationEventRejected("terminal transition")
+            raise IntegrationEventRejected(RejectionReason.ILLEGAL_TRANSITION)
         # Any known failure status: persist the failure the evidence supports.
         if operation.status in {OperationStatus.PENDING, OperationStatus.UNKNOWN}:
             updated = operation.model_copy(update={"status": OperationStatus.FAILED})
@@ -725,7 +812,7 @@ class IntegrationEventService:
             )
         if operation.status is OperationStatus.FAILED:
             return (record, self._terminal_outcome(record, operation, speak=True), False)
-        raise IntegrationEventRejected("terminal transition")
+        raise IntegrationEventRejected(RejectionReason.ILLEGAL_TRANSITION)
 
     def _apply_dispatch_error(
         self,
@@ -756,7 +843,7 @@ class IntegrationEventService:
                 ),
                 False,
             )
-        raise IntegrationEventRejected("terminal transition")
+        raise IntegrationEventRejected(RejectionReason.ILLEGAL_TRANSITION)
 
     def _apply_action_error(
         self,
@@ -806,14 +893,14 @@ class IntegrationEventService:
         polling = self._polling_for(record, operation, now=now)
         decision = classify_sequence(polling, sequence=event.poll_sequence, fingerprint=fingerprint)
         if decision is SequenceDecision.CONFLICT:
-            raise IntegrationEventRejected("poll_sequence")
+            raise IntegrationEventRejected(RejectionReason.POLL_SEQUENCE_CONFLICT)
         if decision is SequenceDecision.REPLAY:
             # A replay never consumes budget and never re-speaks anything.
             return (record, self._replay_outcome(record, operation), False)
         if not kind.is_terminal() and polling.budget_exhausted():
             # The GET budget is closed: a new non-terminal observation can no
             # longer extend polling. A terminal result is still reconciled.
-            raise IntegrationEventRejected("poll_sequence")
+            raise IntegrationEventRejected(RejectionReason.POLL_SEQUENCE_CONFLICT)
         consumed = append_receipt(polling, sequence=event.poll_sequence, fingerprint=fingerprint)
         record = record.model_copy(update={"polling": consumed, "updated_at": now})
         if kind is ObservationKind.UNRECOGNIZED:
@@ -852,7 +939,7 @@ class IntegrationEventService:
                 # The truth was already delivered: the observation consumes its
                 # sequence but never re-speaks the terminal phrase.
                 return (record, self._terminal_outcome(record, operation, speak=False), True)
-            raise IntegrationEventRejected("terminal transition")
+            raise IntegrationEventRejected(RejectionReason.ILLEGAL_TRANSITION)
         # Known failure status.
         if operation.status in {OperationStatus.PENDING, OperationStatus.UNKNOWN}:
             updated = operation.model_copy(update={"status": OperationStatus.FAILED})
@@ -866,7 +953,7 @@ class IntegrationEventService:
             )
         if operation.status is OperationStatus.FAILED:
             return (record, self._terminal_outcome(record, operation, speak=False), True)
-        raise IntegrationEventRejected("terminal transition")
+        raise IntegrationEventRejected(RejectionReason.ILLEGAL_TRANSITION)
 
     async def _apply_action_error_v1(
         self,
@@ -881,7 +968,7 @@ class IntegrationEventService:
             return self._apply_dispatch_error(record, operation, now=now)
         sequence = event.poll_sequence
         if sequence is None:  # defensive: the closed schema already requires it
-            raise IntegrationEventRejected("poll_sequence")
+            raise IntegrationEventRejected(RejectionReason.POLL_SEQUENCE_CONFLICT)
         kind = ObservationKind.ERROR
         fingerprint = observation_fingerprint(
             kind,
@@ -892,11 +979,11 @@ class IntegrationEventService:
         polling = self._polling_for(record, operation, now=now)
         decision = classify_sequence(polling, sequence=sequence, fingerprint=fingerprint)
         if decision is SequenceDecision.CONFLICT:
-            raise IntegrationEventRejected("poll_sequence")
+            raise IntegrationEventRejected(RejectionReason.POLL_SEQUENCE_CONFLICT)
         if decision is SequenceDecision.REPLAY:
             return (record, self._replay_outcome(record, operation), False)
         if polling.budget_exhausted():
-            raise IntegrationEventRejected("poll_sequence")
+            raise IntegrationEventRejected(RejectionReason.POLL_SEQUENCE_CONFLICT)
         consumed = append_receipt(polling, sequence=sequence, fingerprint=fingerprint)
         record = record.model_copy(update={"polling": consumed, "updated_at": now})
         if not operation.is_active():
@@ -1032,20 +1119,20 @@ class IntegrationEventService:
         operation = record.external_operation
         dispatch = record.dispatch
         if operation is None:
-            raise IntegrationEventRejected("operation")
+            raise IntegrationEventRejected(RejectionReason.OPERATION_MISSING)
         if operation.operation_id != event.operation_id:
-            raise IntegrationEventRejected("operation_id")
+            raise IntegrationEventRejected(RejectionReason.OPERATION_MISMATCH)
         if operation.action is not Action.RESET_PASSWORD:
-            raise IntegrationEventRejected("action")
+            raise IntegrationEventRejected(RejectionReason.ACTION_MISMATCH)
         if dispatch is None or dispatch.operation_id != operation.operation_id:
-            raise IntegrationEventRejected("dispatch")
+            raise IntegrationEventRejected(RejectionReason.DISPATCH_MISMATCH)
         if (
             dispatch.action is not Action.RESET_PASSWORD
             or dispatch.goal_revision != event.goal_revision
         ):
-            raise IntegrationEventRejected("revision")
+            raise IntegrationEventRejected(RejectionReason.REVISION_MISMATCH)
         if operation.status is not OperationStatus.CONFIRMED:
-            raise IntegrationEventRejected("terminal transition")
+            raise IntegrationEventRejected(RejectionReason.ILLEGAL_TRANSITION)
         candidate = PasswordPresentation(
             operation_id=event.operation_id,
             action=event.action,
@@ -1066,7 +1153,7 @@ class IntegrationEventService:
             )
             if identical:
                 return (record, self._presentation_outcome(record, operation), False)
-            raise IntegrationEventRejected("password presentation")
+            raise IntegrationEventRejected(RejectionReason.PASSWORD_PRESENTATION_CONFLICT)
         updated = record.model_copy(update={"password_presentation": candidate, "updated_at": now})
         return (updated, self._presentation_outcome(updated, operation), True)
 
@@ -1197,6 +1284,7 @@ __all__ = [
     "IntegrationOutcome",
     "NextStepIntegrationEvent",
     "PasswordPresentationResultEvent",
+    "RejectionReason",
     "VoiceInputFailureEvent",
     "VoiceInputFailureReason",
     "project_operation_state",
