@@ -1,14 +1,19 @@
 """Durable session contract for the Thin Firestore Session Repository.
 
-Version 2 separates the semantic planes ADR-0010 requires without fusing
+Version 3 separates the semantic planes ADR-0010 requires without fusing
 them: the conversational plan, the identity authorization with its absolute
-TTL, the per-operation confirmation challenge and dispatch guard, and the
-truth of the external operation. The record stays small, closed and
-PII-free: only these fields reach Firestore, and raw DTMF, transcripts,
-tools, tool schemas, SDK clients and LangGraph internals never belong here.
+TTL, the per-operation confirmation challenge and dispatch guard, the truth
+of the external operation, the bounded polling plane (sequence receipts and
+validated waiting feedback) and the password-presentation facts. The record
+stays small, closed and PII-free: only these fields reach Firestore, and raw
+DTMF, transcripts, raw RD bodies, unknown raw statuses, documents, entry
+dates, email addresses, passwords, tools, tool schemas, SDK clients and
+LangGraph internals never belong here.
 
-Version 1 documents migrate in memory, fail-closed, on the next legitimate
-save; nothing here rewrites stored documents in bulk.
+Version 1 and version 2 documents migrate in memory, fail-closed, on the
+next legitimate save; nothing here rewrites stored documents in bulk. A
+version 2 document is rejected when a field it carries cannot be translated
+honestly into the v3 planes instead of being silently dropped.
 """
 
 from collections.abc import Mapping
@@ -26,24 +31,40 @@ from app.session.memory import (
 )
 
 __all__ = [
+    "DEFAULT_OBSERVATION_LIMIT",
+    "MAX_FEEDBACK_MESSAGES",
     "Action",
     "AuthorizedDispatch",
     "ConfirmationChallenge",
     "ConversationGoal",
     "DeliveryStatus",
+    "EmailAcceptance",
+    "EmailDelivery",
     "ExternalOperation",
     "IdentityState",
     "OperationStatus",
+    "PasswordPresentation",
+    "PlaybackVoice",
+    "PollReceipt",
+    "PollingState",
     "SessionRecord",
     "session_record_from_document",
     "session_record_to_document",
 ]
 
-SCHEMA_VERSION: Literal[2] = 2
+SCHEMA_VERSION: Literal[3] = 3
 
 IDENTITY_TTL = timedelta(minutes=30)
 
 MAX_CALLER_IDENTITY_FAILURES = 3
+
+# Poll budget: at most nine GET observations per external operation. The
+# runtime counts only new, non-replay observations; a replay never consumes
+# budget and a dispatch error never consumes GET budget.
+DEFAULT_OBSERVATION_LIMIT = 9
+
+# At most two composer-generated waiting messages are ever persisted.
+MAX_FEEDBACK_MESSAGES = 2
 
 
 class OperationStatus(StrEnum):
@@ -61,6 +82,93 @@ class DeliveryStatus(StrEnum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
     FAILED = "failed"
+
+
+class PollReceipt(BaseModel):
+    """One consumed polling observation; the raw external value never lands.
+
+    ``fingerprint`` is the SHA-256 of the closed observation kind (plus the
+    technical error fields when the observation was an error), so an unknown
+    RD literal can be deduplicated without ever being persisted.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    sequence: int = Field(gt=0)
+    fingerprint: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+
+
+class PollingState(BaseModel):
+    """Bounded polling plane for one external operation under next-step-v1.
+
+    It persists only what the sequence/dedupe/budget rules and the waiting
+    feedback require: when polling started, the observation limit, one receipt
+    per consumed observation, when the composer was last attempted and the
+    validated feedback messages already spoken. Transcripts, RD bodies, raw
+    unknown statuses, documents, dates, email and passwords never live here.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    operation_id: str = Field(min_length=1)
+    started_at: AwareDatetime
+    observation_limit: int = Field(gt=0)
+    receipts: tuple[PollReceipt, ...] = ()
+    last_feedback_attempt_at: AwareDatetime | None = None
+    feedback_messages: tuple[str, ...] = Field(default=(), max_length=MAX_FEEDBACK_MESSAGES)
+
+    @property
+    def observations_used(self) -> int:
+        """New observations consumed so far; replays never count."""
+        return len(self.receipts)
+
+    def budget_exhausted(self) -> bool:
+        """True once the observation limit was reached."""
+        return self.observations_used >= self.observation_limit
+
+
+class PlaybackVoice(StrEnum):
+    """How the password playback ended, as reported by XCALLY."""
+
+    PLAYBACK_RETURNED = "PLAYBACK_RETURNED"
+
+
+class EmailAcceptance(StrEnum):
+    """Whether the caller accepted the email channel; UNKNOWN until evidence."""
+
+    UNKNOWN = "UNKNOWN"
+
+
+class EmailDelivery(StrEnum):
+    """Whether the email was delivered; UNKNOWN until evidence exists."""
+
+    UNKNOWN = "UNKNOWN"
+
+
+class PasswordPresentation(BaseModel):
+    """Password-presentation facts reported after a confirmed reset.
+
+    The password itself never enters the backend: this plane records only the
+    closed playback/email facts XCALLY reports. It is a separate fact from
+    both the reset result and any legacy delivery status.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    operation_id: str = Field(min_length=1)
+    action: Action = Action.RESET_PASSWORD
+    goal_revision: int = Field(ge=0)
+    voice: PlaybackVoice
+    email_requested: int = Field(ge=0, le=1)
+    email_acceptance: EmailAcceptance
+    email_delivery: EmailDelivery
+    presented_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def _presentation_only_applies_to_reset(self) -> Self:
+        if self.action is not Action.RESET_PASSWORD:
+            raise ValueError("password presentation only applies to RESET_PASSWORD")
+        return self
 
 
 class ConversationGoal(BaseModel):
@@ -158,14 +266,16 @@ class ExternalOperation(BaseModel):
 class SessionRecord(BaseModel):
     """Small semantic session state; the closed document whitelist.
 
-    The three ``experimental_*`` planes belong to Exp 0009 only: they stay
-    ``None``/empty unless an explicit experimental opt-in populated them for
-    a synthetic session, and documents without them keep the exact v2 shape.
+    ``polling`` and ``password_presentation`` are the v3 planes for the
+    next-step-v1 lane; they stay ``None`` until the corresponding v1 events
+    populate them. The three ``experimental_*`` planes belong to Exp 0009
+    only: they stay ``None``/empty unless an explicit experimental opt-in
+    populated them for a synthetic session.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[2] = SCHEMA_VERSION
+    schema_version: Literal[3] = SCHEMA_VERSION
     conversation_id: str = Field(min_length=1)
     turn_count: int = Field(ge=0)
     revision: int = Field(ge=0)
@@ -174,6 +284,8 @@ class SessionRecord(BaseModel):
     confirmation: ConfirmationChallenge | None
     dispatch: AuthorizedDispatch | None
     external_operation: ExternalOperation | None
+    polling: PollingState | None = None
+    password_presentation: PasswordPresentation | None = None
     experimental_procedure: ExperimentalProcedureState | None = None
     experimental_suspended: ExperimentalSuspendedProcedure | None = None
     experimental_window: tuple[ExperimentalTurnPair, ...] = ()
@@ -227,6 +339,33 @@ class _LegacySessionRecordV1(BaseModel):
     updated_at: AwareDatetime
 
 
+class _LegacySessionRecordV2(BaseModel):
+    """Version 2 durable contract, validated with the closed v2 whitelist.
+
+    Every v2 field is translated 1:1 into v3: the operation delivery fact is
+    a real v2 fact and v3 keeps it in the same plane, so no stored value is
+    dropped or reinterpreted. A v2 document carrying anything the closed v2
+    whitelist does not define fails validation instead of being migrated.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[2] = 2
+    conversation_id: str = Field(min_length=1)
+    turn_count: int = Field(ge=0)
+    revision: int = Field(ge=0)
+    goal: ConversationGoal | None
+    identity: IdentityState
+    confirmation: ConfirmationChallenge | None
+    dispatch: AuthorizedDispatch | None
+    external_operation: ExternalOperation | None
+    experimental_procedure: ExperimentalProcedureState | None = None
+    experimental_suspended: ExperimentalSuspendedProcedure | None = None
+    experimental_window: tuple[ExperimentalTurnPair, ...] = ()
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+
+
 def _migrate_v1(document: Mapping[str, object]) -> SessionRecord:
     """Migrate a version 1 document fail-closed.
 
@@ -266,13 +405,43 @@ def _migrate_v1(document: Mapping[str, object]) -> SessionRecord:
     )
 
 
+def _migrate_v2(document: Mapping[str, object]) -> SessionRecord:
+    """Migrate a version 2 document fail-closed into the v3 contract.
+
+    The translation is honest by construction: every v2 plane exists in v3
+    unchanged, and the two new v3 planes start empty because a v2 document
+    never observed a v1 poll sequence or a password presentation. The
+    ``external_operation.delivery`` fact keeps its exact meaning and is not
+    reinterpreted as a presentation fact. A v2 document with a field the
+    closed v2 whitelist does not define is rejected instead of migrated.
+    """
+    legacy = _LegacySessionRecordV2.model_validate(dict(document))
+    return SessionRecord(
+        conversation_id=legacy.conversation_id,
+        turn_count=legacy.turn_count,
+        revision=legacy.revision,
+        goal=legacy.goal,
+        identity=legacy.identity,
+        confirmation=legacy.confirmation,
+        dispatch=legacy.dispatch,
+        external_operation=legacy.external_operation,
+        polling=None,
+        password_presentation=None,
+        experimental_procedure=legacy.experimental_procedure,
+        experimental_suspended=legacy.experimental_suspended,
+        experimental_window=legacy.experimental_window,
+        created_at=legacy.created_at,
+        updated_at=legacy.updated_at,
+    )
+
+
 def session_record_to_document(record: SessionRecord) -> dict[str, object]:
     """Map a record to the exact, closed Firestore document whitelist.
 
-    The v2 keys are always present. The experimental Exp 0009 keys are added
-    only when active, so documents without the experimental planes keep the
-    exact historical v2 shape. Stored v2 documents whose operation predates
-    the anti-silence metadata still validate: both fields default.
+    The v3 keys, including the ``polling`` and ``password_presentation``
+    planes, are always present. The experimental Exp 0009 keys are added only
+    when active. Stored documents whose operation predates the anti-silence
+    metadata still validate: those fields default.
     """
     goal = record.goal
     confirmation = record.confirmation
@@ -324,6 +493,35 @@ def session_record_to_document(record: SessionRecord) -> dict[str, object]:
             if operation is not None
             else None
         ),
+        "polling": (
+            {
+                "operation_id": record.polling.operation_id,
+                "started_at": record.polling.started_at,
+                "observation_limit": record.polling.observation_limit,
+                "receipts": [
+                    {"sequence": receipt.sequence, "fingerprint": receipt.fingerprint}
+                    for receipt in record.polling.receipts
+                ],
+                "last_feedback_attempt_at": record.polling.last_feedback_attempt_at,
+                "feedback_messages": list(record.polling.feedback_messages),
+            }
+            if record.polling is not None
+            else None
+        ),
+        "password_presentation": (
+            {
+                "operation_id": record.password_presentation.operation_id,
+                "action": record.password_presentation.action.value,
+                "goal_revision": record.password_presentation.goal_revision,
+                "voice": record.password_presentation.voice.value,
+                "email_requested": record.password_presentation.email_requested,
+                "email_acceptance": record.password_presentation.email_acceptance.value,
+                "email_delivery": record.password_presentation.email_delivery.value,
+                "presented_at": record.password_presentation.presented_at,
+            }
+            if record.password_presentation is not None
+            else None
+        ),
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     }
@@ -343,10 +541,12 @@ def session_record_to_document(record: SessionRecord) -> dict[str, object]:
 
 
 def session_record_from_document(document: Mapping[str, object]) -> SessionRecord:
-    """Validate a stored document; version 1 migrates in memory, fail-closed."""
+    """Validate a stored document; versions 1 and 2 migrate in memory, fail-closed."""
     version = document.get("schema_version")
     if version == 1:
         return _migrate_v1(document)
+    if version == 2:
+        return _migrate_v2(document)
     if version == SCHEMA_VERSION:
         return SessionRecord.model_validate(dict(document))
     raise ValueError("unsupported durable schema version")

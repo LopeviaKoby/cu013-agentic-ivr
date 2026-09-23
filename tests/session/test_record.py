@@ -30,11 +30,44 @@ DOCUMENT_WHITELIST = {
     "confirmation",
     "dispatch",
     "external_operation",
+    "polling",
+    "password_presentation",
     "created_at",
     "updated_at",
 }
 
 PII_SENTINELS = ("SYNTHETIC-DOC-0000", "1900-01-01-SYNTHETIC", "SYNTHETIC-PASSWORD-0000")
+
+
+def make_v2_document(**overrides: object) -> dict[str, object]:
+    document: dict[str, object] = {
+        "schema_version": 2,
+        "conversation_id": "conversation-1",
+        "turn_count": 4,
+        "revision": 4,
+        "goal": {"action": "RESET_PASSWORD", "revision": 2},
+        "identity": {"validated_at": NOW, "caller_failures": 1},
+        "confirmation": None,
+        "dispatch": {
+            "operation_id": "operation-1",
+            "action": "RESET_PASSWORD",
+            "goal_revision": 2,
+            "challenge_id": "challenge-1",
+            "authorized_at": NOW,
+        },
+        "external_operation": {
+            "operation_id": "operation-1",
+            "action": "RESET_PASSWORD",
+            "status": "pending",
+            "delivery": None,
+            "last_progress_feedback_at": NOW,
+            "progress_feedback_index": 2,
+        },
+        "created_at": NOW,
+        "updated_at": NOW + timedelta(minutes=3),
+    }
+    document.update(overrides)
+    return document
 
 
 def make_v1_document(**overrides: object) -> dict[str, object]:
@@ -238,6 +271,122 @@ def test_migration_rejects_an_unknown_legacy_status() -> None:
     )
     with pytest.raises(ValidationError):
         session_record_from_document(document)
+
+
+def test_v2_document_migrates_to_v3_with_empty_new_planes() -> None:
+    record = session_record_from_document(make_v2_document())
+    assert record.schema_version == SCHEMA_VERSION
+    assert record.goal is not None and record.goal.revision == 2
+    assert record.identity.validated_at == NOW
+    assert record.identity.caller_failures == 1
+    assert record.dispatch is not None and record.dispatch.operation_id == "operation-1"
+    assert record.external_operation is not None
+    assert record.external_operation.progress_feedback_index == 2
+    assert record.polling is None
+    assert record.password_presentation is None
+    assert record.turn_count == 4
+    assert record.updated_at == NOW + timedelta(minutes=3)
+
+
+def test_v2_delivery_fact_is_translated_unchanged_not_reinterpreted() -> None:
+    document = make_v2_document(
+        external_operation={
+            "operation_id": "operation-1",
+            "action": "RESET_PASSWORD",
+            "status": "confirmed",
+            "delivery": "confirmed",
+            "last_progress_feedback_at": None,
+            "progress_feedback_index": 0,
+        }
+    )
+    record = session_record_from_document(document)
+    assert record.external_operation is not None
+    assert record.external_operation.status is OperationStatus.CONFIRMED
+    assert record.external_operation.delivery is DeliveryStatus.CONFIRMED
+    assert record.password_presentation is None
+
+
+def test_v2_document_with_an_unwhitelisted_field_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        session_record_from_document(make_v2_document(password="SYNTHETIC-PASSWORD-0000"))
+
+
+def test_v2_document_with_a_non_v2_plane_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        session_record_from_document(make_v2_document(polling={"operation_id": "operation-1"}))
+
+
+def test_v3_polling_plane_persists_receipts_and_validated_feedback() -> None:
+    fingerprint = "a" * 64
+    record = make_record(
+        polling={
+            "operation_id": "operation-1",
+            "started_at": NOW,
+            "observation_limit": 9,
+            "receipts": [{"sequence": 1, "fingerprint": fingerprint}],
+            "last_feedback_attempt_at": NOW,
+            "feedback_messages": ["Sigo con tu solicitud."],
+        }
+    )
+    document = session_record_to_document(record)
+    assert document["polling"] == {
+        "operation_id": "operation-1",
+        "started_at": NOW,
+        "observation_limit": 9,
+        "receipts": [{"sequence": 1, "fingerprint": fingerprint}],
+        "last_feedback_attempt_at": NOW,
+        "feedback_messages": ["Sigo con tu solicitud."],
+    }
+    assert session_record_from_document(document) == record
+
+
+def test_v3_polling_plane_rejects_a_raw_status_or_extra_field() -> None:
+    with pytest.raises(ValidationError):
+        make_record(
+            polling={
+                "operation_id": "operation-1",
+                "started_at": NOW,
+                "observation_limit": 9,
+                "raw_status": "STATUS_NUEVO_RD",
+            }
+        )
+
+
+def test_v3_password_presentation_plane_persists_only_closed_facts() -> None:
+    record = make_record(
+        password_presentation={
+            "operation_id": "operation-1",
+            "action": "RESET_PASSWORD",
+            "goal_revision": 2,
+            "voice": "PLAYBACK_RETURNED",
+            "email_requested": 1,
+            "email_acceptance": "UNKNOWN",
+            "email_delivery": "UNKNOWN",
+            "presented_at": NOW,
+        }
+    )
+    document = session_record_to_document(record)
+    assert document["password_presentation"]["email_delivery"] == "UNKNOWN"  # type: ignore[index]
+    assert session_record_from_document(document) == record
+    rendered = repr(document)
+    for sentinel in PII_SENTINELS:
+        assert sentinel not in rendered
+
+
+def test_v3_password_presentation_rejects_a_non_reset_action() -> None:
+    with pytest.raises(ValidationError):
+        make_record(
+            password_presentation={
+                "operation_id": "operation-1",
+                "action": "UNLOCK_ACCOUNT",
+                "goal_revision": 2,
+                "voice": "PLAYBACK_RETURNED",
+                "email_requested": 0,
+                "email_acceptance": "UNKNOWN",
+                "email_delivery": "UNKNOWN",
+                "presented_at": NOW,
+            }
+        )
 
 
 def test_identity_state_never_holds_raw_identity_values() -> None:

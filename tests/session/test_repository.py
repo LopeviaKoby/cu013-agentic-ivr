@@ -110,7 +110,7 @@ class FakeAsyncClient:
 async def test_missing_session_loads_as_a_fresh_semantic_record(store) -> None:
     repository = SessionRepository(store)
     record = await repository.load("conversation-1")
-    assert record.schema_version == 2
+    assert record.schema_version == 3
     assert record.conversation_id == "conversation-1"
     assert record.turn_count == 0
     assert record.revision == 0
@@ -119,6 +119,8 @@ async def test_missing_session_loads_as_a_fresh_semantic_record(store) -> None:
     assert record.confirmation is None
     assert record.dispatch is None
     assert record.external_operation is None
+    assert record.polling is None
+    assert record.password_presentation is None
     assert record.created_at.tzinfo is not None
     assert store.reads == 1
     assert store.writes == 0
@@ -135,7 +137,7 @@ async def test_load_migrates_a_v1_document_in_memory_without_rewriting_it(store)
     store.documents["conversation-1"] = dict(V1_DOCUMENT)
     repository = SessionRepository(store)
     record = await repository.load("conversation-1")
-    assert record.schema_version == 2
+    assert record.schema_version == 3
     assert record.goal is not None
     assert record.goal.action is Action.UNLOCK_ACCOUNT
     assert record.identity.validated_at is None
@@ -146,16 +148,18 @@ async def test_load_migrates_a_v1_document_in_memory_without_rewriting_it(store)
     assert store.writes == 0
 
 
-async def test_saving_a_migrated_record_writes_the_v2_document(store) -> None:
+async def test_saving_a_migrated_record_writes_the_v3_document(store) -> None:
     store.documents["conversation-1"] = dict(V1_DOCUMENT)
     repository = SessionRepository(store)
     record = await repository.load("conversation-1")
     await repository.save(record)
-    assert store.documents["conversation-1"]["schema_version"] == 2
+    assert store.documents["conversation-1"]["schema_version"] == 3
     assert store.documents["conversation-1"]["identity"] == {
         "validated_at": None,
         "caller_failures": 0,
     }
+    assert store.documents["conversation-1"]["polling"] is None
+    assert store.documents["conversation-1"]["password_presentation"] is None
 
 
 async def test_load_rejects_a_document_with_unwhitelisted_fields(store) -> None:

@@ -30,6 +30,8 @@ DOCUMENT_WHITELIST = {
     "confirmation",
     "dispatch",
     "external_operation",
+    "polling",
+    "password_presentation",
     "created_at",
     "updated_at",
 }
@@ -76,7 +78,7 @@ async def test_first_turn_creates_a_valid_semantic_session(service, store) -> No
     result = await service.handle_turn("conversation-new", TurnInput())
     record = result.record
     assert record.conversation_id == "conversation-new"
-    assert record.schema_version == 2
+    assert record.schema_version == 3
     assert record.turn_count == 1
     assert record.revision == 1
     assert record.identity.validated_at is None
@@ -305,7 +307,7 @@ async def test_migrated_legacy_identity_never_authorizes_through_the_service(
     assert result.record.identity.validated_at is None
     assert result.record.confirmation is None
     assert result.record.dispatch is None
-    assert store.documents["conversation-legacy"]["schema_version"] == 2
+    assert store.documents["conversation-legacy"]["schema_version"] == 3
 
 
 async def test_pending_operation_legacy_status_is_preserved_on_migration(service, store) -> None:
