@@ -171,9 +171,11 @@ async def test_route_is_not_oracled_when_the_turn_carries_no_speech() -> None:
 
 
 async def test_per_repetition_verdicts_are_preserved() -> None:
+    # The route is not oracled here: a pending pre-auth goal projects the
+    # residual CONTINUE proposal onto COLLECT_IDENTITY by owner precedence.
     case = make_case(
         turns=[{"transcript": "uno"}],
-        expected={"route": "CONTINUE", "conversation_goal": "UNLOCK_ACCOUNT"},
+        expected={"conversation_goal": "UNLOCK_ACCOUNT"},
     )
     model = ScriptedModel(
         [

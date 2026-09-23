@@ -186,11 +186,15 @@ async def test_internal_engine_failure_is_a_safe_internal_error(
     assert store.writes == 0
 
 
-async def test_prior_request_turn_keeps_the_route_and_the_goal_is_durable(
+async def test_prior_request_turn_keeps_the_goal_and_requires_identity(
     client, model, store
 ) -> None:
-    """The runtime never rewrites a CONTINUE route, and the pre-auth goal is
-    representable and retakeable (the CNV-001 property)."""
+    """The pre-auth goal is durable and the runtime asks for the capability.
+
+    The owner precedence over the residual CONTINUE proposal: the model message
+    still answers the immediate need, but XCALLY receives COLLECT_IDENTITY
+    because the pending goal has no authorization yet.
+    """
     model.decision = make_decision(
         message="Puedo restablecer contraseñas y desbloquear cuentas. ¿Seguimos?",
         route=Route.CONTINUE,
@@ -201,7 +205,7 @@ async def test_prior_request_turn_keeps_the_route_and_the_goal_is_durable(
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["route"] == "CONTINUE"
+    assert body["route"] == "COLLECT_IDENTITY"
     assert body["message"] == model.decision.message
     document = store.documents["conversation-1"]
     assert document["goal"] == {"action": "UNLOCK_ACCOUNT", "revision": 1}
@@ -236,17 +240,19 @@ async def test_every_legal_route_reaches_the_response(client, model) -> None:
     )
     assert first.json()["route"] == "COLLECT_IDENTITY"
 
-    for decision in (
-        make_decision(route=Route.CONTINUE),
-        make_decision(route=Route.ESCALATE, handoff_cause="CALLER_REQUEST"),
-        make_decision(route=Route.COMPLETE),
+    # With a pending pre-auth goal, the residual CONTINUE proposal is projected
+    # onto COLLECT_IDENTITY; the terminal and handoff routes keep their guards.
+    for decision, expected_route in (
+        (make_decision(route=Route.CONTINUE), "COLLECT_IDENTITY"),
+        (make_decision(route=Route.ESCALATE, handoff_cause="CALLER_REQUEST"), "ESCALATE"),
+        (make_decision(route=Route.COMPLETE), "COMPLETE"),
     ):
         model.decision = decision
         response = await client.post(
             turns_url("conversation-1"), json={"transcript": SYNTHETIC_TRANSCRIPT}
         )
         assert response.status_code == 200
-        assert response.json()["route"] == decision.route.value
+        assert response.json()["route"] == expected_route
 
 
 async def test_illegal_route_is_replaced_by_the_safe_fallback(client, model, store) -> None:

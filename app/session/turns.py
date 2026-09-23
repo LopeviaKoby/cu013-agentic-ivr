@@ -630,6 +630,46 @@ def _handoff_cause_is_backed(
     return False
 
 
+def _requires_identity_collection(
+    decision: ModelTurnDecision | None,
+    *,
+    goal: ConversationGoal | None,
+    identity: IdentityState,
+    operation: ExternalOperation | None,
+    now: datetime,
+) -> bool:
+    """A pending supported goal without authorization needs identity capture.
+
+    This is the runtime precedence over the residual ``CONTINUE`` proposal: the
+    model may answer the immediate conversational need, but XCALLY must receive
+    the capability the state requires. It never fires while an external
+    operation is active or when the identity is already valid.
+    """
+    if decision is None or decision.route is not Route.CONTINUE:
+        return False
+    if goal is None or identity.is_valid_at(now):
+        return False
+    return operation is None or not operation.is_active()
+
+
+def _next_step_for_state(
+    decision: ModelTurnDecision | None,
+    *,
+    goal: ConversationGoal | None,
+    identity: IdentityState,
+    operation: ExternalOperation | None,
+    now: datetime,
+) -> NextStep:
+    """Derive the step from the consolidated state, not only from the proposal."""
+    if decision is None:
+        return NextStep.LISTEN
+    if _requires_identity_collection(
+        decision, goal=goal, identity=identity, operation=operation, now=now
+    ):
+        return NextStep.COLLECT_IDENTITY
+    return _NEXT_STEP_BY_MODEL_ROUTE[decision.route]
+
+
 def _guard_outcome(
     decision: ModelTurnDecision | None,
     *,
@@ -664,13 +704,23 @@ def _guard_outcome(
     if decision is None:
         return None
     if violations:
+        next_step = (
+            NextStep.COLLECT_IDENTITY
+            if _requires_identity_collection(
+                decision, goal=goal, identity=identity, operation=operation, now=now
+            )
+            else NextStep.LISTEN
+        )
         return TurnOutcomeState(
             message=SAFE_FALLBACK_MESSAGE,
-            next_step=NextStep.LISTEN,
+            next_step=next_step,
             violations=tuple(violations),
         )
     return TurnOutcomeState(
-        message=decision.message, next_step=_NEXT_STEP_BY_MODEL_ROUTE[decision.route]
+        message=decision.message,
+        next_step=_next_step_for_state(
+            decision, goal=goal, identity=identity, operation=operation, now=now
+        ),
     )
 
 

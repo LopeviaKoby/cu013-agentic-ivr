@@ -47,7 +47,6 @@ def assert_fallback(delta) -> None:  # type: ignore[no-untyped-def]
     outcome = delta["outcome"]
     assert outcome is not None
     assert outcome.message == SAFE_FALLBACK_MESSAGE
-    assert outcome.next_step is NextStep.LISTEN
     assert outcome.violations
 
 
@@ -73,12 +72,19 @@ def test_plan_registers_a_goal_before_identity() -> None:
     assert delta["outcome"].next_step is NextStep.COLLECT_IDENTITY
 
 
-def test_side_question_does_not_erase_the_goal() -> None:
+def test_side_question_does_not_erase_the_goal_and_still_requires_identity() -> None:
+    """A pending goal without authorization needs identity capture.
+
+    The owner precedence overrides the residual CONTINUE proposal: the model
+    message may answer the immediate need, but the runtime still asks XCALLY
+    for the capability the state requires.
+    """
     goal = make_goal(Action.UNLOCK_ACCOUNT)
     delta = advance_turn(make_state(goal=goal, model_decision=make_decision(route=Route.CONTINUE)))
     assert delta["goal"] == goal
     assert delta["outcome"] is not None
-    assert delta["outcome"].next_step is NextStep.LISTEN
+    assert delta["outcome"].message == "synthetic message"
+    assert delta["outcome"].next_step is NextStep.COLLECT_IDENTITY
 
 
 def test_reiterating_the_same_goal_does_not_bump_the_revision() -> None:
@@ -215,6 +221,10 @@ def test_expired_identity_requires_revalidation_and_blocks_dispatch() -> None:
     assert expired_affirmation["dispatch"] is None
     assert expired_affirmation["external_operation"] is None
     assert_fallback(expired_affirmation)
+    # The expired authorization leaves the goal pending, so the runtime
+    # requires a fresh identity capture instead of staying silent.
+    assert expired_affirmation["outcome"] is not None
+    assert expired_affirmation["outcome"].next_step is NextStep.COLLECT_IDENTITY
 
 
 def test_third_caller_failure_forces_escalation() -> None:
@@ -243,7 +253,7 @@ def test_technical_identity_failure_does_not_consume_an_attempt() -> None:
     )
     assert delta["identity"].caller_failures == 1
     assert delta["outcome"] is not None
-    assert delta["outcome"].next_step is NextStep.LISTEN
+    assert delta["outcome"].next_step is NextStep.COLLECT_IDENTITY
 
 
 def test_technical_identity_failure_never_escalates_by_itself() -> None:
@@ -545,7 +555,7 @@ def test_invalidated_challenge_is_replaced_by_a_new_one() -> None:
 # --- authorized dispatch ----------------------------------------------------
 
 
-def test_dispatch_without_identity_is_blocked() -> None:
+def test_dispatch_without_identity_is_blocked_and_identity_is_requested() -> None:
     delta = advance_turn(
         make_state(
             goal=make_goal(Action.UNLOCK_ACCOUNT),
@@ -558,6 +568,8 @@ def test_dispatch_without_identity_is_blocked() -> None:
     assert delta["dispatch"] is None
     assert delta["external_operation"] is None
     assert_fallback(delta)
+    assert delta["outcome"] is not None
+    assert delta["outcome"].next_step is NextStep.COLLECT_IDENTITY
 
 
 def test_dispatch_without_a_challenge_is_blocked() -> None:

@@ -102,7 +102,9 @@ async def test_dispatch_without_identity_never_emits_a_command(client, model, st
     )
     assert response.status_code == 200
     assert response.json()["command"] is None
-    assert response.json()["route"] == "CONTINUE"
+    # The pending goal without authorization requires identity capture, so the
+    # runtime never stays silent and never emits an unauthorized command.
+    assert response.json()["route"] == "COLLECT_IDENTITY"
     assert store.documents["conversation-1"]["dispatch"] is None
 
 
