@@ -271,7 +271,9 @@ async def test_next_step_events_require_the_strict_poll_sequence(client, store) 
         headers=NEXT_STEP_HEADERS,
     )
     assert missing.status_code == 422
-    non_integer = await client.post(
+    # A canonical decimal string is the accepted narrow compatibility and
+    # reaches the domain; a non-canonical form still fails closed.
+    canonical = await client.post(
         integration_events_url("conversation-1"),
         json={
             "event": "ACCOUNT_ACTION_STATUS",
@@ -283,7 +285,20 @@ async def test_next_step_events_require_the_strict_poll_sequence(client, store) 
         },
         headers=NEXT_STEP_HEADERS,
     )
-    assert non_integer.status_code == 422
+    assert canonical.status_code == 200
+    non_canonical = await client.post(
+        integration_events_url("conversation-1"),
+        json={
+            "event": "ACCOUNT_ACTION_STATUS",
+            "operation_id": "operation-1",
+            "action": "UNLOCK_ACCOUNT",
+            "goal_revision": 1,
+            "status": "NONE",
+            "poll_sequence": "01",
+        },
+        headers=NEXT_STEP_HEADERS,
+    )
+    assert non_canonical.status_code == 422
 
 
 # --- message normalization --------------------------------------------------

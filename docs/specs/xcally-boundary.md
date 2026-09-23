@@ -113,6 +113,18 @@ Proyecciones por endpoint:
 
 **Precedencia de estado (owner decision).** El runtime deriva `next_step` del estado consolidado, no sólo de la propuesta del modelo. Con un goal soportado pendiente, identidad no válida y ninguna operación activa, el `CONTINUE` residual se proyecta a `COLLECT_IDENTITY`: el mensaje del modelo sigue respondiendo la necesidad inmediata y el goal se conserva, pero XCALLY recibe la capacidad que el estado exige. Los guards de `COMPLETE` y `ESCALATE` conservan su precedencia.
 
+**Compatibilidad numérica estrecha (owner decision, 2026-09-23).** Cally Square puede renderizar un placeholder numérico como decimal canónico entre comillas. El boundary `next-step-v1` acepta, sólo en este whitelist cerrado:
+
+| Evento | Campos normalizables |
+|---|---|
+| `ACCOUNT_ACTION_STATUS` | `goal_revision`, `poll_sequence` |
+| `ACCOUNT_ACTION_ERROR` | `goal_revision`, `poll_sequence` sólo si está presente |
+| `PASSWORD_PRESENTATION_RESULT` | `goal_revision`, `email_requested` |
+
+Se aceptan enteros JSON nativos y strings decimales canónicas (`0|[1-9][0-9]*` con fullmatch ASCII): `"1"` se normaliza a `1` antes de validar. Cualquier otra forma (`""`, `"01"`, `" 1"`, `"1 "`, `"+1"`, `"-1"`, `"1.0"`, `"1e2"`, `true`, `1.0`, placeholders sin resolver) queda intacta y el schema estricto la rechaza. `bool` nunca pasa como número (`type(value) is int`). La normalización no renombra claves, no completa campos faltantes, no borra extras, no infiere `action`/`operation_id`, no altera `status`, no resuelve placeholders y no persiste la string; no aplica a `http_status`, `operation_id`, `status`, `action`, `phase`, `error_kind`, `voice`, otros enteros presentes o futuros, ni al carril legacy, que recibe el payload intacto. La tolerancia vive sólo en el adapter HTTP v1: los modelos de dominio exigen `goal_revision` estricto y rechazan `"1"` cuando se validan directamente. Los `422` siguen registrando únicamente `loc`/`type`, sin body ni valores.
+
+Evidencia de origen: la llamada `Ivr02-1790205174.363975` completó `UNLOCK_ACCOUNT → COLLECT_IDENTITY → VALID → confirmación → EXECUTE_ACTION → POST RD 200/NONE → GET RD 200/NONE` con `CALLERID(name)=${UNIQUEID}` consistente en POST y GET y RAW bodies ya entrecomillados sin AGI 510; el único fallo fue `ACCOUNT_ACTION_STATUS.poll_sequence:int_type`, es decir representación numérica del boundary, no JSON malformado ni correlación.
+
 **Bootstrap pre-turno (next-step-v1).** Un `VOICE_INPUT_FAILURE` v1 válido puede crear la sesión ausente con un documento mínimo (`turn_count=0`, sin goal, sin identidad, sin challenge, sin dispatch ni operación) mediante un create condicional; nunca sobrescribe un documento concurrente. Cualquier otro primer evento produce `409` y cero escrituras, y el carril legacy no gana bootstrap. Mientras la sesión siga pre-turno, sólo un voice failure v1 se aplica; identidad, acción y password se rechazan con `409 pre_turn_event_not_allowed`. Un `/turns` válido posterior continúa la misma sesión y cierra el ciclo de reintentos.
 
 ## Turno conversacional — `POST /turns`

@@ -19,6 +19,7 @@ active contract; the closed request models reject unknown fields.
 """
 
 import logging
+import re
 import time
 from typing import Annotated, cast
 from uuid import uuid4
@@ -73,6 +74,59 @@ router = APIRouter(prefix="/api/v1")
 
 LANE_TURNS = "turns"
 LANE_INTEGRATION_EVENTS = "integration_events"
+
+# XCALLY can render a numeric placeholder as a quoted canonical decimal. The
+# next-step-v1 boundary accepts those strings for this closed whitelist only
+# and converts them before the strict schema validates; anything else stays
+# untouched so the schema fails closed.
+_CANONICAL_DECIMAL = re.compile(r"0|[1-9][0-9]*")
+
+_NEXT_STEP_NUMERIC_FIELDS: dict[str, tuple[str, ...]] = {
+    "ACCOUNT_ACTION_STATUS": ("goal_revision", "poll_sequence"),
+    "ACCOUNT_ACTION_ERROR": ("goal_revision", "poll_sequence"),
+    "PASSWORD_PRESENTATION_RESULT": ("goal_revision", "email_requested"),
+}
+
+
+def _canonical_int(value: object) -> int | None:
+    """Return the int for a native int or a canonical decimal string, else None.
+
+    ``type(value) is int`` is deliberate: ``bool`` is an ``int`` subclass and
+    must never pass as a number.
+    """
+    if type(value) is int:
+        return value
+    if isinstance(value, str) and _CANONICAL_DECIMAL.fullmatch(value):
+        try:
+            return int(value, 10)
+        except ValueError:
+            return None
+    return None
+
+
+def _normalize_next_step_numbers(payload: object) -> object:
+    """Normalize only the whitelisted next-step-v1 numeric fields.
+
+    It never renames keys, fills missing fields, drops extras, trims text,
+    resolves placeholders, infers an action or operation, or persists the
+    original string: a non-canonical value is left untouched and the strict
+    domain schema rejects it.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    event = payload.get("event")
+    if not isinstance(event, str):
+        return payload
+    fields = _NEXT_STEP_NUMERIC_FIELDS.get(event)
+    if fields is None:
+        return payload
+    normalized = dict(payload)
+    for field in fields:
+        if field in normalized:
+            value = _canonical_int(normalized[field])
+            if value is not None:
+                normalized[field] = value
+    return normalized
 
 
 def _select_contract(request: Request, lane: str) -> ResponseContract:
@@ -259,7 +313,12 @@ async def handle_integration_event(
 async def _parse_integration_event(
     request: Request, contract: ResponseContract
 ) -> IntegrationEvent | NextStepIntegrationEvent:
-    """Parse the body against the closed schema the selector chose."""
+    """Parse the body against the closed schema the selector chose.
+
+    The numeric compatibility runs only for the next-step-v1 contract and only
+    over its closed field whitelist; the legacy payload reaches its adapter
+    untouched.
+    """
     try:
         payload = await request.json()
     except ValueError as exc:
@@ -267,6 +326,7 @@ async def _parse_integration_event(
     adapter: TypeAdapter[IntegrationEvent] | TypeAdapter[NextStepIntegrationEvent]
     if contract is ResponseContract.NEXT_STEP_V1:
         adapter = _NEXT_STEP_EVENT_ADAPTER
+        payload = _normalize_next_step_numbers(payload)
     else:
         adapter = _LEGACY_EVENT_ADAPTER
     try:

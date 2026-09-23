@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Accept canonical decimal strings for the closed numeric whitelist of the
+  `next-step-v1` boundary (`goal_revision`, `poll_sequence`,
+  `email_requested`) and normalize them to native ints before the strict
+  schema validates, so a quoted XCALLY placeholder no longer produces
+  `int_type`. The tolerance is boundary-only and whitelisted: non-canonical
+  forms, other fields, other events and the legacy lane stay untouched, and
+  the domain models keep rejecting numeric strings when validated directly.
+
 ### Added
 
 - Add the `next-step-v1` pre-turn bootstrap: a valid v1 voice failure may

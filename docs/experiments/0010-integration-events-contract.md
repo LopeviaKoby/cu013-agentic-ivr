@@ -211,6 +211,18 @@ aplicación (`turn handled`, motivo del rechazo) no llegaban a Cloud Logging
 porque el root logger no tenía handler y sólo `cu013.metrics` configuraba el
 suyo; la request log sí permitía correlacionar por URL y trace.
 
+Compatibilidad numérica estrecha (2026-09-23): la llamada
+`Ivr02-1790205174.363975` completó `UNLOCK_ACCOUNT → COLLECT_IDENTITY → VALID →
+confirmación → EXECUTE_ACTION → POST RD 200/NONE → GET RD 200/NONE`, con
+`CALLERID(name)=${UNIQUEID}` consistente en POST y GET y RAW bodies
+entrecomillados sin AGI 510. El evento `ACCOUNT_ACTION_STATUS` fue reconocido y
+`goal_revision` atravesó el schema; el único fallo fue
+`ACCOUNT_ACTION_STATUS.poll_sequence:int_type` (422). El candidato implementado
+acepta, sólo en el boundary `next-step-v1` y sólo en su whitelist cerrado,
+strings decimales canónicas antes del schema estricto (`"1" → 1`); el dominio
+permanece estricto y el carril legacy no cambia. Este hallazgo **no** reabre el
+experimento de `OPERATION_ID`: la correlación RD quedó resuelta en XCALLY.
+
 Política aceptada de voice retry (owner, 2026-09-23): hasta tres reintentos
 tras el intento inicial; el cuarto fallo consecutivo de captura responde
 `TRANSFER`, el contador durable se acota al máximo y un `/turns` válido

@@ -80,6 +80,7 @@ Sólo entonces: autorización explícita de deploy → deploy del candidato exac
 
 ## Reglas
 
+- La tolerancia de representación en el boundary debe ser explícita, acotada por whitelist y probada en ambas direcciones: el adapter HTTP puede normalizar una forma documentada y el schema de dominio permanece estricto, de modo que la validación directa del modelo siga rechazando la forma tolerada.
 - Usar fixtures sintéticos y PII-safe. El corpus de evaluación no contiene PII, DTMF crudo ni transcripciones reales identificables.
 - Los tests deterministas no dependen de Gemini, XCALLY ni AD/TIVIT reales.
 - No usar assertions de strings literales para lenguaje natural salvo que exista un contrato textual exacto.

@@ -12,7 +12,7 @@ La iteración de integración materializó los **contratos backend para el flujo
 
 La iteración `next-step-v1` materializó el contrato común de respuesta para la ventana E2E: selector explícito por header, envelope `{message, next_step, operation_state, command}` en ambos endpoints con el legacy intacto sin header, continuidad post-identidad sin segunda llamada al modelo, secuencia de polling con dedupe por fingerprint y presupuesto de 9 observaciones, `IDENTITY_INPUT_FAILURE`, hechos de presentación de contraseña, feedback de espera contextual por composer estrecho, contrato durable v3 con planos `polling` y `password_presentation` y wording aceptado fecha de ingreso.
 
-Las llamadas reales del 23-09-2026 contra la revisión etiquetada (`00028-6rb`) cerraron el diagnóstico: 409 por evento sin turno, 422 por body fuera del contrato, y 200 servido con el envelope **legacy** porque el flujo no seleccionó el header. El hallazgo fue `HEADER_MISMATCH` (el Switch de XCALLY esperaba `next_step` y su rama por defecto transfirió; no fue atención humana) más un gap de observabilidad (los INFO de aplicación no llegaban a Cloud Logging). La corrección vigente: header canónico `X-CU013-Response-Contract` sin alias, `next_step` derivado del estado consolidado (goal pendiente sin autorización exige `COLLECT_IDENTITY`), bootstrap pre-turno v1 con create condicional y contador durable de voice retry, schema v4, rejection reasons tipados, proyección segura de 422 y topología de logging `cu013` con eventos cerrados. Evaluación económica (deterministas/contrato/replay), sin full paired por no cambiar la semántica de decisión del modelo.
+Las llamadas reales del 23-09-2026 contra la revisión etiquetada (`00028-6rb`) cerraron el diagnóstico: 409 por evento sin turno, 422 por body fuera del contrato, y 200 servido con el envelope **legacy** porque el flujo no seleccionó el header. El hallazgo fue `HEADER_MISMATCH` (el Switch de XCALLY esperaba `next_step` y su rama por defecto transfirió; no fue atención humana) más un gap de observabilidad (los INFO de aplicación no llegaban a Cloud Logging). La corrección vigente: header canónico `X-CU013-Response-Contract` sin alias, `next_step` derivado del estado consolidado (goal pendiente sin autorización exige `COLLECT_IDENTITY`), bootstrap pre-turno v1 con create condicional y contador durable de voice retry, schema v4, rejection reasons tipados, proyección segura de 422 y topología de logging `cu013` con eventos cerrados. La última llamada real completó el camino feliz hasta RD (POST/GET 200/NONE con `CALLERID(name)=${UNIQUEID}` consistente) y el único fallo fue la representación numérica del boundary; se añadió una compatibilidad numérica estrecha (whitelist cerrada, strings decimales canónicas, sólo en el adapter v1) manteniendo el dominio y el carril legacy estrictos. Evaluación económica (deterministas/contrato/replay), sin full paired por no cambiar la semántica de decisión del modelo.
 
 El primer corte de acciones de cuenta es `RESET_PASSWORD` + `UNLOCK_ACCOUNT`, sin prioridad obligatoria entre ambas.
 
@@ -181,6 +181,12 @@ Validado el 23-09-2026 (next-step-v1, evaluación económica y deploy E2E):
 - gates deterministas en verde: `pytest` 548 pasando (dos fallos de entorno preexistentes por `google-cloud-firestore` 2.28.1 instalado frente al pin 2.30.0 del lock), Ruff, `ruff format --check`, MyPy y corpus `--validate-only` (47 casos, 0 problemas);
 - sin full paired por cambio de wording: la semántica de decisión del modelo conversacional no cambia; smoke real acotado contra la revisión etiquetada y deploy E2E con 0% de tráfico, `min=1` de revisión y tag `e2e-4b72dfa` reasignado.
 
+Validado el 23-09-2026 (compatibilidad numérica XCALLY):
+
+- la llamada `Ivr02-1790205174.363975` completó `UNLOCK_ACCOUNT → COLLECT_IDENTITY → VALID → confirmación → EXECUTE_ACTION → POST RD 200/NONE → GET RD 200/NONE`, con `CALLERID(name)=${UNIQUEID}` consistente y RAW bodies entrecomillados sin AGI 510; el único fallo fue `poll_sequence:int_type`;
+- implementada la compatibilidad numérica estrecha del boundary v1 (whitelist cerrada, sólo strings decimales canónicas, antes del schema estricto); el dominio y el carril legacy no cambian;
+- gates deterministas en verde con la cobertura nueva de helper, boundary, dominio, legacy sin coerción y logs PII-safe.
+
 Validado el 23-09-2026 (diagnóstico E2E y corrección de contrato):
 
 - cuatro llamadas reales contra `00028-6rb` con evidencia PII-safe: 409 por evento sin turno, dos 422 por body fuera del contrato y un 200 servido con envelope legacy; diagnóstico cerrado `HEADER_MISMATCH` (el Switch esperaba `next_step` y su rama por defecto transfirió; no fue atención humana);
@@ -190,7 +196,7 @@ Validado el 23-09-2026 (diagnóstico E2E y corrección de contrato):
 
 Pendiente:
 
-- despliegue de la revisión corregida (header canónico, routing por estado, bootstrap, logging) con 0% de tráfico, `min=1` de revisión y tag `e2e-4b72dfa` reasignado, y nueva llamada real del owner;
+- despliegue de la revisión con compatibilidad numérica (header canónico, routing por estado, bootstrap, logging y whitelist numérica) con 0% de tráfico, `min=1` de revisión y tag `e2e-4b72dfa` reasignado, y nueva llamada real del owner;
 - la política de voice retry quedó cerrada por el owner: hasta cuatro fallos consecutivos (tres reintentos), el cuarto transfiere y un `/turns` válido reinicia el contador; la apertura proactiva de challenge en la precedencia de estado queda descartada explícitamente (se conserva la invariante de side questions);
 - aceptación del owner de los contratos backend implementados y del [Experimento 0010](docs/experiments/0010-integration-events-contract.md);
 - diseñar en Cally Square el flujo `TEST_XCALLY_CU013_API_APPROACH` (rama `EXECUTE_ACTION`, captura/validación de identidad, `VOICE_INPUT_FAILURE`, adaptación de bloques RD y polling sin LLM) y desplegar de forma coordinada, porque el contrato nuevo reemplaza `IDENTITY_DATA`;
@@ -271,6 +277,7 @@ No añadir a esta instantánea trabajo especulativo o no aceptado.
 
 ## Hitos anteriores
 
+- Camino feliz E2E hasta RD y compatibilidad numérica: `UNLOCK_ACCOUNT → COLLECT_IDENTITY → VALID → confirmación → EXECUTE_ACTION → POST/GET RD 200/NONE` con `CALLERID(name)` consistente; whitelist numérica estrecha en el adapter v1 (`"1" → 1`) con dominio y legacy estrictos.
 - Diagnóstico E2E y corrección de contrato: cuatro llamadas reales analizadas (409 sin turno, 422 de body, 200 legacy), `HEADER_MISMATCH` cerrado, header canónico `X-CU013-Response-Contract`, `next_step` derivado del estado, bootstrap pre-turno v1, schema v4, rejection reasons tipados y logging `cu013` con eventos cerrados.
 - `next-step-v1`: contrato común de respuesta con selector explícito, continuidad post-identidad, polling secuenciado/deduplicado/acotado, presentación de contraseña, composer de feedback estrecho, schema v3 y wording fecha de ingreso; evaluación económica y revisión E2E etiquetada con 0% de tráfico y `min=1` de revisión.
 - Contratos backend del flujo `TEST_XCALLY_CU013_API_APPROACH`: command/event (`EXECUTE_ACTION` + `command` opaco, `/integration-events` con eventos PII-safe), máquina durable de operación, anti-silencio experimental y retirada del DTMF crudo; Experimento 0010 en curso y readiness de aliases/oráculo reconciliada.

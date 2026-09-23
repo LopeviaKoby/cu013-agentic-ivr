@@ -311,7 +311,7 @@ class AccountActionStatusV1Event(BaseModel):
     event: Literal["ACCOUNT_ACTION_STATUS"]
     operation_id: str = Field(min_length=1)
     action: Action
-    goal_revision: int = Field(ge=0)
+    goal_revision: int = Field(strict=True, ge=0)
     status: str = Field(min_length=1, max_length=64)
     poll_sequence: int = Field(strict=True, gt=0)
 
@@ -327,7 +327,7 @@ class AccountActionErrorV1Event(BaseModel):
     event: Literal["ACCOUNT_ACTION_ERROR"]
     operation_id: str = Field(min_length=1)
     action: Action
-    goal_revision: int = Field(ge=0)
+    goal_revision: int = Field(strict=True, ge=0)
     phase: ActionErrorPhase
     error_kind: ActionErrorKind
     http_status: int | None = None
@@ -354,7 +354,7 @@ class PasswordPresentationResultEvent(BaseModel):
     event: Literal["PASSWORD_PRESENTATION_RESULT"]
     operation_id: str = Field(min_length=1)
     action: Literal[Action.RESET_PASSWORD]
-    goal_revision: int = Field(ge=0)
+    goal_revision: int = Field(strict=True, ge=0)
     voice: Literal[PlaybackVoice.PLAYBACK_RETURNED]
     email_requested: int = Field(strict=True, ge=0, le=1)
     email_acceptance: Literal[EmailAcceptance.UNKNOWN]
