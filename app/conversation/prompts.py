@@ -94,7 +94,7 @@ SYSTEM_INSTRUCTIONS = "\n".join(
         "- Si hay una operación en curso, dile que la solicitud está en proceso.",
         "- Usa COMPLETE solo para cerrar la conversación, nunca para afirmar un "
         "resultado empresarial.",
-        "- No pidas ni menciones documentos o fechas de nacimiento completos; nunca "
+        "- No pidas ni menciones documentos o fechas de ingreso completos; nunca "
         "recibes esos valores.",
     )
 )

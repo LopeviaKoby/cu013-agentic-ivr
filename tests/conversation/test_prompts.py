@@ -67,6 +67,16 @@ def test_prompt_states_the_central_conversational_property() -> None:
     assert "sin perder el objetivo soportado vigente" in SYSTEM_INSTRUCTIONS
 
 
+def test_prompt_uses_entry_date_wording_not_birth_date() -> None:
+    """The accepted identity question is fecha de ingreso (owner decision).
+
+    This guard prevents reintroducing the discarded fecha de nacimiento
+    wording into the active prompt.
+    """
+    assert "fechas de ingreso" in SYSTEM_INSTRUCTIONS
+    assert "nacimiento" not in SYSTEM_INSTRUCTIONS
+
+
 def test_prompt_has_no_utterance_specific_patch_lists() -> None:
     for patch_phrase in ("pero antes", "antes dime", "primero,"):
         assert patch_phrase not in SYSTEM_INSTRUCTIONS
