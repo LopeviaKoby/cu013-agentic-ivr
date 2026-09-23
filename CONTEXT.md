@@ -191,7 +191,7 @@ Validado el 23-09-2026 (diagnóstico E2E y corrección de contrato):
 Pendiente:
 
 - despliegue de la revisión corregida (header canónico, routing por estado, bootstrap, logging) con 0% de tráfico, `min=1` de revisión y tag `e2e-4b72dfa` reasignado, y nueva llamada real del owner;
-- decisión del owner sobre la política de agotamiento de voice retry (máximo, `next_step`/mensaje y consumo en retry HTTP) y sobre la apertura proactiva de challenge en la precedencia de estado;
+- la política de voice retry quedó cerrada por el owner: hasta cuatro fallos consecutivos (tres reintentos), el cuarto transfiere y un `/turns` válido reinicia el contador; la apertura proactiva de challenge en la precedencia de estado queda descartada explícitamente (se conserva la invariante de side questions);
 - aceptación del owner de los contratos backend implementados y del [Experimento 0010](docs/experiments/0010-integration-events-contract.md);
 - diseñar en Cally Square el flujo `TEST_XCALLY_CU013_API_APPROACH` (rama `EXECUTE_ACTION`, captura/validación de identidad, `VOICE_INPUT_FAILURE`, adaptación de bloques RD y polling sin LLM) y desplegar de forma coordinada, porque el contrato nuevo reemplaza `IDENTITY_DATA`;
 - caller tests E2E y análisis con `xcally-call-evidence-analysis` antes de declarar integrados identidad, RD, polling, ASR/TTS, latencia o handoff;

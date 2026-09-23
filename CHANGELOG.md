@@ -213,6 +213,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Bound the consecutive voice-retry policy by owner decision: the first three
+  capture failures retry (`LISTEN`) and the fourth transfers, with the
+  durable counter capped at the maximum and reset only by a valid persisted
+  turn. It applies to `NO_SPEECH`, `LOW_CONFIDENCE` and `TIMEOUT`, never
+  calls the model, never creates a goal, never validates identity, never
+  opens a challenge, never creates an operation, never consumes identity
+  attempts and never retries the HTTP event automatically.
 - Rename the response-contract selector to the canonical
   `X-CU013-Response-Contract`; the name without `X-` is no longer read and is
   not kept as an alias because it had no accredited real consumer. A real

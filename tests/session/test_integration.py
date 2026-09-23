@@ -16,6 +16,7 @@ from app.session.integration import (
     ACTION_FAILURE_STATUSES,
     IDENTITY_TECHNICAL_FAILURE_MESSAGE,
     IDENTITY_VALID_MESSAGE,
+    MAX_VOICE_CAPTURE_FAILURES,
     OPERATION_FAILED_MESSAGE,
     PROGRESS_FEEDBACK_INTERVAL,
     PROGRESS_MESSAGES,
@@ -23,6 +24,7 @@ from app.session.integration import (
     UNLOCK_COMPLETED_MESSAGE,
     UNLOCK_CONFIRMATION_MESSAGE,
     VOICE_RETRY_MESSAGES,
+    VOICE_TRANSFER_MESSAGE,
     AccountActionErrorEvent,
     AccountActionStatusEvent,
     IdentityValidationOutcome,
@@ -787,6 +789,69 @@ async def test_bootstrap_never_overwrites_a_concurrent_record() -> None:
     assert stored.turn_count == concurrent.turn_count
     assert stored.goal == concurrent.goal
     assert stored.voice_retry_count == 1
+
+
+async def test_voice_failure_policy_transfers_after_four_consecutive_failures() -> None:
+    store = InMemorySessionDocumentStore()
+    _seed(
+        store,
+        make_record(goal=make_goal(Action.UNLOCK_ACCOUNT, revision=1), identity=make_identity()),
+    )
+    service = _service(store)
+    for expected_count in (1, 2, 3):
+        outcome = await service.handle_event(
+            "conversation-1", _voice_event("NO_SPEECH"), bootstrap=True
+        )
+        assert outcome.next_step is NextStep.LISTEN
+        assert outcome.directive is IntegrationDirective.RETRY_SPEECH
+        assert _stored(store).voice_retry_count == expected_count
+    fourth = await service.handle_event("conversation-1", _voice_event("NO_SPEECH"), bootstrap=True)
+    assert fourth.next_step is NextStep.TRANSFER
+    assert fourth.directive is IntegrationDirective.ESCALATE
+    assert fourth.message == VOICE_TRANSFER_MESSAGE
+    assert _stored(store).voice_retry_count == MAX_VOICE_CAPTURE_FAILURES
+    # Further failures keep the exhausted state bounded; no HTTP retry exists.
+    fifth = await service.handle_event("conversation-1", _voice_event("TIMEOUT"), bootstrap=True)
+    assert fifth.next_step is NextStep.TRANSFER
+    assert _stored(store).voice_retry_count == MAX_VOICE_CAPTURE_FAILURES
+
+
+@pytest.mark.parametrize("reason", ["NO_SPEECH", "LOW_CONFIDENCE", "TIMEOUT"])
+async def test_every_voice_failure_reason_transfers_on_the_fourth(reason: str) -> None:
+    store = InMemorySessionDocumentStore()
+    service = _service(store)
+    for _ in range(3):
+        outcome = await service.handle_event("conversation-1", _voice_event(reason), bootstrap=True)
+        assert outcome.next_step is NextStep.LISTEN
+        assert outcome.message == VOICE_RETRY_MESSAGES[reason]
+    fourth = await service.handle_event("conversation-1", _voice_event(reason), bootstrap=True)
+    assert fourth.next_step is NextStep.TRANSFER
+    stored = _stored(store)
+    assert stored.voice_retry_count == MAX_VOICE_CAPTURE_FAILURES
+    assert stored.turn_count == 0
+
+
+async def test_voice_policy_never_touches_goal_identity_or_operation() -> None:
+    store = InMemorySessionDocumentStore()
+    _seed(
+        store,
+        make_record(
+            goal=make_goal(Action.UNLOCK_ACCOUNT, revision=1),
+            identity=make_identity(NOW, failures=1),
+        ),
+    )
+    service = _service(store)
+    for _ in range(MAX_VOICE_CAPTURE_FAILURES):
+        await service.handle_event("conversation-1", _voice_event("LOW_CONFIDENCE"), bootstrap=True)
+    stored = _stored(store)
+    assert stored.identity.validated_at == NOW
+    assert stored.identity.caller_failures == 1
+    assert stored.goal is not None and stored.goal.revision == 1
+    assert stored.confirmation is None
+    assert stored.dispatch is None
+    assert stored.external_operation is None
+    assert stored.turn_count == 2
+    assert stored.revision == 2
 
 
 async def test_rejection_reasons_are_a_closed_vocabulary() -> None:

@@ -211,6 +211,13 @@ aplicación (`turn handled`, motivo del rechazo) no llegaban a Cloud Logging
 porque el root logger no tenía handler y sólo `cu013.metrics` configuraba el
 suyo; la request log sí permitía correlacionar por URL y trace.
 
+Política aceptada de voice retry (owner, 2026-09-23): hasta tres reintentos
+tras el intento inicial; el cuarto fallo consecutivo de captura responde
+`TRANSFER`, el contador durable se acota al máximo y un `/turns` válido
+persistido lo reinicia a 0. Sin llamada al modelo, sin goal, sin identidad,
+sin challenge, sin operación, sin consumir intentos de identidad y sin retry
+HTTP automático del evento.
+
 Correcciones implementadas en esta iteración: header canónico
 `X-CU013-Response-Contract` sin alias, `next_step` derivado del estado
 consolidado (goal pendiente sin autorización exige `COLLECT_IDENTITY`),

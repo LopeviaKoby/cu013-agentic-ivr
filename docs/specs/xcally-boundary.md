@@ -277,7 +277,7 @@ El documento y la fecha de ingreso se capturan por DTMF en XCALLY y nunca llegan
 - Con challenge de confirmación pendiente: el intento no autoriza y el challenge queda invalidado (no se reutiliza; un challenge nuevo se creará ligado a la acción y revisión vigentes). La identidad válida permanece y no se consume intento de identidad. Directiva `RETRY_SPEECH` con re-prompt seguro.
 - Sin challenge: no se inventa estado empresarial; directiva `RETRY_SPEECH` con re-prompt seguro.
 
-El backend no impone un límite nuevo de reintentos de voz.
+**Owner decision (2026-09-23).** Hasta tres reintentos después del intento inicial: cuatro fallos consecutivos de captura. El contador durable avanza en cada fallo (`1, 2, 3 → LISTEN`) y el cuarto fallo responde `TRANSFER` con un mensaje runtime de transferencia; un `/turns` válido y persistido lo reinicia a 0. La política aplica por igual a `NO_SPEECH`, `LOW_CONFIDENCE` y `TIMEOUT`, no consume intentos de identidad, no crea goal, no valida identidad, no abre challenge, no crea operación, no llama al modelo y no reintenta HTTP automáticamente. No se promete exactly-once.
 
 ### Estado de la acción externa
 
@@ -503,7 +503,7 @@ El shape exacto de errores que Cally Square interpreta sigue pendiente de eviden
 - `/integration-events` no usa el grafo ni el modelo conversacional: un load y, sólo si el evento muta estado, un save. No incrementa `turn_count` ni `revision`. La única llamada de modelo posible es la redacción estrecha de feedback de espera.
 - `external_operation` conserva la metadata técnica mínima de anti-silencio legacy (`last_progress_feedback_at`, `progress_feedback_index`).
 - El contrato durable es la versión 4. Añade planos separados: `polling` (operación, `started_at`, `observation_limit`, receipts de `sequence` + fingerprint SHA-256, `last_feedback_attempt_at` y hasta dos mensajes validados), `password_presentation` (operación, acción, revisión, `voice`, `email_requested`, aceptación y entrega) y `voice_retry_count`, el contador escalar, consecutivo y PII-safe de voice failures. Los documentos v1, v2 y v3 migran en memoria fail-closed; un v2 con `delivery` no nulo se traduce sin reinterpretarlo y cualquier campo fuera del whitelist cerrado se rechaza.
-- `voice_retry_count` empieza en 0, avanza con cada voice failure recibido y se reinicia a 0 sólo tras un `/turns` válido y persistido. No conserva reason ni texto, no reutiliza intentos de identidad, `turn_count`, `revision` ni la secuencia de polling, y no impone hoy un máximo: la política de agotamiento sigue pendiente de decisión del owner.
+- `voice_retry_count` empieza en 0, avanza con cada voice failure recibido (acotado a 4 por la política aceptada) y se reinicia a 0 sólo tras un `/turns` válido y persistido. No conserva reason ni texto y no reutiliza intentos de identidad, `turn_count`, `revision` ni la secuencia de polling.
 - El bootstrap usa exclusivamente un create condicional (precondición de inexistencia); nunca un `set()` sobre un identificador que parecía ausente. Un conflicto de create no es un 503: se recarga el documento real y el evento se aplica sobre él.
 - Un `/turns` válido preserva `polling` y `password_presentation` del registro previo y sólo reinicia el contador de voz; no reconstruye parcialmente el documento.
 - El contrato de transporte (legacy o v1) no es estado durable: no se persiste.

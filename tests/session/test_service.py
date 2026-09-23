@@ -360,7 +360,7 @@ async def test_a_valid_turn_preserves_technical_planes_and_resets_voice_retries(
             "email_delivery": "UNKNOWN",
             "presented_at": NOW,
         },
-        voice_retry_count=2,
+        voice_retry_count=4,
     )
     store.documents["conversation-1"] = session_record_to_document(seeded)
     result = await service.handle_turn("conversation-1", TurnInput())

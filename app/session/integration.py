@@ -96,6 +96,13 @@ RESET_CONFIRMED_MESSAGE = (
 
 OPERATION_FAILED_MESSAGE = "No pudimos completar la operación."
 
+# Owner decision (2026-09-23): at most three retries after the initial capture
+# attempt. The durable counter counts consecutive capture failures, so the
+# fourth failure transfers; a valid persisted /turns resets it to zero.
+MAX_VOICE_CAPTURE_FAILURES = 4
+
+VOICE_TRANSFER_MESSAGE = "No pudimos escuchar tu respuesta. Te comunico con una persona."
+
 POLL_EXHAUSTED_MESSAGE = (
     "No pudimos confirmar el resultado de la operación. Te comunico con una persona."
 )
@@ -429,6 +436,11 @@ def resolve_action_status(value: str) -> AccountActionStatus | None:
         return None
 
 
+def _advance_voice_retry(count: int) -> int:
+    """Count one more consecutive capture failure, bounded by the policy."""
+    return min(count + 1, MAX_VOICE_CAPTURE_FAILURES)
+
+
 class IntegrationEventService:
     """Reconcile technical XCALLY events against the durable session truth.
 
@@ -493,7 +505,7 @@ class IntegrationEventService:
         never overwritten, and the event is then applied to the real record.
         """
         record = SessionRecord.new(conversation_id, now=now).model_copy(
-            update={"voice_retry_count": 1}
+            update={"voice_retry_count": _advance_voice_retry(0)}
         )
         created = await self._repository.create_if_absent(record)
         if created:
@@ -518,7 +530,7 @@ class IntegrationEventService:
         """Increment the consecutive voice-retry counter before the first turn."""
         updated = record.model_copy(
             update={
-                "voice_retry_count": record.voice_retry_count + 1,
+                "voice_retry_count": _advance_voice_retry(record.voice_retry_count),
                 "updated_at": now,
             }
         )
@@ -685,7 +697,7 @@ class IntegrationEventService:
         updated = record.model_copy(
             update={
                 "confirmation": None,
-                "voice_retry_count": record.voice_retry_count + 1,
+                "voice_retry_count": _advance_voice_retry(record.voice_retry_count),
                 "updated_at": now,
             }
         )
@@ -694,7 +706,18 @@ class IntegrationEventService:
     def _voice_failure_outcome(
         self, record: SessionRecord, event: VoiceInputFailureEvent
     ) -> IntegrationOutcome:
-        """Deterministic retry prompt; it never creates or changes business state."""
+        """Deterministic retry prompt, or transfer once the attempts are spent.
+
+        It never creates or changes business state, never consumes identity
+        attempts and never calls the model.
+        """
+        if record.voice_retry_count >= MAX_VOICE_CAPTURE_FAILURES:
+            return IntegrationOutcome(
+                directive=IntegrationDirective.ESCALATE,
+                next_step=NextStep.TRANSFER,
+                message=VOICE_TRANSFER_MESSAGE,
+                operation_state=project_operation_state(record.external_operation),
+            )
         return IntegrationOutcome(
             directive=IntegrationDirective.RETRY_SPEECH,
             next_step=NextStep.LISTEN,
@@ -1255,6 +1278,7 @@ __all__ = [
     "IDENTITY_INVALID_MESSAGE",
     "IDENTITY_TECHNICAL_FAILURE_MESSAGE",
     "IDENTITY_VALID_MESSAGE",
+    "MAX_VOICE_CAPTURE_FAILURES",
     "OPERATION_FAILED_MESSAGE",
     "POLLING_FEEDBACK_INTERVAL",
     "POLL_EXHAUSTED_MESSAGE",
@@ -1265,6 +1289,7 @@ __all__ = [
     "UNLOCK_COMPLETED_MESSAGE",
     "UNLOCK_CONFIRMATION_MESSAGE",
     "VOICE_RETRY_MESSAGES",
+    "VOICE_TRANSFER_MESSAGE",
     "AccountActionErrorEvent",
     "AccountActionErrorV1Event",
     "AccountActionStatus",

@@ -306,6 +306,41 @@ async def test_bootstrap_then_turn_continues_the_same_session(client, model, sto
     assert document["goal"] == {"action": "UNLOCK_ACCOUNT", "revision": 1}
 
 
+async def test_v1_voice_policy_over_http_and_reset_after_a_turn(client, model, store) -> None:
+    from tests.session.doubles import make_decision
+
+    for expected in ("LISTEN", "LISTEN", "LISTEN", "TRANSFER"):
+        response = await client.post(
+            integration_events_url("conversation-1"),
+            json={"event": "VOICE_INPUT_FAILURE", "reason": "NO_SPEECH"},
+            headers=NEXT_STEP_HEADERS,
+        )
+        assert response.status_code == 200
+        assert response.json()["next_step"] == expected
+    # A voice failure never reaches the model and never creates business state.
+    assert model.calls == []
+    document = store.documents["conversation-1"]
+    assert document["voice_retry_count"] == 4
+    assert document["turn_count"] == 0
+    assert document["goal"] is None
+    assert document["identity"] == {"validated_at": None, "caller_failures": 0}
+
+    model.decision = make_decision(
+        route="COLLECT_IDENTITY",
+        goal={"intent": "REQUEST", "action": "UNLOCK_ACCOUNT"},
+    )
+    turn = await client.post(
+        turns_url("conversation-1"),
+        json={"transcript": SYNTHETIC_TRANSCRIPT},
+        headers=NEXT_STEP_HEADERS,
+    )
+    assert turn.status_code == 200
+    assert turn.json()["next_step"] == "COLLECT_IDENTITY"
+    document = store.documents["conversation-1"]
+    assert document["voice_retry_count"] == 0
+    assert document["turn_count"] == 1
+
+
 async def test_v1_capture_exhaustion_transfers(client, store) -> None:
     _seed_dispatched(store)
     response = await client.post(

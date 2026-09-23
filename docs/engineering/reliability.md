@@ -59,7 +59,7 @@ Estas invariantes complementan las transversales de la [SPEC del sistema](../spe
 
 - La creación de una sesión desde el carril técnico usa una precondición de inexistencia (create-only); un conflicto se recarga y se aplica sobre el documento real, nunca se sobrescribe ni se convierte en 503 genérico.
 - Un fallo de persistencia del bootstrap es 503 seguro: no devuelve 200 ni deja un registro parcial.
-- El contador consecutivo de voice retry es durable, escalar y PII-safe; se reinicia sólo tras un `/turns` válido persistido. Su política de agotamiento está pendiente de decisión del owner y no se inventa.
+- El contador consecutivo de voice retry es durable, escalar y PII-safe; se reinicia sólo tras un `/turns` válido persistido. La política aceptada es de hasta cuatro fallos consecutivos: los tres primeros reintentan y el cuarto transfiere; el contador se acota al máximo y no hay retry HTTP automático del evento.
 - Un turno válido preserva los planos técnicos (`polling`, `password_presentation`) y no reconstruye parcialmente el registro.
 
 ## Logging
