@@ -21,6 +21,7 @@ from app.conversation.gemini import (
     GeminiPollingFeedbackComposer,
     GeminiTurnModel,
 )
+from app.observability import configure_logging
 from app.session.integration import IntegrationEventService
 from app.session.metrics import StructuredLogTurnMetrics, TurnMetrics
 from app.session.repository import FirestoreSessionDocumentStore, SessionRepository
@@ -33,6 +34,7 @@ DEFAULT_FIRESTORE_COLLECTION = "cu013dev_sessions"
 
 def build_app(*, metrics: TurnMetrics | None = None) -> FastAPI:
     """Compose the real DEV application; clients close with the lifespan."""
+    configure_logging()
     effective_metrics = metrics if metrics is not None else StructuredLogTurnMetrics()
     baseline = GeminiBaseline.from_env()
     genai_client = Client(

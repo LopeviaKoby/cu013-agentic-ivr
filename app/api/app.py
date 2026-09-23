@@ -20,7 +20,7 @@ active contract; the closed request models reject unknown fields.
 
 import logging
 import time
-from typing import Annotated
+from typing import Annotated, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Path, Request, Response
@@ -50,6 +50,7 @@ from app.api.errors import (
     DependencyUnavailableError,
     IntegrationEventsUnavailableError,
     PayloadValidationError,
+    UnsupportedResponseContractError,
     api_error_handler,
     unhandled_error_handler,
     validation_error_handler,
@@ -57,6 +58,7 @@ from app.api.errors import (
 from app.api.security import require_api_key
 from app.conversation.engine import ConversationEngine, ConversationTurn, TurnOutcome
 from app.conversation.errors import ModelTimeoutError, ModelUnavailableError
+from app.observability import APP_LOGGER_NAME, validation_facts
 from app.session.integration import (
     IntegrationEventRejected,
     IntegrationEventService,
@@ -65,9 +67,45 @@ from app.session.integration import (
 from app.session.metrics import TurnMetrics
 from app.session.repository import SessionPersistenceError
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(APP_LOGGER_NAME)
 
 router = APIRouter(prefix="/api/v1")
+
+LANE_TURNS = "turns"
+LANE_INTEGRATION_EVENTS = "integration_events"
+
+
+def _select_contract(request: Request, lane: str) -> ResponseContract:
+    """Select the response contract, recording the closed lane/contract facts.
+
+    The lane is recorded before selection so a rejected selector still emits
+    an http_result line with a closed response_contract value.
+    """
+    request.state.lane = lane
+    try:
+        contract = select_response_contract(request.headers.getlist(RESPONSE_CONTRACT_HEADER))
+    except UnsupportedResponseContractError:
+        request.state.response_contract = "unsupported"
+        raise
+    request.state.contract = contract
+    request.state.response_contract = contract.value
+    logger.info("response_contract_selected lane=%s response_contract=%s", lane, contract.value)
+    return contract
+
+
+async def select_turns_contract(request: Request) -> None:
+    """Dependency: the selector runs before the typed body is validated."""
+    _select_contract(request, LANE_TURNS)
+
+
+async def select_integration_events_contract(request: Request) -> None:
+    """Dependency: the selector runs before the raw body is parsed."""
+    _select_contract(request, LANE_INTEGRATION_EVENTS)
+
+
+def _selected_contract(request: Request) -> ResponseContract:
+    return cast(ResponseContract, request.state.contract)
+
 
 _LEGACY_EVENT_ADAPTER: TypeAdapter[IntegrationEvent] = TypeAdapter(IntegrationEvent)
 _NEXT_STEP_EVENT_ADAPTER: TypeAdapter[NextStepIntegrationEvent] = TypeAdapter(
@@ -92,18 +130,19 @@ async def handle_turn(
     conversation_id: Annotated[str, Path(min_length=1)],
     turn: TranscriptTurn,
     _authorized: Annotated[None, Depends(require_api_key)],
+    _contract: Annotated[None, Depends(select_turns_contract)],
 ) -> Response:
     """Run one Cally Square turn after authentication, selection and validation."""
-    contract = select_response_contract(request.headers.getlist(RESPONSE_CONTRACT_HEADER))
+    contract = _selected_contract(request)
     metrics: TurnMetrics | None = getattr(request.app.state, "turn_metrics", None)
     start = time.monotonic()
     try:
         turn_id = uuid4().hex
         outcome = await _converse(request, conversation_id, turn)
         logger.info(
-            "turn handled conversation_id=%s turn_id=%s next_step=%s",
-            conversation_id,
-            turn_id,
+            "turn_handled lane=%s response_contract=%s next_step=%s",
+            LANE_TURNS,
+            contract.value,
             outcome.next_step.value,
         )
         if contract is ResponseContract.NEXT_STEP_V1:
@@ -112,14 +151,22 @@ async def handle_turn(
                 next_step=outcome.next_step,
                 command=outcome.command,
             )
-            return JSONResponse(status_code=200, content=envelope.model_dump(mode="json"))
-        legacy = TurnResponse(
-            message=outcome.message,
-            route=legacy_route_for(outcome.next_step),
-            turn_id=turn_id,
-            command=outcome.command,
+            content = envelope.model_dump(mode="json")
+        else:
+            legacy = TurnResponse(
+                message=outcome.message,
+                route=legacy_route_for(outcome.next_step),
+                turn_id=turn_id,
+                command=outcome.command,
+            )
+            content = legacy.model_dump(mode="json")
+        logger.info(
+            "http_result lane=%s response_contract=%s http_status=%d",
+            LANE_TURNS,
+            contract.value,
+            200,
         )
-        return JSONResponse(status_code=200, content=legacy.model_dump(mode="json"))
+        return JSONResponse(status_code=200, content=content)
     finally:
         if metrics is not None:
             metrics.record_segment("handler", (time.monotonic() - start) * 1000.0)
@@ -141,6 +188,7 @@ async def handle_integration_event(
     request: Request,
     conversation_id: Annotated[str, Path(min_length=1)],
     _authorized: Annotated[None, Depends(require_api_key)],
+    _contract: Annotated[None, Depends(select_integration_events_contract)],
     _request_id: Annotated[str | None, Header(alias="X-Request-ID")] = None,
 ) -> Response:
     """Reconcile one PII-safe technical event after selecting its closed schema.
@@ -151,26 +199,34 @@ async def handle_integration_event(
     sequence. ``X-Request-ID`` is accepted as opaque HTTP correlation, never
     as an idempotency key for the side effect, and is deliberately not logged.
     """
-    contract = select_response_contract(request.headers.getlist(RESPONSE_CONTRACT_HEADER))
+    contract = _selected_contract(request)
     service: IntegrationEventService | None = getattr(request.app.state, "integration_events", None)
     if service is None:
         raise IntegrationEventsUnavailableError()
     event = await _parse_integration_event(request, contract)
+    logger.info(
+        "integration_event_received lane=%s response_contract=%s event_type=%s",
+        LANE_INTEGRATION_EVENTS,
+        contract.value,
+        event.event,
+    )
     try:
-        outcome = await service.handle_event(conversation_id, event)
+        outcome = await service.handle_event(
+            conversation_id,
+            event,
+            bootstrap=contract is ResponseContract.NEXT_STEP_V1,
+        )
     except IntegrationEventRejected as exc:
         logger.info(
-            "integration event rejected conversation_id=%s event=%s reason=%s",
-            conversation_id,
+            "integration_event_rejected event_type=%s normalized_rejection_reason=%s",
             event.event,
-            exc.reason,
+            exc.reason.value,
         )
         raise ConflictOrDuplicateError() from exc
     except SessionPersistenceError as exc:
         raise DependencyUnavailableError() from exc
     logger.info(
-        "integration event handled conversation_id=%s event=%s next_step=%s operation_state=%s",
-        conversation_id,
+        "integration_event_accepted event_type=%s next_step=%s operation_state=%s",
         event.event,
         outcome.next_step.value,
         outcome.operation_state.value if outcome.operation_state is not None else "none",
@@ -182,14 +238,22 @@ async def handle_integration_event(
             operation_state=outcome.operation_state,
             command=outcome.command,
         )
-        return JSONResponse(status_code=200, content=envelope.model_dump(mode="json"))
-    legacy = IntegrationEventResponse(
-        acknowledged=True,
-        operation_state=outcome.operation_state,
-        directive=outcome.directive,
-        message=outcome.message,
+        content = envelope.model_dump(mode="json")
+    else:
+        legacy = IntegrationEventResponse(
+            acknowledged=True,
+            operation_state=outcome.operation_state,
+            directive=outcome.directive,
+            message=outcome.message,
+        )
+        content = legacy.model_dump(mode="json")
+    logger.info(
+        "http_result lane=%s response_contract=%s http_status=%d",
+        LANE_INTEGRATION_EVENTS,
+        contract.value,
+        200,
     )
-    return JSONResponse(status_code=200, content=legacy.model_dump(mode="json"))
+    return JSONResponse(status_code=200, content=content)
 
 
 async def _parse_integration_event(
@@ -199,7 +263,7 @@ async def _parse_integration_event(
     try:
         payload = await request.json()
     except ValueError as exc:
-        raise PayloadValidationError() from exc
+        raise PayloadValidationError(facts=(("body", "json_invalid"),)) from exc
     adapter: TypeAdapter[IntegrationEvent] | TypeAdapter[NextStepIntegrationEvent]
     if contract is ResponseContract.NEXT_STEP_V1:
         adapter = _NEXT_STEP_EVENT_ADAPTER
@@ -208,7 +272,7 @@ async def _parse_integration_event(
     try:
         return adapter.validate_python(payload)
     except ValidationError as exc:
-        raise PayloadValidationError() from exc
+        raise PayloadValidationError(facts=validation_facts(exc)) from exc
 
 
 async def _converse(request: Request, conversation_id: str, turn: TranscriptTurn) -> TurnOutcome:

@@ -241,6 +241,71 @@ async def test_v1_reset_presents_the_password_once(client, store) -> None:
     assert duplicate.json()["next_step"] == "LISTEN"
 
 
+async def test_v1_voice_failure_bootstraps_before_any_turn(client, store) -> None:
+    response = await client.post(
+        integration_events_url("conversation-1"),
+        json={"event": "VOICE_INPUT_FAILURE", "reason": "NO_SPEECH"},
+        headers=NEXT_STEP_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["next_step"] == "LISTEN"
+    assert body["message"]
+    assert body["operation_state"] is None
+    document = store.documents["conversation-1"]
+    assert document["turn_count"] == 0
+    assert document["voice_retry_count"] == 1
+    assert document["goal"] is None
+    assert document["identity"] == {"validated_at": None, "caller_failures": 0}
+
+
+async def test_legacy_voice_failure_still_conflicts_without_a_session(client, store) -> None:
+    response = await client.post(
+        integration_events_url("conversation-1"),
+        json={"event": "VOICE_INPUT_FAILURE", "reason": "NO_SPEECH"},
+    )
+    assert response.status_code == 409
+    assert response.json() == CONFLICT_ERROR
+    assert store.writes == 0
+    assert store.documents == {}
+
+
+async def test_identity_event_before_any_turn_never_creates_a_session(client, store) -> None:
+    response = await client.post(
+        integration_events_url("conversation-1"),
+        json={"event": "IDENTITY_VALIDATION_RESULT", "outcome": "VALID"},
+        headers=NEXT_STEP_HEADERS,
+    )
+    assert response.status_code == 409
+    assert store.documents == {}
+
+
+async def test_bootstrap_then_turn_continues_the_same_session(client, model, store) -> None:
+    from tests.session.doubles import make_decision
+
+    boot = await client.post(
+        integration_events_url("conversation-1"),
+        json={"event": "VOICE_INPUT_FAILURE", "reason": "TIMEOUT"},
+        headers=NEXT_STEP_HEADERS,
+    )
+    assert boot.status_code == 200
+    model.decision = make_decision(
+        route="COLLECT_IDENTITY",
+        goal={"intent": "REQUEST", "action": "UNLOCK_ACCOUNT"},
+    )
+    turn = await client.post(
+        turns_url("conversation-1"),
+        json={"transcript": SYNTHETIC_TRANSCRIPT},
+        headers=NEXT_STEP_HEADERS,
+    )
+    assert turn.status_code == 200
+    assert turn.json()["next_step"] == "COLLECT_IDENTITY"
+    document = store.documents["conversation-1"]
+    assert document["turn_count"] == 1
+    assert document["voice_retry_count"] == 0
+    assert document["goal"] == {"action": "UNLOCK_ACCOUNT", "revision": 1}
+
+
 async def test_v1_capture_exhaustion_transfers(client, store) -> None:
     _seed_dispatched(store)
     response = await client.post(

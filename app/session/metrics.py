@@ -6,10 +6,11 @@ ever be recorded here.
 """
 
 import logging
-import sys
 from typing import Protocol
 
-logger = logging.getLogger("cu013.metrics")
+from app.observability import METRICS_LOGGER_NAME, configure_logging
+
+logger = logging.getLogger(METRICS_LOGGER_NAME)
 
 
 class TurnMetrics(Protocol):
@@ -55,16 +56,13 @@ class StructuredLogTurnMetrics:
 
     Cloud Run captures stderr into Cloud Logging, so the DEV benchmark can
     recover the server-side segmentation without an observability platform.
-    Only fixed names, durations and integer counters are ever logged.
+    Only fixed names, durations and integer counters are ever logged. The
+    handler lives on the shared ``cu013`` namespace, configured once; this
+    class never adds a second one.
     """
 
     def __init__(self) -> None:
-        logger.setLevel(logging.INFO)
-        logger.propagate = False
-        if not logger.handlers:
-            handler = logging.StreamHandler(sys.stderr)
-            handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
-            logger.addHandler(handler)
+        configure_logging()
 
     def record_segment(self, name: str, duration_ms: float) -> None:
         logger.info("turn_metric segment=%s duration_ms=%.3f", name, duration_ms)

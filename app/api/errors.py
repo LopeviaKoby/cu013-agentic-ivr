@@ -1,7 +1,10 @@
 """Boundary error taxonomy, safe messages and FastAPI exception handlers.
 
 No handler serializes Pydantic or FastAPI error detail: those payloads embed
-the offending input, which may be a transcript or raw DTMF.
+the offending input, which may be a transcript or raw DTMF. Telemetry emits
+only closed event names, the selected lane and response contract, the HTTP
+status and the (location, type) projection of a validation failure; the
+public responses keep their contractual taxonomy unchanged.
 """
 
 import logging
@@ -10,8 +13,39 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from app.api.contracts import ErrorBody, ErrorCode, ErrorResponse
+from app.observability import APP_LOGGER_NAME, format_validation_facts, validation_facts
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(APP_LOGGER_NAME)
+
+
+def _lane(request: Request) -> str:
+    """Closed lane value; falls back to the path suffix, never the full path.
+
+    A body rejected before the handler runs (dependency-solved validation)
+    still knows which endpoint it hit without logging any identifier.
+    """
+    lane = getattr(request.state, "lane", None)
+    if isinstance(lane, str):
+        return lane
+    path = request.url.path
+    if path.endswith("/turns"):
+        return "turns"
+    if path.endswith("/integration-events"):
+        return "integration_events"
+    return "unknown"
+
+
+def _response_contract(request: Request) -> str:
+    return str(getattr(request.state, "response_contract", "unknown"))
+
+
+def _log_http_result(request: Request, status_code: int) -> None:
+    logger.info(
+        "http_result lane=%s response_contract=%s http_status=%d",
+        _lane(request),
+        _response_contract(request),
+        status_code,
+    )
 
 
 class ApiError(Exception):
@@ -66,12 +100,18 @@ class PayloadValidationError(ApiError):
     """The selected closed request contract rejected the payload.
 
     Used when the body is parsed after the contract selector; it renders the
-    same safe validation envelope and never echoes the payload.
+    same safe validation envelope and never echoes the payload. It carries
+    only the already-sanitized (location, type) facts, never the original
+    exception.
     """
 
     code = ErrorCode.VALIDATION
     status_code = 422
     public_message = "request validation failed"
+
+    def __init__(self, facts: tuple[tuple[str, str], ...] = ()) -> None:
+        super().__init__("request validation failed")
+        self.facts = facts
 
 
 class DependencyTimeoutError(ApiError):
@@ -107,20 +147,33 @@ def error_response(code: ErrorCode, status_code: int, message: str) -> JSONRespo
 async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Render a known boundary failure without technical detail."""
     error = exc if isinstance(exc, ApiError) else ApiError()
+    if isinstance(error, PayloadValidationError):
+        logger.info(
+            "request_validation_failed lane=%s facts=%s",
+            _lane(request),
+            format_validation_facts(error.facts),
+        )
+    _log_http_result(request, error.status_code)
     return error_response(error.code, error.status_code, error.public_message)
 
 
 async def validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Reject an invalid request without echoing Pydantic error detail.
 
-    Pydantic errors carry the offending input, so only the failure itself is
-    recorded, never the payload.
+    Pydantic errors carry the offending input, so only the closed
+    (location, type) facts are recorded, never the payload.
     """
-    logger.info("request validation failed path=%s", request.url.path)
+    logger.info(
+        "request_validation_failed lane=%s facts=%s",
+        _lane(request),
+        format_validation_facts(validation_facts(exc)),
+    )
+    _log_http_result(request, 422)
     return error_response(ErrorCode.VALIDATION, 422, "request validation failed")
 
 
 async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Render an unexpected failure; log the type only, never the message."""
     logger.error("unhandled boundary error error_type=%s", type(exc).__name__)
+    _log_http_result(request, 500)
     return error_response(ErrorCode.INTERNAL, 500, "internal error")
