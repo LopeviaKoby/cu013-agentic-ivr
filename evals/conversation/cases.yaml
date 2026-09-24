@@ -248,6 +248,50 @@ cases:
       allowed_claims: ["cancellation acknowledged"]
       forbidden_claims: ["account is unlocked"]
 
+  - case_id: goal-re-request-after-cancel
+    family: goal-re-request
+    scenario_kind: sequence
+    description: >
+      An explicit cancellation is not a permanent prohibition: a later
+      explicit request for the same capability registers a fresh goal
+      instance with normal revision semantics and no reuse of the cancelled
+      challenge.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "quiero desbloquear mi cuenta"
+        expect:
+          route: COLLECT_IDENTITY
+          goal: UNLOCK_ACCOUNT
+          goal_transition: created
+          revision_transition: created
+          confirmation: absent
+          dispatch_count_unchanged: true
+      - transcript: "mejor cancelalo, olvidalo por ahora"
+        expect:
+          goal: null
+          goal_transition: cleared
+          confirmation: absent
+          dispatch_count_unchanged: true
+      - transcript: "pensandolo mejor, si quiero desbloquearla"
+        expect:
+          route: COLLECT_IDENTITY
+          goal: UNLOCK_ACCOUNT
+          goal_transition: created
+          revision_transition: created
+          confirmation: absent
+          dispatch_count_unchanged: true
+          operation: none
+    external_events: []
+    expected:
+      route: COLLECT_IDENTITY
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "cancel then fresh explicit request; goal recreated, no dispatch"
+      allowed_claims: ["the request can continue"]
+      forbidden_claims: ["account is unlocked", "operation dispatched", "the previous cancellation blocks the request"]
+
   # --- multiple supported goals ----------------------------------------------
   - case_id: multiple-goals-sequential
     family: multiple-supported-goals

@@ -103,6 +103,18 @@ def test_composition_is_deterministic_in_order_and_hashes() -> None:
     assert first.projection_modes == ("step_window",)
 
 
+def test_few_shot_ablation_variants_change_composition_deterministically() -> None:
+    full = make_bundle()
+    bare = make_bundle(few_shot_text=None)
+    assert full.few_shot is not None
+    assert bare.few_shot is None
+    assert bare.fingerprint != full.fingerprint
+    assert "few_shot.md" not in bare.module_hashes()
+    assert bare.composition_orders()[BASE_INSTRUCTION_KEY] == ["core.md", "catalog.md"]
+    assert bare.instruction_hashes() != full.instruction_hashes()
+    assert "few_shot" not in bare.system_instructions(None)
+
+
 def test_renderer_never_reads_transcript_or_files(tmp_path: Path) -> None:
     bundle = load_and_delete_sources(tmp_path)
     base = bundle.system_instructions(None)

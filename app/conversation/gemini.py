@@ -56,6 +56,10 @@ from app.session.record import (
     ConversationGoal,
     ExternalOperation,
 )
+from app.session.state_projection import (
+    ModelStateProjection,
+    projection_from_turn_inputs,
+)
 from app.session.turns import ModelTurnDecision
 
 PROVIDER: Literal["vertex_ai"] = "vertex_ai"
@@ -184,41 +188,18 @@ def response_schema_for(baseline: GeminiBaseline) -> Any:
     return schema
 
 
-def _state_block(
-    goal: ConversationGoal | None,
-    identity_validated: bool,
-    confirmation: ConfirmationChallenge | None,
-    external_operation: ExternalOperation | None,
-) -> str:
-    """Render only the allowed semantic projection of the durable record."""
-    lines = [
-        (
-            f"objetivo: {goal.action.value} (revisión {goal.revision})"
-            if goal is not None
-            else "objetivo: ninguno"
-        ),
-        f"identidad_validada: {'sí' if identity_validated else 'no'}",
-    ]
-    if confirmation is None:
-        lines.append("confirmación_pendiente: ninguna")
-    else:
-        lines.append(
-            f"confirmación_pendiente: {confirmation.action.value} "
-            f"(revisión {confirmation.goal_revision})"
-        )
-    if external_operation is None:
-        lines.append("operación_externa: ninguna")
-    else:
-        delivery = (
-            f" entrega={external_operation.delivery.value}"
-            if external_operation.delivery is not None
-            else ""
-        )
-        lines.append(
-            f"operación_externa: {external_operation.action.value} "
-            f"({external_operation.status.value}){delivery}"
-        )
-    return "\n".join(lines)
+STATE_PROJECTION_OPEN = "<conversation_state>"
+STATE_PROJECTION_CLOSE = "</conversation_state>"
+
+
+def render_state_projection(projection: ModelStateProjection) -> str:
+    """Render the transient projection as one compact, stable JSON block.
+
+    Deterministic key order keeps the block reproducible and hash-friendly;
+    only closed semantic values travel, never caller text.
+    """
+    payload = json.dumps(projection.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    return f"{STATE_PROJECTION_OPEN}\n{payload}\n{STATE_PROJECTION_CLOSE}"
 
 
 def parse_decision(text: str) -> ModelTurnDecision:
@@ -309,19 +290,25 @@ class GeminiTurnModel:
         external_operation: ExternalOperation | None,
         memory_context: str | None = None,
         procedure_current: str | None = None,
+        state_projection: ModelStateProjection | None = None,
     ) -> ModelTurnDecision:
         start = time.monotonic()
         try:
             try:
-                # Synthetic evaluation lane only: the rendered
-                # recent-pair/procedure block is inserted between the
-                # semantic projection and the current transcript. The
-                # default path passes memory_context=None and renders
-                # byte-identical input. Real-caller textual memory stays
-                # disabled until an accepted retention policy exists.
-                state_block = _state_block(
-                    goal, identity_validated, confirmation, external_operation
+                # The runtime-built projection is the authoritative view; the
+                # adapter fallback only mirrors the facts it already received.
+                projection = state_projection or projection_from_turn_inputs(
+                    goal=goal,
+                    identity_validated=identity_validated,
+                    confirmation=confirmation,
+                    external_operation=external_operation,
+                    procedure_current=procedure_current,
                 )
+                # Synthetic evaluation lane only: the rendered
+                # recent-pair/procedure block follows the projection and
+                # precedes the current transcript. Real-caller textual memory
+                # stays disabled until an accepted retention policy exists.
+                state_block = render_state_projection(projection)
                 if memory_context:
                     state_block += "\n" + memory_context
                 response = await self._client.aio.models.generate_content(

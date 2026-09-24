@@ -46,6 +46,7 @@ from app.session.record import (
     OperationStatus,
     SessionRecord,
 )
+from app.session.state_projection import ModelStateProjection, project_model_state
 
 SAFE_FALLBACK_MESSAGE = (
     "No puedo confirmar eso en este momento. ¿Quieres que revisemos juntos tu solicitud?"
@@ -277,6 +278,7 @@ class TurnModel(Protocol):
         external_operation: ExternalOperation | None,
         memory_context: str | None = None,
         procedure_current: str | None = None,
+        state_projection: ModelStateProjection | None = None,
     ) -> ModelTurnDecision: ...
 
 
@@ -382,6 +384,15 @@ async def run_model(
             strategy=state["experimental_config"].strategy,
         )
     procedure = state["experimental_procedure"]
+    projection = project_model_state(
+        goal=state["goal"],
+        identity=state["identity"],
+        confirmation=state["confirmation"],
+        dispatch=state["dispatch"],
+        operation=state["external_operation"],
+        procedure=procedure,
+        now=state["now"],
+    )
     decision = await model.decide(
         transcript=transcript,
         goal=state["goal"],
@@ -390,6 +401,7 @@ async def run_model(
         external_operation=state["external_operation"],
         memory_context=memory_context,
         procedure_current=procedure.current_step if procedure is not None else None,
+        state_projection=projection,
     )
     return {"model_decision": decision, "memory_render_ms": render_ms}
 

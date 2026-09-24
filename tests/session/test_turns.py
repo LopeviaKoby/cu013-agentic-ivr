@@ -158,6 +158,9 @@ async def test_run_model_seam_passes_the_durable_procedure_step() -> None:
         model=model,
     )
     assert model.calls[0]["procedure_current"] == "microsoft_portal"
+    projection = model.calls[0]["state_projection"]
+    assert projection.active_goal == "RESET_PASSWORD"
+    assert projection.procedure_current == "microsoft_portal"
 
 
 async def test_run_model_seam_without_procedure_passes_none() -> None:

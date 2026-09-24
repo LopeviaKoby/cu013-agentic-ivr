@@ -154,10 +154,12 @@ async def test_decide_calls_generate_content_once_with_the_baseline_config() -> 
     assert model_name == "synthetic-model"
     assert config.system_instruction == make_bundle().system_instructions(None)  # type: ignore[attr-defined]
     assert "synthetic transcript 0000" in contents
-    assert "objetivo: ninguno" in contents
-    assert "identidad_validada: no" in contents
-    assert "confirmación_pendiente: ninguna" in contents
-    assert "operación_externa: ninguna" in contents
+    assert "<conversation_state>" in contents
+    assert '"active_goal":null' in contents
+    assert '"identity_status":"MISSING"' in contents
+    assert '"confirmation_pending":false' in contents
+    assert '"external_operation_status":"none"' in contents
+    assert '"procedure_current":null' in contents
     assert config.thinking_config.thinking_budget == 0  # type: ignore[attr-defined]
     assert config.response_mime_type == "application/json"  # type: ignore[attr-defined]
     assert config.response_schema is not None  # type: ignore[attr-defined]
@@ -193,10 +195,13 @@ async def test_contents_carry_only_the_semantic_projection() -> None:
         ),
     )
     _, contents, _ = client.calls[0]
-    assert "objetivo: UNLOCK_ACCOUNT (revisión 2)" in contents
-    assert "identidad_validada: sí" in contents
-    assert "confirmación_pendiente: RESET_PASSWORD (revisión 1)" in contents
-    assert "operación_externa: RESET_PASSWORD (confirmed) entrega=pending" in contents
+    assert '"active_goal":"UNLOCK_ACCOUNT"' in contents
+    assert '"goal_revision":2' in contents
+    assert '"identity_status":"VALID"' in contents
+    assert '"confirmation_pending":true' in contents
+    assert '"external_operation_status":"confirmed"' in contents
+    assert '"external_delivery_status":"pending"' in contents
+    assert '"execution_confirmation_allowed":false' in contents
 
 
 async def test_api_error_maps_to_model_unavailable() -> None:

@@ -174,7 +174,7 @@ class PromptBundle:
 
     core: PromptModule
     catalog: PromptModule
-    few_shot: PromptModule
+    few_shot: PromptModule | None
     protocols: tuple[PromptModule, ...]
     instructions: tuple[ComposedInstructions, ...]
     projection_modes: tuple[str, ...]
@@ -205,8 +205,9 @@ class PromptBundle:
         hashes = {
             self.core.name: self.core.sha256,
             self.catalog.name: self.catalog.sha256,
-            self.few_shot.name: self.few_shot.sha256,
         }
+        if self.few_shot is not None:
+            hashes[self.few_shot.name] = self.few_shot.sha256
         for protocol in self.protocols:
             hashes[protocol.name] = protocol.sha256
         return dict(sorted(hashes.items()))
@@ -242,7 +243,7 @@ class StaticPrompt:
 def compose_instructions_text(
     core: PromptModule,
     catalog: PromptModule,
-    few_shot: PromptModule,
+    few_shot: PromptModule | None,
     action: Action | None = None,
     protocol_text: str | None = None,
 ) -> str:
@@ -252,22 +253,37 @@ def compose_instructions_text(
     parts = [core.text, catalog.text]
     if action is not None and protocol_text is not None:
         parts.append(PROTOCOL_SECTION_TITLE.format(action=action.value) + "\n\n" + protocol_text)
-    parts.append(few_shot.text)
+    if few_shot is not None:
+        parts.append(few_shot.text)
     return COMPOSITION_SEPARATOR.join(parts)
+
+
+def _composition_order(
+    protocol_name: str | None, *, step: str | None, with_few_shot: bool
+) -> tuple[str, ...]:
+    order = [CORE_MODULE_NAME, CATALOG_MODULE_NAME]
+    if protocol_name is not None:
+        order.append(protocol_name)
+        if step is not None:
+            order.append(f"step:{step}")
+    if with_few_shot:
+        order.append(FEW_SHOT_MODULE_NAME)
+    return tuple(order)
 
 
 def build_composed_instructions(
     core: PromptModule,
     catalog: PromptModule,
-    few_shot: PromptModule,
+    few_shot: PromptModule | None,
     protocols: Sequence[tuple[Action, PromptModule]],
     guided_steps: Sequence[tuple[Action, tuple[str, ...]]] = (),
 ) -> tuple[ComposedInstructions, ...]:
     """Precompose base, full-protocol and projected per-step instructions."""
+    with_few_shot = few_shot is not None
     composed = [
         ComposedInstructions(
             key=BASE_INSTRUCTION_KEY,
-            order=(CORE_MODULE_NAME, CATALOG_MODULE_NAME, FEW_SHOT_MODULE_NAME),
+            order=_composition_order(None, step=None, with_few_shot=with_few_shot),
             text=compose_instructions_text(core, catalog, few_shot),
             sha256="",
         )
@@ -277,12 +293,7 @@ def build_composed_instructions(
         composed.append(
             ComposedInstructions(
                 key=action.value,
-                order=(
-                    CORE_MODULE_NAME,
-                    CATALOG_MODULE_NAME,
-                    protocol.name,
-                    FEW_SHOT_MODULE_NAME,
-                ),
+                order=_composition_order(protocol.name, step=None, with_few_shot=with_few_shot),
                 text=compose_instructions_text(core, catalog, few_shot, action, protocol.text),
                 sha256="",
             )
@@ -299,13 +310,7 @@ def build_composed_instructions(
             composed.append(
                 ComposedInstructions(
                     key=projected_instruction_key(action, step),
-                    order=(
-                        CORE_MODULE_NAME,
-                        CATALOG_MODULE_NAME,
-                        protocol.name,
-                        f"step:{step}",
-                        FEW_SHOT_MODULE_NAME,
-                    ),
+                    order=_composition_order(protocol.name, step=step, with_few_shot=with_few_shot),
                     text=compose_instructions_text(
                         core, catalog, few_shot, action, structure.projected_text(index)
                     ),
@@ -326,7 +331,7 @@ def build_composed_instructions(
 def build_prompt_bundle(
     core: PromptModule,
     catalog: PromptModule,
-    few_shot: PromptModule,
+    few_shot: PromptModule | None,
     protocols: Sequence[tuple[Action, PromptModule]],
     guided_steps: Sequence[tuple[Action, tuple[str, ...]]] = (),
 ) -> PromptBundle:
@@ -343,7 +348,7 @@ def build_prompt_bundle(
     fingerprint_payload: dict[str, object] = {
         "core": core.sha256,
         "catalog": catalog.sha256,
-        "few_shot": few_shot.sha256,
+        "few_shot": few_shot.sha256 if few_shot is not None else None,
         "protocols": {protocol.name: protocol.sha256 for protocol in modules},
         "composition_orders": {
             instruction.key: list(instruction.order) for instruction in instructions

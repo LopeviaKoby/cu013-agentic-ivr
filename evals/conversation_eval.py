@@ -57,7 +57,9 @@ from app.conversation.gemini import (
     response_schema_for,
 )
 from app.conversation.prompt_loader import (
+    FEW_SHOT_TEMPLATES,
     PromptBundleError,
+    few_shot_name_for,
     load_prompt_bundle,
     normalize_prompt_text,
 )
@@ -104,6 +106,7 @@ from app.session.record import (
 )
 from app.session.repository import SessionRepository
 from app.session.service import TurnService, consolidate
+from app.session.state_projection import project_model_state
 from app.session.turns import (
     ConfirmationEvent,
     ConfirmationObservation,
@@ -1112,12 +1115,12 @@ def load_snapshot_prompt(path: Path = SNAPSHOT_BASELINE_PATH) -> StaticPrompt:
     return StaticPrompt(text=normalize_prompt_text(snapshot))
 
 
-def resolve_prompt_source(prompt_variant: str) -> PromptSource:
+def resolve_prompt_source(prompt_variant: str, few_shot_variant: str = "f4") -> PromptSource:
     """The declared experimental variable: modular composition or snapshot."""
     if prompt_variant == PROMPT_VARIANT_SNAPSHOT:
         return load_snapshot_prompt()
     if prompt_variant == PROMPT_VARIANT_PROTOCOLS:
-        return load_prompt_bundle()
+        return load_prompt_bundle(few_shot_name=few_shot_name_for(few_shot_variant))
     raise ValueError(f"unknown prompt variant {prompt_variant!r}")
 
 
@@ -1133,7 +1136,9 @@ def prompt_composition_identity(prompt_source: PromptSource | None) -> dict[str,
             "system_instruction_hashes": prompt_source.instruction_hashes(),
             "protocol_projection_mode": list(prompt_source.projection_modes),
             "projected_steps": prompt_source.projected_steps(),
-            "few_shot_variant": prompt_source.few_shot.name,
+            "few_shot_variant": (
+                prompt_source.few_shot.name if prompt_source.few_shot is not None else "none"
+            ),
             "bundle_fingerprint": prompt_source.fingerprint,
             "renderer_sha256": renderer_hash,
             "loader_sha256": loader_hash,
@@ -1205,7 +1210,12 @@ def build_variant_identity(
         "attempts": baseline.attempts if baseline else None,
         "runtime_semantic_hash": hash_files([root / path for path in RUNTIME_SEMANTIC_FILES]),
         "decision_schema_hash": hash_json(decision_schema),
-        "state_projection_hash": hash_text(inspect.getsource(gemini_module._state_block)),
+        "state_projection_hash": hash_json(
+            {
+                "builder": hash_file(root / "app/session/state_projection.py"),
+                "renderer": hash_text(inspect.getsource(gemini_module.render_state_projection)),
+            }
+        ),
         "dependency_lock_hash": hash_file(root / "requirements.lock"),
         "tools": TOOLS_NONE,
         "model_revision": MODEL_REVISION_UNAVAILABLE,
@@ -1263,7 +1273,8 @@ async def token_composition_breakdown(
     if isinstance(prompt_source, PromptBundle):
         await record("module:core", prompt_source.core.text)
         await record("module:catalog", prompt_source.catalog.text)
-        await record(f"module:{prompt_source.few_shot.name}", prompt_source.few_shot.text)
+        if prompt_source.few_shot is not None:
+            await record(f"module:{prompt_source.few_shot.name}", prompt_source.few_shot.text)
         for protocol in prompt_source.protocols:
             await record(f"module:{protocol.name}", protocol.text)
         for instruction in prompt_source.instructions:
@@ -1285,10 +1296,30 @@ async def token_composition_breakdown(
         action=Action.RESET_PASSWORD,
         status=OperationStatus.PENDING,
     )
-    await record("state_block:minimal", gemini_module._state_block(None, False, None, None))
+    minimal_projection = project_model_state(
+        goal=None,
+        identity=IdentityState(),
+        confirmation=None,
+        dispatch=None,
+        operation=None,
+        procedure=None,
+        now=now,
+    )
+    active_projection = project_model_state(
+        goal=reset_goal,
+        identity=IdentityState(validated_at=now),
+        confirmation=challenge,
+        dispatch=None,
+        operation=operation,
+        procedure=None,
+        now=now,
+    )
     await record(
-        "state_block:active_reset",
-        gemini_module._state_block(reset_goal, True, challenge, operation),
+        "state_projection:minimal", gemini_module.render_state_projection(minimal_projection)
+    )
+    await record(
+        "state_projection:active_reset",
+        gemini_module.render_state_projection(active_projection),
     )
     procedure = ExperimentalProcedureState(
         procedure_id=GUIDED_PROCEDURE_ID,
@@ -1741,6 +1772,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "frozen 129c793 baseline text for the paired comparison",
     )
     parser.add_argument(
+        "--few-shot-variant",
+        choices=sorted(FEW_SHOT_TEMPLATES),
+        default="f4",
+        help="static decision-example ablation variant: f4 (full, default), "
+        "f2 (two examples), f1 (one), f0 (none)",
+    )
+    parser.add_argument(
         "--token-breakdown",
         action="store_true",
         help="after the timed replay, count tokens per composition bucket "
@@ -1823,7 +1861,7 @@ async def run(argv: list[str] | None = None) -> int:
             strategy=args.prompt_strategy,
         )
     try:
-        prompt_source = resolve_prompt_source(args.prompt_variant)
+        prompt_source = resolve_prompt_source(args.prompt_variant, args.few_shot_variant)
     except (PromptBundleError, OSError, ValueError) as exc:
         print(f"PROMPT {exc}", file=sys.stderr)
         return 2

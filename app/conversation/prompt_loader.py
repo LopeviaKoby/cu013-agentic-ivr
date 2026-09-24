@@ -48,6 +48,20 @@ PROTOCOL_FILENAMES: Final[tuple[tuple[Action, str], ...]] = (
 GUIDED_STEPS_BY_ACTION: Final[tuple[tuple[Action, tuple[str, ...]], ...]] = (
     (Action.RESET_PASSWORD, GUIDED_STEPS),
 )
+# Ablation variants for the static decision examples: F4 is the full set, F0
+# removes the module entirely. The winner is selected by the evaluation.
+FEW_SHOT_TEMPLATES: Final[dict[str, str | None]] = {
+    "f4": FEW_SHOT_MODULE_NAME,
+    "f2": "few_shot_f2.md",
+    "f1": "few_shot_f1.md",
+    "f0": None,
+}
+
+
+def few_shot_name_for(variant: str) -> str | None:
+    if variant not in FEW_SHOT_TEMPLATES:
+        raise ValueError(f"unknown few-shot variant {variant!r}")
+    return FEW_SHOT_TEMPLATES[variant]
 
 
 class PromptBundleError(RuntimeError):
@@ -125,8 +139,15 @@ def protocol_directory(protocol_dir: Path | None = None) -> Path:
     return Path(configured) if configured else DEFAULT_PROTOCOL_DIR
 
 
-def load_prompt_bundle(*, protocol_dir: Path | None = None) -> PromptBundle:
-    """Build the immutable prompt bundle once; any missing piece fails closed."""
+def load_prompt_bundle(
+    *,
+    protocol_dir: Path | None = None,
+    few_shot_name: str | None = FEW_SHOT_MODULE_NAME,
+) -> PromptBundle:
+    """Build the immutable prompt bundle once; any missing piece fails closed.
+
+    ``few_shot_name=None`` composes the bundle without decision examples (F0).
+    """
     directory = protocol_directory(protocol_dir)
     protocols = tuple(
         (action, read_protocol_module(directory / filename, action))
@@ -134,7 +155,7 @@ def load_prompt_bundle(*, protocol_dir: Path | None = None) -> PromptBundle:
     )
     core = read_template_module(CORE_MODULE_NAME)
     catalog = read_template_module(CATALOG_MODULE_NAME)
-    few_shot = read_template_module(FEW_SHOT_MODULE_NAME)
+    few_shot = read_template_module(few_shot_name) if few_shot_name is not None else None
     return build_prompt_bundle(
         core, catalog, few_shot, protocols, guided_steps=GUIDED_STEPS_BY_ACTION
     )

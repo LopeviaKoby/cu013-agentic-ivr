@@ -61,16 +61,20 @@ def make_module(name: str, text: str) -> PromptModule:
     return validate_prompt_module(name, text.encode("utf-8"))
 
 
-def make_bundle() -> PromptBundle:
-    """A fully synthetic in-memory bundle; no file I/O involved."""
+def make_bundle(*, few_shot_text: str | None = SYNTHETIC_FEW_SHOT) -> PromptBundle:
+    """A fully synthetic in-memory bundle; no file I/O involved.
+
+    ``few_shot_text=None`` builds the F0 ablation without the module.
+    """
     protocols = tuple(
         (action, make_module(filename, PROTOCOL_BODIES[filename]))
         for action, filename in PROTOCOL_FILENAMES
     )
+    few_shot = make_module("few_shot.md", few_shot_text) if few_shot_text is not None else None
     return build_prompt_bundle(
         make_module("core.md", SYNTHETIC_CORE),
         make_module("catalog.md", SYNTHETIC_CATALOG),
-        make_module("few_shot.md", SYNTHETIC_FEW_SHOT),
+        few_shot,
         protocols,
         guided_steps=SYNTHETIC_GUIDED_STEPS,
     )

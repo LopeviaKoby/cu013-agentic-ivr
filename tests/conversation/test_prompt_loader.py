@@ -131,6 +131,25 @@ def test_files_are_not_read_after_startup(tmp_path: Path) -> None:
     assert bundle.system_instructions(None) == bundle.instruction("base").text
 
 
+def test_few_shot_ablation_variants_load_or_omit_the_module(tmp_path: Path) -> None:
+    from app.conversation.prompt_loader import FEW_SHOT_TEMPLATES, few_shot_name_for
+
+    assert few_shot_name_for("f4") == "few_shot.md"
+    assert few_shot_name_for("f2") == "few_shot_f2.md"
+    assert few_shot_name_for("f1") == "few_shot_f1.md"
+    assert few_shot_name_for("f0") is None
+    assert sorted(FEW_SHOT_TEMPLATES) == ["f0", "f1", "f2", "f4"]
+    directory = write_synthetic_protocols(tmp_path)
+    for variant in ("f4", "f2", "f1"):
+        bundle = load_prompt_bundle(
+            protocol_dir=directory, few_shot_name=few_shot_name_for(variant)
+        )
+        assert bundle.few_shot is not None
+        assert bundle.few_shot.name == few_shot_name_for(variant)
+    bare = load_prompt_bundle(protocol_dir=directory, few_shot_name=None)
+    assert bare.few_shot is None
+
+
 def test_guided_step_cardinality_mismatch_fails_startup(tmp_path: Path) -> None:
     """Projection never guesses: a structure mismatch fails closed."""
     write_synthetic_protocols(tmp_path)
