@@ -20,6 +20,7 @@ from app.session.integration import (
     OPERATION_FAILED_MESSAGE,
     PROGRESS_FEEDBACK_INTERVAL,
     PROGRESS_MESSAGES,
+    RESET_CONFIRMATION_MESSAGE,
     RESET_CONFIRMED_MESSAGE,
     UNLOCK_COMPLETED_MESSAGE,
     UNLOCK_CONFIRMATION_MESSAGE,
@@ -160,6 +161,21 @@ async def test_identity_valid_keeps_the_goal_and_opens_the_confirmation() -> Non
     assert stored.confirmation.action is Action.UNLOCK_ACCOUNT
     assert stored.confirmation.goal_revision == 1
     assert stored.confirmation.identity_validated_at == NOW
+
+
+async def test_identity_valid_confirms_the_reset_action_specifically() -> None:
+    store = InMemorySessionDocumentStore()
+    _seed(
+        store,
+        make_record(goal=make_goal(Action.RESET_PASSWORD, revision=1), identity=make_identity()),
+    )
+    outcome = await _service(store).handle_event("conversation-1", _identity_event("VALID"))
+    assert outcome.message == RESET_CONFIRMATION_MESSAGE
+    assert outcome.next_step is NextStep.LISTEN
+    stored = _stored(store)
+    assert stored.confirmation is not None
+    assert stored.confirmation.action is Action.RESET_PASSWORD
+    assert stored.confirmation.goal_revision == 1
 
 
 async def test_identity_valid_replaces_a_previous_challenge_with_a_fresh_one() -> None:

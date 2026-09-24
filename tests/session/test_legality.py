@@ -72,6 +72,42 @@ def test_plan_registers_a_goal_before_identity() -> None:
     assert delta["outcome"].next_step is NextStep.COLLECT_IDENTITY
 
 
+def test_ambiguous_intention_materializes_no_goal_and_listens() -> None:
+    """A turn that resolves nothing must not create a supported goal.
+
+    The semantic disambiguation belongs to the model; the runtime honors the
+    absent goal: no plan, no identity capture, no confirmation, no dispatch
+    and no external operation.
+    """
+    delta = advance_turn(make_state(model_decision=make_decision(route=Route.CONTINUE)))
+    assert delta["goal"] is None
+    assert delta["identity"].validated_at is None
+    assert delta["confirmation"] is None
+    assert delta["dispatch"] is None
+    assert delta["external_operation"] is None
+    assert delta["outcome"] is not None
+    assert delta["outcome"].next_step is NextStep.LISTEN
+    assert delta["outcome"].command is None
+
+
+def test_direct_reset_request_collects_identity() -> None:
+    delta = advance_turn(
+        make_state(
+            model_decision=make_decision(
+                route=Route.CONTINUE,
+                goal=GoalProposal(intent=GoalIntent.REQUEST, action=Action.RESET_PASSWORD),
+            )
+        )
+    )
+    assert delta["goal"] is not None
+    assert delta["goal"].action is Action.RESET_PASSWORD
+    assert delta["goal"].revision == 1
+    assert delta["confirmation"] is None
+    assert delta["dispatch"] is None
+    assert delta["outcome"] is not None
+    assert delta["outcome"].next_step is NextStep.COLLECT_IDENTITY
+
+
 def test_side_question_does_not_erase_the_goal_and_still_requires_identity() -> None:
     """A pending goal without authorization needs identity capture.
 
