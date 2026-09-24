@@ -314,3 +314,8 @@ declares one experimental variable: `prompt_composition`.
   orders, per-variant system-instruction hashes, bundle fingerprint, renderer
   and loader hashes. The comparator refuses any undeclared differing
   dimension.
+- Spoken-quality review is manual and local:
+  `evals/spoken_review_probe.py --prompt-variant ... --families ...` prints
+  the caller turn and assistant message per case ID. Its output is review
+  material only and must never be copied into shared artifacts; message text
+  is never persisted.
