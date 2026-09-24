@@ -142,9 +142,10 @@ critical violations = 0
 comparator = NEEDS OWNER DECISION
 ```
 
-## Candidato exacto
+## Candidato exacto (iteración previa, 851fe0b)
 
-Identidad Git del candidato medido:
+Identidad Git del candidato de la iteración anterior, preservada como
+historia; la iteración descrita abajo mide `40042db`:
 
 ```text
 source_git_sha         5bc9cb4 (exp/prompt-protocols, worktree limpio)
@@ -217,7 +218,7 @@ Runs (artefactos locales Git-ignored en `evals/results/`):
 Las INFRA fueron `ModelUnavailableError` (cuota Vertex agotada durante la
 batería de runs del día); los reruns las reemplazaron.
 
-## Resultados
+## Resultados de la iteración previa (851fe0b)
 
 Gate crítico:
 
@@ -301,6 +302,151 @@ ninguna llamada real ni side effect. No se creó capacidad idle experimental.
 - El carril sintético es el único que activa procedimiento guiado; las
   regresiones de `procedure_current` no describen por sí solas el caller real.
 
+## Iteración de optimización — cambios de prompt y proyección
+
+Candidato medido: `40042db` (worktree limpio, rama `exp/prompt-protocols`).
+
+Cambios por archivo:
+
+| Archivo | Cambio | Razón |
+|---|---|---|
+| `prompt_templates/core.md` | Reordenado (Rol → Conversación → Respuesta hablada → Decisión estructurada → Verdad del runtime); añadida evidencia de completitud explícita, cancelación que no prohíbe un request posterior, intención ≠ completitud; eliminadas repeticiones | defectos 5.1/5.2 y guía Gemini 3 (restricciones críticas temprano, negativas al final, definiciones compactas) |
+| `prompt_templates/few_shot.md` (nuevo) | 4 ejemplos contrastivos: sí a pregunta de completitud → ADVANCE; continuación → NONE; pregunta lateral → NONE; re-request tras cancelación → REQUEST | pocos ejemplos dirigidos a los dos defectos; formato único |
+| `prompt_renderer.py` | `system_instructions(goal, procedure_current)`; proyección determinista por secciones L3 en orden de documento; clave `ACCION@paso` | contexto mínimo necesario sin retrieval ni keywords sobre el transcript |
+| `prompt_loader.py` | Lee `few_shot.md`; valida que el protocolo tenga exactamente los `###` de los pasos guiados y falla startup si no | contrato de proyección fail-closed |
+| `gemini.py` / `turns.py` | El seam recibe `procedure_current` durable y registra `cached_content_token_count` | selección determinista + observabilidad de caché |
+| `evals/context_cache_probe.py` (nuevo) | Fases A/B/C de caching, sólo medición | experimento de caching separado de la memoria |
+
+## Resultados de la iteración
+
+### Comparación B — aceptación contra baseline
+
+`129c793` snapshot nuevo run `...T201137-h676ce61` vs candidato
+`...T202107-he88d730` (+3 reruns focalizados):
+
+```text
+paired_valid=189  infra=0  incomplete=0
+critical_gate=0   targeted_regressions=0   targeted_improvements=0
+unrelated_regressions=8 → NEEDS OWNER DECISION
+case summaries: baseline 52 PASS / 11 FAIL → candidato 53 PASS / 10 FAIL
+reps válidas:   baseline 160 PASS / 29 FAIL → candidato 159 PASS / 24 FAIL
+confirmation_state FAIL: 10 → 4
+prompt tokens p50/p95: 2367/2504 → 3737/5143
+model latency p50/p95 ms: 1485/1938 → 1438/2047 (sin causalidad)
+```
+
+Regresiones no objetivo persistentes (8), por familia:
+
+1. `long-conversation-memory` (3 reps): cancelación en "mejor no por ahora"
+   (ocurre también en el baseline) + recuperación inconsistente del goal.
+2. `retroactive-step-correction` (2 reps) y `retroactive-step-correction-clarify`
+   (1 rep): el modelo aún avanza el paso ante continuación/intención en algún
+   muestreo ("ya voy a empezar", "continuemos").
+3. `promise-capability-distinction` (2 reps): el candidato abre confirmación
+   en el mismo turno en que registra el goal por una pregunta de capacidad.
+
+### Comparación A — atribución contra el candidato 851fe0b
+
+Artefacto `184520-hb596639` vs candidato nuevo (7 dimensiones declaradas):
+
+```text
+paired_valid=186  infra=3 (lado baseline histórico, sin rerun posible)
+critical_gate=0   targeted_regressions=0   unrelated_regressions=11
+```
+
+Lectura: los dos defectos objetivo quedaron mayormente resueltos
+(`pronoun-reference` 3/3→0/3 avances indebidos; `side-question-return`
+2/3→aislado; `procedure-lost-step` limpio; `retroactive-step-correction-clarify`
+con patrón correcto en 2/3), con deriva residual en continuación/intención y en
+la apertura de confirmación.
+
+### Diagnóstico de memoria
+
+**NO MEMORY BLOCKER EVIDENCED**. La cancelación del caso
+`long-conversation-memory` ocurre en el turno 7 y sigue dentro de la ventana
+de 3 pares en el turno 8; el estado durable conserva goal/revisión y no hay
+información expulsada. La falla es de clasificación semántica (CANCEL vs
+NEGATIVE, re-REQUEST tras cancelar), no de memoria; inyectar más contexto no
+la resolvería.
+
+### Revisión hablada (manual, local)
+
+Revisadas con `spoken_review_probe` (textos nunca persistidos):
+`ambiguous-reset-unlock`, `direct-supported-request`,
+`unlock-no-self-service`, `side-question-return`, `long-conversation-memory`,
+con contraste baseline en las familias clave.
+
+| Familia | Veredicto | Observación |
+|---|---|---|
+| ambiguous-reset-unlock | MEETS | una aclaración breve, una pregunta principal, sin goal |
+| side-question-return | MEETS | responde el costo y retoma el paso sin avanzar |
+| unlock-no-self-service | MEETS | no inventa autoservicio; ofrece la vía de Mesa de Servicio |
+| direct-supported-request | CONCERN | reset pide confirmación antes de validar identidad (el runtime la bloquea; el wording promete de más) |
+| promise-capability-distinction | CONCERN | misma apertura prematura con identidad vigente |
+| long-conversation-memory | CONCERN | cancelación de "mejor no por ahora" y continuidad posterior irregular |
+
+Las siete dimensiones quedan a juicio del owner; no se introdujo LLM judge.
+
+### Tamaño de contexto (tokens, provider count_tokens)
+
+| Componente | Baseline | Candidato |
+|---|---:|---:|
+| core | – (prompt único 1089) | 1177 |
+| catalog | – | 135 |
+| few-shot | – | 327 |
+| protocolo RESET completo | – | 2216 |
+| system_instruction:base | 1089 | 1641 |
+| system_instruction:RESET completo | – | 3866 |
+| system_instruction:RESET@microsoft_portal | – | 2961 |
+| system_instruction:RESET@tivit_portal | – | 3160 |
+| system_instruction:RESET@service_desk | – | 2835 |
+| system_instruction:UNLOCK | – | 2421 |
+| procedure_progress_block | 397 | 397 |
+| recent_memory_block | 384 | 384 |
+| state_block mínimo/activo | 27 / 50 | 27 / 50 |
+| transcript de muestra | 8 | 8 |
+
+La proyección retira ~905–1031 tokens por turno guiado de RESET respecto al
+protocolo completo; no se persiguió una cifra arbitraria.
+
+### Context caching
+
+Fase A (mínimo vigente Gemini 3 = 4096 tokens, documentado): ninguna variante
+alcanza el piso — base 1630, UNLOCK 2410, RESET@service_desk 2835,
+RESET@microsoft_portal 2950, RESET@tivit_portal 3149, RESET completo 3855.
+
+Fase B (2 warmups + 10 llamadas medidas por variante, prefijo idéntico):
+
+| Variante | prompt p50 | cached p50 | hit | latencia p50/p95 |
+|---|---:|---:|---|---:|
+| base | 2384 | 0 | no | 1422 / 2297 |
+| RESET completo | 4618 | 3972 | sí | 1515 / 1735 |
+| RESET@microsoft_portal | 4111 | 3958 | sí | 1609 / 1938 |
+| RESET@tivit_portal | 4317 | 3964 | sí | 1578 / 2437 |
+| UNLOCK | 3174 | 0 | no | 1422 / 1625 |
+
+Los hits aparecen sólo cuando el prefijo repetido completo supera 4096; en
+turnos reales el contexto dinámico cambia, por lo que la instrucción de
+sistema (≤3866) queda por debajo del piso: no se proyectan hits reales. La
+latencia no muestra mejora sostenida; no se atribuye causalidad.
+
+Fase C: **EXPLICIT CACHE NOT APPLICABLE**. Ningún prefijo alcanza 4096 y no se
+rellena el prompt; no se creó ni borró ningún recurso `cachedContents` y no
+hubo retención experimental remota. La API existe en `google-genai==2.23.0`,
+pero además una request cached no puede reespecificar
+`system_instruction`/`tools`, así que no se diseñó workaround.
+
+### Gates
+
+```text
+python -m pytest            694 passed
+python -m ruff check .      All checks passed
+python -m ruff format --check .  133 files already formatted
+python -m mypy app          Success: no issues found in 29 source files
+python -B evals/conversation_eval.py --validate-only  cases=49 problems=0
+git diff --check            limpio
+```
+
 ## Veredicto
 
 ```text
@@ -308,9 +454,12 @@ INCONCLUSIVE — OWNER DECISION REQUIRED
 NOT MERGED TO DEV
 ```
 
-Candidato sin violaciones críticas, sin regresiones objetivo, con mejoras
-agregadas en confirmación/goal/route y con dos desviaciones sistemáticas
-identificadas en el carril sintético (avance de paso por continuación
-genérica; re-registro del goal tras cancelación). El owner debe elegir entre
-iterar la redacción general de `core.md` y repetir el pareado, aceptar el
-candidato con esas desviaciones declaradas para continuar a voz, o rechazarlo.
+Sin violaciones críticas, sin regresiones objetivo y sin pares INFRA tras los
+reruns, con mejoras agregadas (confirmation_state 10→4 FAIL, casos 11→10) y
+los dos defectos objetivo mayormente corregidos, pero con 8 regresiones no
+objetivo persistentes en tres propiedades: apertura prematura de confirmación
+ante preguntas de capacidad/petición directa sin identidad, deriva residual de
+avance por continuación/intención y continuidad tras cancelación. El owner
+debe decidir entre una iteración acotada de semántica de confirmación y
+completitud, aceptar con desviaciones declaradas para el gate de voz, o
+rechazar. Cloud Run, secretos y XCALLY siguen sin tocarse.
