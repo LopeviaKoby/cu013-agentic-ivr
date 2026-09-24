@@ -619,6 +619,7 @@ async def replay_trial(
                         window_n=experimental.window_n,
                         strategy=experimental.strategy,
                     )
+                procedure = record.experimental_procedure
                 model_start = time.monotonic()
                 decision = await model.decide(
                     transcript=turn_input.transcript,
@@ -627,6 +628,7 @@ async def replay_trial(
                     confirmation=record.confirmation,
                     external_operation=record.external_operation,
                     memory_context=memory_context,
+                    procedure_current=(procedure.current_step if procedure is not None else None),
                 )
                 model_latency = (time.monotonic() - model_start) * 1000.0
                 prompt_tokens, completion_tokens, reasoning_tokens, emitted_flag = _drain_usage(
@@ -1129,6 +1131,9 @@ def prompt_composition_identity(prompt_source: PromptSource | None) -> dict[str,
             "module_hashes": prompt_source.module_hashes(),
             "composition_orders": prompt_source.composition_orders(),
             "system_instruction_hashes": prompt_source.instruction_hashes(),
+            "protocol_projection_mode": list(prompt_source.projection_modes),
+            "projected_steps": prompt_source.projected_steps(),
+            "few_shot_variant": prompt_source.few_shot.name,
             "bundle_fingerprint": prompt_source.fingerprint,
             "renderer_sha256": renderer_hash,
             "loader_sha256": loader_hash,
@@ -1139,6 +1144,9 @@ def prompt_composition_identity(prompt_source: PromptSource | None) -> dict[str,
             "module_hashes": {},
             "composition_orders": {"base": []},
             "system_instruction_hashes": {"base": hash_prompt_text(prompt_source.text)},
+            "protocol_projection_mode": ["full"],
+            "projected_steps": {},
+            "few_shot_variant": "none",
             "bundle_fingerprint": None,
             "renderer_sha256": renderer_hash,
             "loader_sha256": loader_hash,
@@ -1154,6 +1162,7 @@ def build_variant_identity(
     lane: str = "direct",
     strategy: str = DEFAULT_PROMPT_POLICY,
     prompt_source: PromptSource | None = None,
+    cache_mode: str = "none",
 ) -> dict[str, Any]:
     root = REPO_ROOT
     source_sha, working_tree = git_identity(root)
@@ -1201,6 +1210,7 @@ def build_variant_identity(
         "tools": TOOLS_NONE,
         "model_revision": MODEL_REVISION_UNAVAILABLE,
         "lane": lane,
+        "cache_mode": cache_mode,
         "prompt_composition": prompt_composition_identity(prompt_source),
     }
     identity.update(memory_identity)
@@ -1253,6 +1263,7 @@ async def token_composition_breakdown(
     if isinstance(prompt_source, PromptBundle):
         await record("module:core", prompt_source.core.text)
         await record("module:catalog", prompt_source.catalog.text)
+        await record(f"module:{prompt_source.few_shot.name}", prompt_source.few_shot.text)
         for protocol in prompt_source.protocols:
             await record(f"module:{protocol.name}", protocol.text)
         for instruction in prompt_source.instructions:

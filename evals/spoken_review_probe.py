@@ -104,6 +104,7 @@ async def review_case(
             window_n=experimental.window_n,
             strategy=experimental.strategy,
         )
+        procedure = record.experimental_procedure
         try:
             decision = await model.decide(
                 transcript=transcript,
@@ -112,6 +113,7 @@ async def review_case(
                 confirmation=record.confirmation,
                 external_operation=record.external_operation,
                 memory_context=memory_context,
+                procedure_current=(procedure.current_step if procedure is not None else None),
             )
         except (ModelTimeoutError, ModelUnavailableError) as exc:
             print(f"[{case['case_id']} {trial_id} t{index + 1}] INFRA {type(exc).__name__}")

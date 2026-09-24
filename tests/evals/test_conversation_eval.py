@@ -428,7 +428,14 @@ def test_prompt_composition_identity_retains_only_fingerprints() -> None:
     identity = prompt_composition_identity(make_bundle())
     payload = json.dumps(identity)
     assert identity["mode"] == "prompt_composition_protocols"
-    assert identity["composition_orders"]["RESET_PASSWORD"][-1] == "RESET_PASSWORD.runtime.md"
+    assert identity["composition_orders"]["RESET_PASSWORD"] == [
+        "core.md",
+        "catalog.md",
+        "RESET_PASSWORD.runtime.md",
+        "few_shot.md",
+    ]
+    assert identity["protocol_projection_mode"] == ["step_window"]
+    assert identity["few_shot_variant"] == "few_shot.md"
     assert identity["renderer_sha256"]
     assert identity["loader_sha256"]
     assert SYNTHETIC_RESET_BODY not in payload

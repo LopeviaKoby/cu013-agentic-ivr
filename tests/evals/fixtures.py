@@ -48,6 +48,7 @@ class ScriptedModel:
         confirmation: ConfirmationChallenge | None,
         external_operation: ExternalOperation | None,
         memory_context: str | None = None,
+        procedure_current: str | None = None,
     ) -> ModelTurnDecision:
         self.calls.append(
             {
@@ -57,6 +58,7 @@ class ScriptedModel:
                 "confirmation": confirmation,
                 "external_operation": external_operation,
                 "memory_context": memory_context,
+                "procedure_current": procedure_current,
             }
         )
         item = self.script[min(len(self.calls) - 1, len(self.script) - 1)]
