@@ -37,8 +37,12 @@ MANIFEST_LINK_MARKERS = [
     "selection-evidence/",
     "selection-scorecard",
     "checksums.json",
-    "evals/conversation/baselines/",
 ]
+
+# The baselines directory may hold labeled evaluation fixtures (never product
+# authority); canonical JSON manifests remain forbidden there.
+BASELINE_FIXTURE_DIR = ROOT / "evals/conversation/baselines"
+BASELINE_FIXTURE_LABEL = "EVALUATION FIXTURE — NOT PRODUCT DOCUMENTATION"
 
 # Historic short labels that must not appear as standalone uppercase tokens
 # in active code or canonical docs. Experiments and ignored outputs are
@@ -126,6 +130,22 @@ def test_no_canonical_manifests_exist() -> None:
         assert not path.exists(), f"canonical manifest must not exist: {path}"
 
 
+def test_baselines_directory_holds_only_labeled_fixtures() -> None:
+    if not BASELINE_FIXTURE_DIR.exists():
+        return
+    offenders: list[str] = []
+    for path in sorted(BASELINE_FIXTURE_DIR.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.suffix == ".json":
+            offenders.append(f"{path.relative_to(ROOT)}: canonical manifest")
+            continue
+        text = path.read_text(encoding="utf-8")
+        if BASELINE_FIXTURE_LABEL not in text:
+            offenders.append(f"{path.relative_to(ROOT)}: missing fixture label")
+    assert not offenders, "baselines directory is not evaluation-only: " + "; ".join(offenders)
+
+
 def test_active_docs_do_not_link_to_deleted_manifests() -> None:
     offenders: list[str] = []
     for path in _active_markdown_files():
@@ -166,10 +186,13 @@ def test_gemini3_sends_level_without_budget() -> None:
     from google.genai.types import ThinkingLevel
 
     from app.conversation.gemini import GeminiTurnModel, active_conversation_baseline
+    from tests.conversation.prompt_fixtures import make_bundle
     from tests.conversation.test_gemini_model import FakeGenaiClient
 
     client = FakeGenaiClient()
-    config = GeminiTurnModel(client, active_conversation_baseline())._config()  # type: ignore[arg-type]
+    config = GeminiTurnModel(  # type: ignore[arg-type]
+        client, active_conversation_baseline(), prompts=make_bundle()
+    )._config(None)
     assert config.thinking_config is not None
     assert config.thinking_config.thinking_level == ThinkingLevel.MINIMAL
     assert config.thinking_config.thinking_budget is None

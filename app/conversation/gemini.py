@@ -6,6 +6,11 @@ enabled, mandatory structured procedure classification sent early in the
 response schema, and a recent-conversation window of three completed
 caller/assistant turn pairs rendered only for synthetic evaluation turns.
 
+The system instruction is composed by the injected ``PromptSource``: the
+active product path selects the precomposed core + catalog (+ the active
+private runtime protocol of the durable goal) built once at startup, while the
+evaluation baseline lane can replay a frozen static text.
+
 Authentication is ADC only: never a Gemini API key or service-account JSON.
 Exactly one generate_content call per turn, without streaming, tools or
 hidden retries: the single-attempt policy and the explicit deadline keep
@@ -42,7 +47,8 @@ from app.conversation.errors import (
     ModelTimeoutError,
     ModelUnavailableError,
 )
-from app.conversation.prompts import POLLING_FEEDBACK_INSTRUCTIONS, SYSTEM_INSTRUCTIONS
+from app.conversation.prompt_renderer import PromptSource
+from app.conversation.prompts import POLLING_FEEDBACK_INSTRUCTIONS
 from app.session.feedback import PollingFeedbackRequest
 from app.session.metrics import NullTurnMetrics, TurnMetrics
 from app.session.record import (
@@ -127,11 +133,6 @@ def active_conversation_baseline(*, project: str = "cu013-xcally-agentic") -> Ge
         timeout_ms=ACTIVE_TIMEOUT_MS,
         attempts=ACTIVE_ATTEMPTS,
     )
-
-
-def system_instructions_for(baseline: GeminiBaseline) -> str:
-    """Effective system instructions: the single active baseline text."""
-    return SYSTEM_INSTRUCTIONS
 
 
 def contents_for(
@@ -290,10 +291,12 @@ class GeminiTurnModel:
         client: Client,
         baseline: GeminiBaseline,
         *,
+        prompts: PromptSource,
         metrics: TurnMetrics | None = None,
     ) -> None:
         self._client = client
         self._baseline = baseline
+        self._prompts = prompts
         self._metrics: TurnMetrics = metrics or NullTurnMetrics()
 
     async def decide(
@@ -326,7 +329,7 @@ class GeminiTurnModel:
                         state_block=state_block,
                         transcript=transcript,
                     ),
-                    config=self._config(),
+                    config=self._config(goal),
                 )
             except APIError as exc:
                 raise ModelUnavailableError("vertex ai request failed") from exc
@@ -361,7 +364,7 @@ class GeminiTurnModel:
         if isinstance(payload, dict) and "procedure_observation" in payload:
             self._metrics.record_counter("procedure_observation_emitted", 1)
 
-    def _config(self) -> GenerateContentConfig:
+    def _config(self, goal: ConversationGoal | None) -> GenerateContentConfig:
         baseline = self._baseline
         if baseline.thinking_level is not None:
             # Gemini 3 path: discrete level only; the API rejects combining
@@ -371,7 +374,7 @@ class GeminiTurnModel:
         else:
             thinking = ThinkingConfig(thinking_budget=baseline.thinking_budget)
         return GenerateContentConfig(
-            system_instruction=system_instructions_for(baseline),
+            system_instruction=self._prompts.system_instructions(goal),
             response_mime_type="application/json",
             response_schema=response_schema_for(baseline),
             thinking_config=thinking,

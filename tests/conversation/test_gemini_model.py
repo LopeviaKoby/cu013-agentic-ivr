@@ -18,6 +18,7 @@ from app.conversation.gemini import GeminiBaseline, GeminiTurnModel, parse_decis
 from app.session.metrics import RecordingTurnMetrics
 from app.session.record import Action, DeliveryStatus, ExternalOperation, OperationStatus
 from app.session.turns import GoalIntent, ModelTurnDecision, Route
+from tests.conversation.prompt_fixtures import SYNTHETIC_RESET_BODY, make_bundle
 from tests.session.doubles import make_challenge, make_goal
 
 VALID_DECISION_JSON = '{"message": "hola", "route": "CONTINUE"}'
@@ -87,7 +88,9 @@ def make_baseline(**overrides: object) -> GeminiBaseline:
 def make_model(
     client: FakeGenaiClient, *, metrics: RecordingTurnMetrics | None = None
 ) -> GeminiTurnModel:
-    return GeminiTurnModel(client, make_baseline(), metrics=metrics)  # type: ignore[arg-type]
+    return GeminiTurnModel(  # type: ignore[arg-type]
+        client, make_baseline(), prompts=make_bundle(), metrics=metrics
+    )
 
 
 async def decide(model: GeminiTurnModel, **overrides: Any) -> ModelTurnDecision:
@@ -149,6 +152,7 @@ async def test_decide_calls_generate_content_once_with_the_baseline_config() -> 
     assert len(client.calls) == 1
     model_name, contents, config = client.calls[0]
     assert model_name == "synthetic-model"
+    assert config.system_instruction == make_bundle().system_instructions(None)  # type: ignore[attr-defined]
     assert "synthetic transcript 0000" in contents
     assert "objetivo: ninguno" in contents
     assert "identidad_validada: no" in contents
@@ -159,6 +163,18 @@ async def test_decide_calls_generate_content_once_with_the_baseline_config() -> 
     assert config.response_schema is not None  # type: ignore[attr-defined]
     assert config.http_options.timeout == 15000  # type: ignore[attr-defined]
     assert config.http_options.retry_options.attempts == 1  # type: ignore[attr-defined]
+
+
+async def test_one_generation_per_transcript_with_an_active_goal() -> None:
+    client = FakeGenaiClient()
+    model = make_model(client)
+    await decide(
+        model,
+        goal=make_goal(Action.RESET_PASSWORD, revision=1),
+        identity_validated=True,
+    )
+    assert len(client.calls) == 1
+    assert SYNTHETIC_RESET_BODY in client.calls[0][2].system_instruction  # type: ignore[attr-defined]
 
 
 async def test_contents_carry_only_the_semantic_projection() -> None:
@@ -312,7 +328,9 @@ def test_active_conversation_baseline_is_explicit_and_reproducible() -> None:
     from google.genai.types import ThinkingLevel
 
     client = FakeGenaiClient()
-    active_config = GeminiTurnModel(client, baseline)._config()  # type: ignore[arg-type]
+    active_config = GeminiTurnModel(  # type: ignore[arg-type]
+        client, baseline, prompts=make_bundle()
+    )._config(None)
     assert active_config.thinking_config is not None
     assert active_config.thinking_config.thinking_level == ThinkingLevel.MINIMAL
     assert active_config.thinking_config.thinking_budget is None
@@ -323,8 +341,8 @@ def test_thinking_level_selects_the_gemini3_path_without_budget() -> None:
 
     client = FakeGenaiClient()
     baseline = make_baseline(model="gemini-3.1-flash-lite", thinking_level="MINIMAL")
-    model = GeminiTurnModel(client, baseline)  # type: ignore[arg-type]
-    config = model._config()
+    model = GeminiTurnModel(client, baseline, prompts=make_bundle())  # type: ignore[arg-type]
+    config = model._config(None)
     assert config.thinking_config is not None
     assert config.thinking_config.thinking_level == ThinkingLevel.MINIMAL
     assert config.thinking_config.thinking_budget is None
@@ -333,7 +351,7 @@ def test_thinking_level_selects_the_gemini3_path_without_budget() -> None:
 def test_budget_path_never_sends_a_thinking_level() -> None:
     client = FakeGenaiClient()
     model = make_model(client)
-    config = model._config()
+    config = model._config(None)
     assert config.thinking_config is not None
     assert config.thinking_config.thinking_budget == 0
     assert config.thinking_config.thinking_level is None
@@ -415,13 +433,13 @@ def test_strict_schema_requires_and_reorders_the_cue() -> None:
 def test_config_sends_the_strict_schema_only_when_flagged() -> None:
     client = FakeGenaiClient()
     strict_model = GeminiTurnModel(  # type: ignore[arg-type]
-        client, make_baseline(strict_procedure_observation=True)
+        client, make_baseline(strict_procedure_observation=True), prompts=make_bundle()
     )
-    assert isinstance(strict_model._config().response_schema, dict)
+    assert isinstance(strict_model._config(None).response_schema, dict)
     relaxed_model = GeminiTurnModel(  # type: ignore[arg-type]
-        client, make_baseline(strict_procedure_observation=False)
+        client, make_baseline(strict_procedure_observation=False), prompts=make_bundle()
     )
-    assert isinstance(relaxed_model._config().response_schema, type)
+    assert isinstance(relaxed_model._config(None).response_schema, type)
 
 
 def test_strict_flag_defaults_to_required_and_reads_env(
@@ -463,25 +481,27 @@ def test_decision_contract_shape_unchanged() -> None:
     assert goal_fields.annotation is not None
 
 
-def test_active_prompt_and_contents_are_single_baseline() -> None:
-    from app.conversation.gemini import contents_for, system_instructions_for
-    from app.conversation.prompts import SYSTEM_INSTRUCTIONS
+def test_contents_project_the_state_and_transcript() -> None:
+    from app.conversation.gemini import contents_for
 
-    assert system_instructions_for(make_baseline()) == SYSTEM_INSTRUCTIONS
-    assert system_instructions_for(make_baseline(strict_procedure_observation=False)) == (
-        SYSTEM_INSTRUCTIONS
-    )
     contents = contents_for(state_block="objetivo: ninguno", transcript="hola")
     assert "objetivo: ninguno" in contents
     assert "hola" in contents
 
 
-def test_active_config_uses_single_baseline_prompt() -> None:
-    from app.conversation.prompts import SYSTEM_INSTRUCTIONS
+def test_config_selects_the_protocol_of_the_durable_goal() -> None:
+    from app.conversation.prompt_renderer import BASE_INSTRUCTION_KEY
 
     client = FakeGenaiClient()
-    base_model = GeminiTurnModel(client, make_baseline())  # type: ignore[arg-type]
-    assert base_model._config().system_instruction == SYSTEM_INSTRUCTIONS
+    model = make_model(client)
+    base_config = model._config(None)
+    assert base_config.system_instruction == make_bundle().system_instructions(None)  # type: ignore[attr-defined]
+    assert SYNTHETIC_RESET_BODY not in base_config.system_instruction  # type: ignore[attr-defined]
+    reset_config = model._config(make_goal(Action.RESET_PASSWORD, revision=1))
+    assert SYNTHETIC_RESET_BODY in reset_config.system_instruction  # type: ignore[attr-defined]
+    unlock_config = model._config(make_goal(Action.UNLOCK_ACCOUNT, revision=1))
+    assert SYNTHETIC_RESET_BODY not in unlock_config.system_instruction  # type: ignore[attr-defined]
+    assert BASE_INSTRUCTION_KEY in make_bundle().instruction_hashes()
 
 
 # --- narrow polling feedback composer ---------------------------------------

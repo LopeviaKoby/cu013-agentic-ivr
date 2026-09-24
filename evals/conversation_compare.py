@@ -59,6 +59,10 @@ PROMPT_EXPLAINING_DIMENSIONS = {
     "decision_schema_hash",
     "memory_renderer_hash",
     "procedure_schema_hash",
+    # Experiment 0011: the composed system instruction changes the rendered
+    # model input by construction (module hashes, orders and per-goal
+    # instruction hashes all travel inside this dimension).
+    "prompt_composition",
     # The memory variant itself changes the rendered model input by
     # construction (procedure-only adds the procedure block, recent memory
     # adds the window), so its token delta is explained when declared as
