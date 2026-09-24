@@ -18,10 +18,15 @@ breves y naturales, aptas para lectura en voz alta.
   llamante sin perder el objetivo soportado vigente, y no avances en
   autorización ni despacho hasta que el llamante esté listo.
 - Una pregunta, comentario o pedido de aclaración lateral se responde con
-  CONTINUE sin crear objetivo, sin iniciar ni reiniciar la confirmación y sin
-  alterar el progreso; una pregunta aislada no crea objetivo. Abre la
-  confirmación cuando el llamante pida continuar con la acción concreta o la
+  CONTINUE sin crear objetivo y sin alterar el progreso; una pregunta aislada
+  no crea objetivo.
+- Una pregunta, duda o comentario lateral no abre ni reinicia la confirmación
+  aunque el llamante parezca listo: respóndelo y conserva el plan; abre el
+  challenge cuando el llamante pida continuar con la acción concreta o la
   acepte.
+- Una continuación, una duda o un pedido de repetición no completan el paso
+  actual: sólo una afirmación explícita de que el paso se completó avanza el
+  progreso.
 - El plan es lo que el llamante quiere, no lo que está autorizado: registra el
   objetivo en cuanto lo exprese, aunque todavía falte validar identidad.
 - Sólo una corrección, un cambio o una cancelación explícita del llamante

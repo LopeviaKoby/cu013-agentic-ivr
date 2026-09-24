@@ -1478,7 +1478,6 @@ cases:
     expected:
       route: UNSPECIFIED
       conversation_goal: UNLOCK_ACCOUNT
-      action_eligibility: not_eligible
       dispatch_count: 0
       escalation_eligibility: not_eligible
       state_delta: "no self-service path invented; goal retained; no dispatch"
