@@ -276,6 +276,7 @@ class TurnModel(Protocol):
         confirmation: ConfirmationChallenge | None,
         external_operation: ExternalOperation | None,
         memory_context: str | None = None,
+        procedure_current: str | None = None,
     ) -> ModelTurnDecision: ...
 
 
@@ -380,6 +381,7 @@ async def run_model(
             window_n=state["experimental_config"].window_n,
             strategy=state["experimental_config"].strategy,
         )
+    procedure = state["experimental_procedure"]
     decision = await model.decide(
         transcript=transcript,
         goal=state["goal"],
@@ -387,6 +389,7 @@ async def run_model(
         confirmation=state["confirmation"],
         external_operation=state["external_operation"],
         memory_context=memory_context,
+        procedure_current=procedure.current_step if procedure is not None else None,
     )
     return {"model_decision": decision, "memory_render_ms": render_ms}
 

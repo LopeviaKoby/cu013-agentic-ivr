@@ -23,6 +23,8 @@ from app.session.turns import (
 )
 from tests.conversation.prompt_fixtures import (
     PROTOCOL_BODIES,
+    SYNTHETIC_RESET_BODY,
+    SYNTHETIC_RESET_STEP_BODY,
     synthetic_protocol_bundle,
 )
 
@@ -86,16 +88,27 @@ def test_prompt_semantics_are_stated_without_duplicating_schema_enums(tmp_path: 
     assert "entrega" in text
 
 
+def normalized(text: str) -> str:
+    """Collapse prompt line wrapping so semantic assertions stay readable."""
+    return " ".join(text.split())
+
+
 def test_prompt_states_the_plan_authorization_separation(tmp_path: Path) -> None:
-    assert "El plan es lo que el llamante quiere, no lo que está autorizado" in (
-        base_text(tmp_path)
-    )
+    assert "lo que el llamante quiere, no lo que está autorizado" in normalized(base_text(tmp_path))
 
 
 def test_prompt_states_the_central_conversational_property(tmp_path: Path) -> None:
-    text = base_text(tmp_path)
+    text = normalized(base_text(tmp_path))
     assert "atiende la necesidad conversacional inmediata" in text
     assert "sin perder el objetivo soportado vigente" in text
+
+
+def test_prompt_keeps_cancellation_and_completion_semantics(tmp_path: Path) -> None:
+    text = normalized(base_text(tmp_path))
+    assert "cancelar termina la instancia actual del objetivo" in text
+    assert "no prohíbe una petición posterior" in text
+    assert "un paso sólo se completa cuando el llamante afirma" in text
+    assert "una continuación" in text
 
 
 def test_prompt_states_the_ambiguity_rule(tmp_path: Path) -> None:
@@ -139,8 +152,23 @@ def test_composition_includes_only_the_active_protocol(tmp_path: Path) -> None:
     assert unlock_body not in reset
     assert unlock_body in unlock
     assert reset_body not in unlock
-    assert base == bundle.core.text + "\n\n" + bundle.catalog.text
-    assert bundle.instruction(BASE_INSTRUCTION_KEY).order == ("core.md", "catalog.md")
+    assert base == "\n\n".join((bundle.core.text, bundle.catalog.text, bundle.few_shot.text))
+    assert bundle.instruction(BASE_INSTRUCTION_KEY).order == (
+        "core.md",
+        "catalog.md",
+        "few_shot.md",
+    )
+
+
+def test_composition_projects_only_the_current_step_window(tmp_path: Path) -> None:
+    bundle = composed_prompt(tmp_path)
+    projected = bundle.system_instructions(_goal("RESET_PASSWORD"), "microsoft_portal")
+    assert SYNTHETIC_RESET_STEP_BODY in projected
+    assert "Paso sintético B." not in projected
+    assert "Paso sintético C." not in projected
+    assert SYNTHETIC_RESET_BODY in projected
+    unknown = bundle.system_instructions(_goal("RESET_PASSWORD"), "not_a_step")
+    assert unknown == bundle.system_instructions(_goal("RESET_PASSWORD"))
 
 
 def _goal(action: str) -> ConversationGoal:

@@ -131,6 +131,17 @@ def test_files_are_not_read_after_startup(tmp_path: Path) -> None:
     assert bundle.system_instructions(None) == bundle.instruction("base").text
 
 
+def test_guided_step_cardinality_mismatch_fails_startup(tmp_path: Path) -> None:
+    """Projection never guesses: a structure mismatch fails closed."""
+    write_synthetic_protocols(tmp_path)
+    (tmp_path / RESET_FILENAME).write_text(
+        "# RESET_PASSWORD\n\nProcedimiento.\n\n### Portal uno\n\nPaso A.\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="guided sections"):
+        load_prompt_bundle(protocol_dir=tmp_path)
+
+
 def test_missing_protocol_identity_header_is_rejected() -> None:
     module = validate_prompt_module("synthetic.md", b"Procedimiento sin cabecera\n")
     action = PROTOCOL_FILENAMES[0][0]

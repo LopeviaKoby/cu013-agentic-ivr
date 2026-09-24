@@ -308,6 +308,7 @@ class GeminiTurnModel:
         confirmation: ConfirmationChallenge | None,
         external_operation: ExternalOperation | None,
         memory_context: str | None = None,
+        procedure_current: str | None = None,
     ) -> ModelTurnDecision:
         start = time.monotonic()
         try:
@@ -329,7 +330,7 @@ class GeminiTurnModel:
                         state_block=state_block,
                         transcript=transcript,
                     ),
-                    config=self._config(goal),
+                    config=self._config(goal, procedure_current),
                 )
             except APIError as exc:
                 raise ModelUnavailableError("vertex ai request failed") from exc
@@ -364,7 +365,9 @@ class GeminiTurnModel:
         if isinstance(payload, dict) and "procedure_observation" in payload:
             self._metrics.record_counter("procedure_observation_emitted", 1)
 
-    def _config(self, goal: ConversationGoal | None) -> GenerateContentConfig:
+    def _config(
+        self, goal: ConversationGoal | None, procedure_current: str | None = None
+    ) -> GenerateContentConfig:
         baseline = self._baseline
         if baseline.thinking_level is not None:
             # Gemini 3 path: discrete level only; the API rejects combining
@@ -374,7 +377,7 @@ class GeminiTurnModel:
         else:
             thinking = ThinkingConfig(thinking_budget=baseline.thinking_budget)
         return GenerateContentConfig(
-            system_instruction=self._prompts.system_instructions(goal),
+            system_instruction=self._prompts.system_instructions(goal, procedure_current),
             response_mime_type="application/json",
             response_schema=response_schema_for(baseline),
             thinking_config=thinking,
@@ -402,6 +405,11 @@ class GeminiTurnModel:
         thoughts = getattr(usage, "thoughts_token_count", None)
         if thoughts is not None:
             self._metrics.record_counter("reasoning_tokens", thoughts)
+        # Cache hits are counts only: implicit caching is provider-side and
+        # this counter records whatever the effective SDK reports.
+        cached = getattr(usage, "cached_content_token_count", None)
+        if cached is not None:
+            self._metrics.record_counter("cached_tokens", cached)
 
 
 class GeminiPollingFeedbackComposer:

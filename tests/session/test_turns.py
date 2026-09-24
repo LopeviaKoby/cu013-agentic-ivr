@@ -136,3 +136,31 @@ def test_model_cannot_create_an_operation_without_a_boundary_event() -> None:
     assert claimed["external_operation"] is None
     assert claimed["outcome"] is not None
     assert claimed["outcome"].next_step is NextStep.LISTEN
+
+
+async def test_run_model_seam_passes_the_durable_procedure_step() -> None:
+    """The model seam receives the durable step for deterministic projection."""
+    from app.session.memory import GUIDED_PROCEDURE_ID, ExperimentalProcedureState
+
+    model = FakeTurnModel()
+    procedure = ExperimentalProcedureState(
+        procedure_id=GUIDED_PROCEDURE_ID,
+        current_step="microsoft_portal",
+        goal_revision=1,
+        opened_at=make_state()["now"],
+    )
+    await run_model(
+        make_state(
+            goal=make_goal(Action.RESET_PASSWORD, revision=1),
+            transcript="hola",
+            experimental_procedure=procedure,
+        ),
+        model=model,
+    )
+    assert model.calls[0]["procedure_current"] == "microsoft_portal"
+
+
+async def test_run_model_seam_without_procedure_passes_none() -> None:
+    model = FakeTurnModel()
+    await run_model(make_state(transcript="hola"), model=model)
+    assert model.calls[0]["procedure_current"] is None

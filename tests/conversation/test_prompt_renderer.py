@@ -78,12 +78,29 @@ def test_composition_is_deterministic_in_order_and_hashes() -> None:
     first = make_bundle()
     second = make_bundle()
     assert first.fingerprint == second.fingerprint
-    assert first.composition_orders() == {
-        BASE_INSTRUCTION_KEY: ["core.md", "catalog.md"],
-        "RESET_PASSWORD": ["core.md", "catalog.md", "RESET_PASSWORD.runtime.md"],
-        "UNLOCK_ACCOUNT": ["core.md", "catalog.md", "UNLOCK_ACCOUNT.runtime.md"],
-    }
+    orders = first.composition_orders()
+    assert orders[BASE_INSTRUCTION_KEY] == ["core.md", "catalog.md", "few_shot.md"]
+    assert orders["RESET_PASSWORD"] == [
+        "core.md",
+        "catalog.md",
+        "RESET_PASSWORD.runtime.md",
+        "few_shot.md",
+    ]
+    assert orders["UNLOCK_ACCOUNT"] == [
+        "core.md",
+        "catalog.md",
+        "UNLOCK_ACCOUNT.runtime.md",
+        "few_shot.md",
+    ]
+    assert orders["RESET_PASSWORD@microsoft_portal"] == [
+        "core.md",
+        "catalog.md",
+        "RESET_PASSWORD.runtime.md",
+        "step:microsoft_portal",
+        "few_shot.md",
+    ]
     assert first.instruction_hashes() == second.instruction_hashes()
+    assert first.projection_modes == ("step_window",)
 
 
 def test_renderer_never_reads_transcript_or_files(tmp_path: Path) -> None:
@@ -95,11 +112,11 @@ def test_renderer_never_reads_transcript_or_files(tmp_path: Path) -> None:
     assert SYNTHETIC_RESET_BODY in reset
 
 
-def test_prompt_source_selection_only_accepts_the_goal() -> None:
+def test_prompt_source_selection_only_accepts_durable_state() -> None:
     parameters = list(inspect.signature(PromptBundle.system_instructions).parameters)
-    assert parameters == ["self", "goal"]
+    assert parameters == ["self", "goal", "procedure_current"]
     static_parameters = list(inspect.signature(StaticPrompt.system_instructions).parameters)
-    assert static_parameters == ["self", "goal"]
+    assert static_parameters == ["self", "goal", "procedure_current"]
 
 
 def load_and_delete_sources(tmp_path: Path) -> PromptBundle:

@@ -3,7 +3,8 @@
 Private owner protocols never appear here: every synthetic protocol carries
 placeholder text and the required ``# <ACTION>`` capability header, so loader,
 renderer and adapter tests exercise the real validation and composition paths
-without depending on private inputs.
+without depending on private inputs. The synthetic RESET protocol mirrors the
+level-3 structure the projection contract requires.
 """
 
 from __future__ import annotations
@@ -16,16 +17,44 @@ from app.conversation.prompt_loader import (
     validate_prompt_module,
 )
 from app.conversation.prompt_renderer import PromptBundle, PromptModule, build_prompt_bundle
+from app.session.actions import Action
+from app.session.memory import GUIDED_STEPS
 
 SYNTHETIC_CORE = "# Rol\n\nReglas generales sintéticas de prueba."
 SYNTHETIC_CATALOG = "# Capacidades\n\n- RESET_PASSWORD\n- UNLOCK_ACCOUNT"
+SYNTHETIC_FEW_SHOT = "# Ejemplos\n\n<ejemplo>sintético</ejemplo>"
 SYNTHETIC_RESET_BODY = "Procedimiento sintético de reset."
+SYNTHETIC_RESET_STEP_BODY = "Paso sintético A."
+
+SYNTHETIC_RESET_PROTOCOL = (
+    "# RESET_PASSWORD\n"
+    "\n"
+    f"{SYNTHETIC_RESET_BODY}\n"
+    "\n"
+    "## Vías\n"
+    "\n"
+    "### Portal sintético uno\n"
+    "\n"
+    f"{SYNTHETIC_RESET_STEP_BODY}\n"
+    "\n"
+    "### Portal sintético dos\n"
+    "\n"
+    "Paso sintético B.\n"
+    "\n"
+    "### Mesa sintética\n"
+    "\n"
+    "Paso sintético C.\n"
+)
 SYNTHETIC_UNLOCK_BODY = "Procedimiento sintético de desbloqueo."
 
 PROTOCOL_BODIES: dict[str, str] = {
-    "RESET_PASSWORD.runtime.md": f"# RESET_PASSWORD\n\n{SYNTHETIC_RESET_BODY}",
+    "RESET_PASSWORD.runtime.md": SYNTHETIC_RESET_PROTOCOL,
     "UNLOCK_ACCOUNT.runtime.md": f"# UNLOCK_ACCOUNT\n\n{SYNTHETIC_UNLOCK_BODY}",
 }
+
+SYNTHETIC_GUIDED_STEPS: tuple[tuple[Action, tuple[str, ...]], ...] = (
+    (Action.RESET_PASSWORD, GUIDED_STEPS),
+)
 
 
 def make_module(name: str, text: str) -> PromptModule:
@@ -41,7 +70,9 @@ def make_bundle() -> PromptBundle:
     return build_prompt_bundle(
         make_module("core.md", SYNTHETIC_CORE),
         make_module("catalog.md", SYNTHETIC_CATALOG),
+        make_module("few_shot.md", SYNTHETIC_FEW_SHOT),
         protocols,
+        guided_steps=SYNTHETIC_GUIDED_STEPS,
     )
 
 

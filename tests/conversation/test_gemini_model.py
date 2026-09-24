@@ -392,6 +392,29 @@ async def test_absent_thought_counts_stay_missing() -> None:
     assert "reasoning_tokens" not in dict(metrics.counters)
 
 
+async def test_cache_hit_counts_are_recorded_as_numbers_only() -> None:
+    class CachedUsage(FakeUsage):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cached_content_token_count = 0
+
+    client = FakeGenaiClient()
+    client.response = FakeResponse(VALID_DECISION_JSON, usage=CachedUsage())
+    metrics = RecordingTurnMetrics()
+    model = make_model(client, metrics=metrics)
+    await decide(model)
+    assert dict(metrics.counters)["cached_tokens"] == 0
+
+
+async def test_absent_cache_counts_stay_missing() -> None:
+    client = FakeGenaiClient()
+    client.response = FakeResponse(VALID_DECISION_JSON, usage=FakeUsage())
+    metrics = RecordingTurnMetrics()
+    model = make_model(client, metrics=metrics)
+    await decide(model)
+    assert "cached_tokens" not in dict(metrics.counters)
+
+
 def _decision_json_with_procedure_observation() -> str:
     return '{"message": "hola", "route": "CONTINUE", "procedure_observation": "REGRESS"}'
 

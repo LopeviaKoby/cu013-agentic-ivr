@@ -6,9 +6,12 @@ reload and the turn path performs zero file reads. A missing, oversized,
 non-UTF-8, NUL-carrying, empty or mislabeled module fails startup closed; the
 application never serves a partial prompt.
 
-``core.md`` and ``catalog.md`` travel inside the package; the private
-``RESET_PASSWORD.runtime.md`` and ``UNLOCK_ACCOUNT.runtime.md`` protocols are
-owner-supplied, never versioned and mounted from Secret Manager in DEV.
+``core.md``, ``catalog.md`` and ``few_shot.md`` travel inside the package; the
+private ``RESET_PASSWORD.runtime.md`` and ``UNLOCK_ACCOUNT.runtime.md``
+protocols are owner-supplied, never versioned and mounted from Secret Manager
+in DEV. For an action with guided runtime steps, the loader validates that the
+protocol's level-3 sections match the guided-step count and precomposes one
+projected instruction per step.
 """
 
 from __future__ import annotations
@@ -21,12 +24,14 @@ from typing import Final
 from app.conversation.prompt_renderer import (
     CATALOG_MODULE_NAME,
     CORE_MODULE_NAME,
+    FEW_SHOT_MODULE_NAME,
     PromptBundle,
     PromptModule,
     build_prompt_bundle,
     hash_prompt_text,
 )
 from app.session.actions import Action
+from app.session.memory import GUIDED_STEPS
 
 MAX_PROMPT_MODULE_BYTES: Final = 64 * 1024
 PROTOCOL_DIR_ENV: Final = "CU013_PROTOCOL_DIR"
@@ -36,6 +41,12 @@ TEMPLATE_DIRECTORY: Final = "prompt_templates"
 PROTOCOL_FILENAMES: Final[tuple[tuple[Action, str], ...]] = (
     (Action.RESET_PASSWORD, "RESET_PASSWORD.runtime.md"),
     (Action.UNLOCK_ACCOUNT, "UNLOCK_ACCOUNT.runtime.md"),
+)
+# Guided runtime steps per action. The protocol's level-3 sections must follow
+# this order so the projected window stays deterministic; a cardinality
+# mismatch fails startup instead of composing the wrong section.
+GUIDED_STEPS_BY_ACTION: Final[tuple[tuple[Action, tuple[str, ...]], ...]] = (
+    (Action.RESET_PASSWORD, GUIDED_STEPS),
 )
 
 
@@ -123,4 +134,7 @@ def load_prompt_bundle(*, protocol_dir: Path | None = None) -> PromptBundle:
     )
     core = read_template_module(CORE_MODULE_NAME)
     catalog = read_template_module(CATALOG_MODULE_NAME)
-    return build_prompt_bundle(core, catalog, protocols)
+    few_shot = read_template_module(FEW_SHOT_MODULE_NAME)
+    return build_prompt_bundle(
+        core, catalog, few_shot, protocols, guided_steps=GUIDED_STEPS_BY_ACTION
+    )

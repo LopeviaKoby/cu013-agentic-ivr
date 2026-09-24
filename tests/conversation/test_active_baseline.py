@@ -128,13 +128,21 @@ def test_variant_fingerprint_carries_composition_hashes() -> None:
     assert composition["bundle_fingerprint"] == bundle.fingerprint
     assert composition["module_hashes"]["core.md"] == bundle.core.sha256
     assert composition["module_hashes"]["catalog.md"] == bundle.catalog.sha256
+    assert composition["module_hashes"]["few_shot.md"] == bundle.few_shot.sha256
     assert composition["system_instruction_hashes"] == bundle.instruction_hashes()
-    assert composition["composition_orders"]["base"] == ["core.md", "catalog.md"]
+    assert composition["composition_orders"]["base"] == [
+        "core.md",
+        "catalog.md",
+        "few_shot.md",
+    ]
     assert composition["composition_orders"]["RESET_PASSWORD"] == [
         "core.md",
         "catalog.md",
         "RESET_PASSWORD.runtime.md",
+        "few_shot.md",
     ]
+    assert composition["protocol_projection_mode"] == ["step_window"]
+    assert composition["projected_steps"]["RESET_PASSWORD"]
     assert identity["effective_prompt_hash"] == hash_prompt_text(bundle.system_instructions(None))
 
 
