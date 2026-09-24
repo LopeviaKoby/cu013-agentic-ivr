@@ -60,6 +60,63 @@ y no se tocó.
 
 Este registro es evidencia; no es una segunda SPEC.
 
+## Research checkpoint — Gemini prompt/caching
+
+Fecha de consulta: 2026-09-24. Fuentes primarias Google/Google Cloud vigentes;
+Context7 contrastado con las versiones bloqueadas (`google-genai==2.23.0`,
+`langgraph==1.2.11`, `pydantic==2.13.5`).
+
+Fuentes principales:
+
+- Prompting strategies (Gemini API): https://ai.google.dev/gemini-api/docs/prompting-strategies
+- Guía de prompting de Gemini 3 (Agent Platform): https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/start/gemini-3-prompting-guide
+- Ficha Gemini 3.5 Flash-Lite: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-flash-lite
+- Context cache overview / create / use: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-overview, `.../context-cache-create`, `.../context-cache-use`
+- Few-shot examples (Vertex): https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/prompts/few-shot-examples
+- Prompt design strategies (Vertex): https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/prompts/prompt-design-strategies
+
+| Claim | Source | ¿Aplica a 3.5 Flash-Lite? | Implicación para CU013 | Acción |
+|---|---|---|---|---|
+| Gemini 3 responde mejor a instrucciones directas, concisas y bien estructuradas | Guía Gemini 3 (§prácticas recomendadas): "Be precise and direct... Avoid unnecessary or overly persuasive language" | Sí (familia Gemini 3) | `core.md` sin prosa persuasiva; reglas imperativas cortas | reescritura de core |
+| Restricciones críticas/rol/formato deben ir en system instruction o al principio | Guía Gemini 3: "Place essential behavioral constraints, role definitions (persona), and output format requirements in the System Instruction or at the very beginning" | Sí | Mantener rol y semántica crítica al inicio del system instruction | orden de core |
+| Matiz: restricciones negativas demasiado tempranas pueden perderse; en prompts complejos conviene cerrar con lo crítico | Guía Gemini 3 (§Organizing important information and constraints) | Sí | Negativas operativas (verdad, no inventar) al final del bloque de decisión | orden de core |
+| Markdown/XML son delimitadores válidos si la estructura es consistente | Prompting strategies: "XML-style tags... or Markdown headings are effective. Choose one format and use it consistently" | Sí | Mantener Markdown consistente; few-shot con un único formato de ejemplo | consistencia |
+| Para contexto extenso, el contexto precede a la tarea/pregunta, con ancla | Guía Gemini 3: "supply all the context first. Place your specific instructions or questions at the very end" | Sí | contents: estado → procedimiento → memoria → transcript (ya es el orden); ancla "Turno del llamante:" | sin cambio (verificado) |
+| Few-shot mejora patrón/alcance/formato; demasiados ejemplos sobreajustan | Prompting strategies + Vertex few-shot: "if you include too many examples, the model may start to overfit" | Sí | micro-set 2–4 ejemplos contrastivos sólo para los dos defectos | few_shot v1 (4) |
+| No es necesario pedir chain-of-thought/planificación textual | Prompt design strategies: "If you're using Thinking, try prompting without step-by-step instructions on how the model should reason" | Sí | No agregar CoT al prompt | no-action |
+| `thinking_level=MINIMAL` es apropiado para clasificación/routing/JSON sensible a latencia | Ficha 3.5 Flash-Lite: "Usa thinking_level.MINIMAL para tareas de clasificación y extracción más simples o sensibles a la latencia... ideal para clasificación, enrutamiento o extracción de JSON" | Sí (default del modelo) | Mantener MINIMAL; no probar MEDIUM/HIGH | no-action |
+| Temperatura/Top-K/Top-P no son palanca: no se admiten valores personalizados | Ficha 3.5 Flash-Lite: "No se admiten valores personalizados... Si estableces un valor personalizado... se ignorará" | Sí | No tocar parámetros de muestreo | no-action |
+| Structured output soportado y suficiente para la estructura | Ficha 3.5 Flash-Lite: "Salidas estructuradas ... Admitido" | Sí | Mantener `response_schema`; no duplicar enums en el prompt | auditoría de core |
+| Context caching implícito y explícito soportados | Ficha 3.5 Flash-Lite: "Almacenamiento de contexto implícito/explícito en caché / Admitido" | Sí | Evaluar elegibilidad; no asumir hits | Fases A/B/C |
+| Mínimo real de tokens cacheables (Gemini 3): 4.096 (implícito y explícito) | Overview (§Límites): "Modelos de la familia Gemini 3: 4,096 tokens" | Sí (4096) | Prefijo cacheable debe alcanzar 4.096 por sí mismo; no rellenar | Fase A |
+| Hits de caché se reportan en `cachedContentTokenCount` | Overview: "el campo cachedContentTokenCount en los metadatos de tu respuesta indica la cantidad de tokens en la parte almacenada en caché" | Sí | Capturar `cached_content_token_count` del SDK y reportarlo | instrumentación |
+| Con `cached_content` no se puede reespecificar system_instruction/tools/tool_config en la request (400 INVALID_ARGUMENT) | Use page (§Restricciones) + error reportado: "Tool config, tools and system instruction should not be set in the request when using cached content" | Sí | Si se usara caché explícita, la instrucción debe vivir sólo en la caché; equivalente semántico obligatorio | Fase C / STOP |
+| TTL por defecto 60 min; mínimo 1 min; sin máximo; almacenamiento con costo; borrado explícito | Create/Use pages | Sí | TTL de experimento 15 min si aplicara; borrar al cerrar | Fase C |
+| Endpoint global soportado para caching; CMEK no soportado con global | Create page (§Compatibilidad de ubicación / claves) | Sí (global) | No usar CMEK | Fase C |
+| `response_schema`/`thinking_config` con caché explícita | Sin mención en la documentación de caching | Indeterminado | Debe verificarse con probe; si no es seguro → NOT APPLICABLE | Fase C |
+
+Context7 contrastado (versiones efectivas):
+
+- `google-genai` 2.23.0 (instalada): `Client.caches.create/delete`,
+  `CreateCachedContentConfig(contents, system_instruction, ttl, ...)`,
+  `GenerateContentConfig.cached_content` y
+  `usage_metadata.cached_content_token_count` existen en la versión bloqueada.
+  Context7 (`/googleapis/python-genai`) documenta la misma forma de API
+  (`caches.create`, `cached_content`, `cached_content_token_count`).
+  No se requiere cambio de dependencia.
+- `langgraph` 1.2.11: patrón StateGraph → nodo con estado tipado → updates
+  parciales; `compile()` sin checkpointer es el uso soportado (sin thread_id,
+  invocaciones aisladas). El refactor de prompts no agrega nodos: el rendering
+  es responsabilidad del adapter, no del grafo.
+- `pydantic` 2.13.5: `ConfigDict(extra="forbid", frozen=True)` y
+  `model_json_schema()` incluyen `description` de `Field`, por lo que la
+  semántica puede viajar en el schema sin duplicarse en el prompt.
+
+Decisión de research: mantener `thinking_level=MINIMAL`, structured output y
+un único system instruction compuesto; no introducir CoT ni ejemplos masivos;
+reducir duplicación schema/prompt; tratar caching como medición, no como
+supuesto.
+
 ## Propiedad objetivo del fix de ambigüedad
 
 - ambigüedad entre dos acciones soportadas → sin goal materializado → LISTEN
