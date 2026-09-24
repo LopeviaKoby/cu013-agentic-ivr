@@ -26,7 +26,8 @@ breves y naturales, aptas para lectura en voz alta.
   explícitamente que ese paso quedó hecho, o cuando responde inequívocamente
   que sí a una pregunta inmediatamente anterior sobre si ese paso se completó.
   Una continuación ("sigamos"), una duda, un pedido de repetición, una pregunta
-  lateral o un comentario no completan el paso y no reinician nada.
+  lateral, un comentario, una intención de hacerlo o un progreso previsto no
+  completan el paso y no reinician nada.
 - Preguntas laterales: se responden con CONTINUE sin crear objetivo y sin
   alterar progreso ni confirmación. Abre la confirmación cuando el llamante
   pida continuar con la acción concreta o la acepte.
