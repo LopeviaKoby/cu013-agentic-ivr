@@ -1,6 +1,6 @@
 # Experimento 0011: composición modular de prompts y protocolos runtime privados
 
-- Status: Completed (veredicto INCONCLUSIVE — OWNER DECISION REQUIRED)
+- Status: Completed (Iteración A; veredicto INCONCLUSIVE — OWNER DECISION REQUIRED)
 - Lifecycle: Planned → Running → Completed / Failed / Inconclusive
 - Authority: evidencia experimental; no es una decisión arquitectónica ni una SPEC
 - Date: 2026-09-24
@@ -463,3 +463,200 @@ avance por continuación/intención y continuidad tras cancelación. El owner
 debe decidir entre una iteración acotada de semántica de confirmación y
 completitud, aceptar con desviaciones declaradas para el gate de voz, o
 rechazar. Cloud Run, secretos y XCALLY siguen sin tocarse.
+
+## Iteraci�n A � state projection + tombstone derivado + ablaci�n de few-shot
+
+Hip�tesis: los fallos residuales no requieren m�s memoria ni m�s ejemplos; el
+modelo necesita una proyecci�n transitoria y m�nima del estado que el
+runtime ya conoce para no anticipar acciones ni confundir una cancelaci�n
+previa con una nueva solicitud. Candidato medido: `f2421da` (worktree limpio).
+
+### Research check (breve)
+
+Context7 y documentaci�n instalada confirman: LangGraph 1.2.11 usa `StateGraph`
+con estado tipado y updates parciales por nodo, sin reducers `Annotated` en
+`GraphState` (reemplazo plano por campo: cancelar y re-proponer no revive
+valores previos); `compile()` sin checkpointer es el uso soportado; el prompt
+se renderiza por turno y no requiere persistir instrucciones din�micas;
+`google-genai` 2.23.0 expone `GenerateContentConfig.system_instruction` y
+structured output sin cambios. Por tanto: los hechos crudos viven en el estado
+durable, la proyecci�n se deriva por turno y ninguna instrucci�n din�mica se
+persiste.
+
+### State projection (transitoria, no persistida)
+
+`app/session/state_projection.py` define `ModelStateProjection` (frozen,
+`extra=forbid`) y `project_model_state(...)`. Campos finales y fuente:
+
+| Campo | Fuente | Derivaci�n |
+|---|---|---|
+| `active_goal` / `goal_revision` | `SessionRecord.goal` | valor directo |
+| `identity_status` | `IdentityState` + `now` | precedencia HANDOFF_REQUIRED > MISSING > VALID > EXPIRED |
+| `confirmation_pending` | `SessionRecord.confirmation` | `is not None` |
+| `execution_confirmation_allowed` | goal + identidad + challenge + dispatch + operaci�n | espejo de las condiciones legales de `_maybe_open_challenge` |
+| `external_action_allowed` | `SessionRecord.dispatch` | guard de despacho persistido |
+| `external_success_claim_allowed` | `ExternalOperation.status` | `confirmed` |
+| `external_operation_status` / `external_delivery_status` | `ExternalOperation` | valores cerrados |
+| `procedure_id` / `procedure_current` | `ExperimentalProcedureState` | valor directo |
+
+Se renderiza como bloque JSON compacto `<conversation_state>` al inicio de
+contents, antes de progreso procedimental, memoria reciente y transcript. La
+prosa anterior (`_state_block`) se retir� para no duplicar informaci�n. No se
+persiste, no entra en `SessionRecord`, no contiene PII ni transcript.
+
+### Tombstone sem�ntico (derivado)
+
+Restricci�n de alcance: �2 proh�be tocar el modelo Firestore y
+`SessionRepository`, as� que no se a�adi� ning�n campo durable de historial. El
+hecho operativo que el modelo necesitaba se deriva en la proyecci�n:
+`active_goal=null` + `confirmation_pending=false` +
+`execution_confirmation_allowed=false` significan "no hay instancia activa ni
+nada que confirmar"; el core a�ade que, sin goal activo, una confirmaci�n
+verbal no reabre una instancia cancelada y una petici�n/confirmaci�n de una
+capability registra REQUEST. Comportamiento durable verificado:
+
+| Momento | goal | revision | confirmation | procedure | resultado |
+|---|---|---|---|---|---|
+| antes de cancelar | UNLOCK/RESET | N | challenge activo | paso vigente | instancia activa |
+| tras CANCEL | null | � | null | null (y suspended null) | instancia limpia, sin reutilizar challenge |
+| tras re-request expl�cito | capability | 1 (nueva instancia) | null hasta nueva apertura legal | nuevo o ninguno | REQUEST fresco |
+
+Tests deterministas: `tests/session/test_state_projection.py` (determinismo,
+sin PII, estados de identidad, permisos, cancelaci�n/re-request) y
+`goal-re-request-after-cancel` en el corpus (PASS 3/3 en todas las variantes).
+
+### Ablaci�n de few-shot (focal, 14 familias, 3 repeticiones)
+
+| Variante | ejemplos | PASS/FAIL | INFRA | cr�ticos | proc. FAIL | conf. FAIL | goalTr FAIL | prompt p50/p95 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| F4 | 4 | 48/6 | 3 | 0 | 3 | 2 | 6 | 3955 / 5286 |
+| F2 | 2 | 49/6 | 2 | 0 | 8 | 0 | 6 | 3772 / 5135 |
+| F1 | 1 | 50/6 | 1 | 0 | 5 | 0 | 6 | 3706 / 5065 |
+| F0 | 0 | 48/6 | 3 | 0 | 5 | 2 | 6 | 3560 / 4959 |
+
+Tie-breaker focal (side-question-return, retroactive-step-correction,
+long-conversation-memory): F4 2 fallos de procedimiento y 2 de confirmaci�n;
+F1 5 de procedimiento y 0 de confirmaci�n. El defecto de cancelaci�n/
+re-request queda resuelto en todas las variantes, F0 incluido: la proyecci�n
+es quien lo porta, no los ejemplos. Los 6 FAIL de repetici�n en todas las
+variantes son dos casos preexistentes id�nticos
+(`confirmation-affirmative-authorizes`, `confirmation-negation-no-dispatch`).
+
+Selecci�n: **F4** (menor evidencia de regresi�n del defecto objetivo �
+procedimiento sin evidencia � en ablaci�n y tie-breaker); F2 eliminada
+(peor en procedimiento); F0/F1 quedan como alternativas de menor contexto con
+ventaja de confirmaci�n no reproducible (F0 comparte el fallo del turn5).
+
+### Full paired (F4)
+
+Comparaci�n B � `129c793` snapshot vs candidato (mismo c�digo, 3 reps, 1
+warmup, repository, memoria 3, precedence; reruns focalizados para INFRA):
+
+```text
+paired_valid=192  infra=0  incomplete=0
+critical_gate=0   targeted_regressions=0   targeted_improvements=1 (ambig�edad, 1 rep)
+unrelated_regressions=5 ? NEEDS OWNER DECISION
+casos: baseline 53 PASS / 11 FAIL ? candidato 57 PASS / 7 FAIL
+reps v�lidas: baseline 153 PASS / 26 FAIL ? candidato 169 PASS / 20 FAIL
+confirmation_state FAIL: 8 ? 2
+conversation_goal FAIL: 5 ? 3
+procedure_current FAIL (turno): 11 ? 3
+goal FAIL (turno): 3 ? 3
+prompt tokens p50/p95: 2422/2558 ? 3884/5286
+model latency p50/p95 ms: 1469/2094 ? 1468/1953
+turn latency p50/p95 ms: 1484/2093 ? 1469/1968
+```
+
+Regresiones no objetivo persistentes (5): `side-question-return` turn2
+`procedure_current` 3/3 (una continuaci�n gen�rica "listo, continuemos�" a�n
+avanza el paso en algunos muestreos; apareci� tambi�n 2/3 en la ablaci�n F4 y
+2/3 en el tie-breaker, y no apareci� en el probe hablado � es el defecto
+residual), `long-conversation-memory` turn5 `confirmation`/`revision` en 2 reps
+(la correcci�n de cuenta abre challenge; comportamiento compartido con la
+variante F0 y parcialmente presente en el baseline).
+
+Comparaci�n A � `a8df4b8` vs candidato (8 variables + `corpus` como
+confounder por el caso nuevo): paired 189, incomplete 3, infra 0, cr�ticos 0,
+regresiones objetivo 0, no objetivo 5; mejoras agregadas goal FAIL 9?3 y
+confirmation_state FAIL 4?2.
+
+### Spoken review (manual, local)
+
+Revisadas: ambiguous request, direct RESET/UNLOCK, side question, retorno al
+procedimiento, cancelaci�n, re-request, identidad pendiente, identidad v�lida,
+confirmaci�n.
+
+| Interacci�n | Veredicto | Observaci�n |
+|---|---|---|
+| ambiguous request | MEETS | una aclaraci�n breve con dos opciones; sin goal |
+| direct UNLOCK | MEETS | pide validar identidad; sin confirmaci�n prematura |
+| direct RESET | CONCERN | sin confirmaci�n prematura (mejora), pero el wording "�Me confirmas tu identidad?" es impreciso para captura por tonos |
+| side question + retorno | MEETS | responde el costo y retoma el paso sin avanzar (en esta muestra) |
+| cancelaci�n | MEETS | reconoce y comunica la cancelaci�n |
+| re-request posterior | MEETS | "puedo ayudarte a desbloquear tu cuenta de nuevo" + identidad |
+| identidad v�lida | MEETS | abre confirmaci�n s�lo cuando corresponde |
+| confirmaci�n | CONCERN | "Tu cuenta ser� desbloqueada en breve" promete un futuro sin despacho confirmado (fallo preexistente del caso) |
+
+Nota adicional: en 1 de 4 par�frasis ambiguas el modelo propuso `REQUEST` sin
+acci�n (violaci�n capturada por el runtime, mensaje de fallback seguro);
+el or�culo de estado la deja pasar porque el estado final es correcto.
+
+### Tokens y latencia (componentes)
+
+| Componente | Baseline | Candidato |
+|---|---:|---:|
+| system_instruction:base | 1089 | 1729 (core 1265 + catalog 135 + few-shot 327) |
+| system_instruction:RESET completo | � | 3954 |
+| RESET@microsoft_portal / tivit / service_desk | � | 3049 / 3248 / 2923 |
+| system_instruction:UNLOCK | � | 2509 |
+| state_projection:minimal / active_reset | 92 / 93 (prosa antigua 27/50) | 92 / 93 |
+| procedure_progress_block | 397 | 397 |
+| recent_memory_block | 384 | 384 |
+| transcript de muestra | 8 | 8 |
+
+La proyecci�n cuesta ~65 tokens m�s que la prosa que reemplaza pero porta los
+permisos; con ella sola (F0) el prompt baja ~395 tokens p50. No se fij� ning�n
+objetivo m�gico de tokens.
+
+### Memoria
+
+Mantener exactamente 3 pares + estado durable. **NO MEMORY BLOCKER EVIDENCED**:
+`goal-re-request-after-cancel` pasa 3/3 en F4/F2/F1/F0; la cancelaci�n del
+turno 7 de `long-conversation-memory` sigue dentro de la ventana de 3 pares en
+el turno 8 y el estado durable est� �ntegro, as� que la correcci�n de estas
+propiedades no vino de memoria textual.
+
+### Caching
+
+No se ejecut� caching en esta iteraci�n (resultado previo: explicit NOT
+APPLICABLE, implicit sin beneficio sostenido). No se cre� ning�n recurso.
+
+### Gates
+
+```text
+python -m pytest            705 passed
+python -m ruff check .      All checks passed
+python -m ruff format --check .  138 files already formatted
+python -m mypy app          Success: no issues found in 30 source files
+python -B evals/conversation_eval.py --validate-only  cases=50 problems=0
+git diff --check            limpio
+docker build                OK (digest sha256:104f572b…), templates core/f4/f2/f1
+                            verificados dentro de la imagen y F0 sin módulo
+```
+
+### Veredicto de la Iteraci�n A
+
+```text
+INCONCLUSIVE � OWNER DECISION REQUIRED
+NOT MERGED TO DEV
+```
+
+Grandes mejoras: cancelaci�n/re-request resuelto (corpus y estado), sin
+confirmaci�n prematura en petici�n directa, `procedure_current` 11?3,
+`confirmation_state` 8?2, casos FAIL 11?7, y solo 5 regresiones no objetivo
+(antes 8). Persiste un defecto reproducible: una continuaci�n gen�rica
+("listo, continuemos con X") puede avanzar el paso guiado
+(`side-question-return` 3/3 en el full paired, 2/3 en ablaci�n/tie-breaker,
+ausente en el probe hablado). El owner debe decidir entre una iteraci�n
+acotada espec�ficamente a esa clase sem�ntica, aceptar con la desviaci�n
+declarada, o rechazar. Cloud Run, secretos y XCALLY siguen sin tocarse.
