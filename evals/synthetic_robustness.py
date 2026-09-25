@@ -486,13 +486,20 @@ def freeze_held_out(cases: list[dict[str, Any]], protocol_hashes: dict[str, str]
     return hash_text(text)
 
 
-async def run_dev(cases: list[dict[str, Any]]) -> int:
+async def run_cases(
+    cases: list[dict[str, Any]],
+    harness_language: str,
+    *,
+    phase: str,
+) -> int:
     problems = validate_corpus(cases)
     if problems:
         for problem in problems:
             print(f"GENERATED {problem}", file=sys.stderr)
         return 2
-    prompt_source = resolve_prompt_source("prompt_composition_protocols")
+    prompt_source = resolve_prompt_source(
+        "prompt_composition_protocols", harness_language=harness_language
+    )
     baseline = GeminiBaseline.from_env()
     client = Client(
         vertexai=True,
@@ -535,7 +542,7 @@ async def run_dev(cases: list[dict[str, Any]]) -> int:
     finally:
         await client.aio.aclose()
     report = {
-        "phase": "synthetic-development",
+        "phase": phase,
         "generator": GENERATOR,
         "seed": SEED,
         "cases": len(cases),
@@ -546,7 +553,7 @@ async def run_dev(cases: list[dict[str, Any]]) -> int:
     findings = sanitization_findings(report)
     if findings:
         raise ValueError(f"synthetic report failed sanitization: {findings}")
-    output = REPO_ROOT / "evals" / "results" / f"synthetic-dev-{SEED}.json"
+    output = REPO_ROOT / "evals" / "results" / f"{phase}-{harness_language}.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({k: report[k] for k in ("cases", "verdicts")}, sort_keys=True))
@@ -560,7 +567,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="CU013 synthetic robustness suite")
     parser.add_argument("--freeze-held-out", action="store_true")
     parser.add_argument("--run-dev", action="store_true")
+    parser.add_argument("--run-held-out", action="store_true")
     parser.add_argument("--protocol-dir", default=None)
+    parser.add_argument("--harness-language", choices=["es", "en"], default="es")
     args = parser.parse_args(argv)
     cases = compose_scenarios()
     problems = validate_corpus(cases)
@@ -579,9 +588,26 @@ def main(argv: list[str] | None = None) -> int:
         print(f"held-out frozen: cases={len(held)} sha256={digest}")
         print(f"path={HELD_OUT_PATH}")
     if args.run_dev:
-        return asyncio.run(run_dev(dev))
-    if not args.freeze_held_out:
-        parser.error("pass --freeze-held-out and/or --run-dev")
+        return asyncio.run(run_cases(dev, args.harness_language, phase="synthetic-dev"))
+    if args.run_held_out:
+        payload = yaml.safe_load(HELD_OUT_PATH.read_text(encoding="utf-8"))
+        held_cases = payload["cases"]
+        from app.conversation.prompt_loader import load_prompt_bundle
+
+        bundle = load_prompt_bundle(
+            protocol_dir=Path(args.protocol_dir) if args.protocol_dir else None
+        )
+        current = bundle.module_hashes()
+        frozen = payload.get("protocol_hashes", {})
+        drift = sorted(
+            name for name, digest in frozen.items() if name in current and current[name] != digest
+        )
+        if drift:
+            print(f"HELD-OUT MODULE DRIFT: {drift}", file=sys.stderr)
+            return 2
+        return asyncio.run(run_cases(held_cases, args.harness_language, phase="synthetic-held-out"))
+    if not (args.freeze_held_out or args.run_dev or args.run_held_out):
+        parser.error("pass --freeze-held-out, --run-dev and/or --run-held-out")
     return 0
 
 
