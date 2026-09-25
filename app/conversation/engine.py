@@ -2,7 +2,7 @@
 
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from app.conversation.errors import InvalidModelOutputError
 from app.session.outcome import NextStep
@@ -32,12 +32,18 @@ class TurnOutcome(BaseModel):
 
 
 class ConversationTurn(BaseModel):
-    """Transient engine input; never durable and never raw DTMF."""
+    """Transient engine input; never durable, never raw DTMF.
+
+    ``temporary_password`` is the ephemeral voice secret XCALLY re-sends on
+    every presentation turn; it lives only in the current request and never
+    reaches durable state.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     conversation_id: str = Field(min_length=1)
-    transcript: str = Field(min_length=1)
+    transcript: str | None = None
+    temporary_password: SecretStr | None = None
     asr_confidence: float | None = None
 
 
@@ -61,7 +67,10 @@ class SessionConversationEngine:
     async def handle_turn(self, turn: ConversationTurn) -> TurnOutcome:
         result = await self._service.handle_turn(
             turn.conversation_id,
-            TurnInput(transcript=turn.transcript),
+            TurnInput(
+                transcript=turn.transcript,
+                temporary_password=turn.temporary_password,
+            ),
         )
         outcome = result.outcome
         if outcome is None:

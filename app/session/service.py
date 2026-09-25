@@ -58,7 +58,7 @@ def consolidate(
         dispatch=state["dispatch"],
         external_operation=state["external_operation"],
         polling=previous.polling,
-        password_presentation=previous.password_presentation,
+        password_presentation=state["password_presentation"],
         voice_retry_count=0,
         experimental_procedure=state["experimental_procedure"],
         experimental_suspended=state["experimental_suspended"],

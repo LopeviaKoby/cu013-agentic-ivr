@@ -37,6 +37,7 @@ __all__ = [
     "IdentityStatus",
     "ModelStateProjection",
     "identity_status_for",
+    "presentation_is_active",
     "project_model_state",
     "projection_from_turn_inputs",
 ]
@@ -79,6 +80,7 @@ class ModelStateProjection(BaseModel):
     external_operation_status: ExternalOperationStatus
     external_delivery_status: DeliveryStatusLiteral
     external_presentation_status: PresentationStatusLiteral
+    password_presentation_active: bool
     procedure_id: str | None
     procedure_current: str | None
 
@@ -96,6 +98,25 @@ def identity_status_for(identity: IdentityState, now: datetime) -> IdentityStatu
 
 def _operation_is_active(operation: ExternalOperation | None) -> bool:
     return operation is not None and operation.is_active()
+
+
+def presentation_is_active(
+    operation: ExternalOperation | None,
+    presentation: PasswordPresentation | None,
+) -> bool:
+    """True while a confirmed reset still owes the spoken password.
+
+    The first vocalization is eligible before any presentation plane exists
+    (the playback event only arrives after the TTS), and the lifecycle stays
+    active until the caller explicitly says the dictation is finished.
+    """
+    if (
+        operation is None
+        or operation.action is not Action.RESET_PASSWORD
+        or operation.status is not OperationStatus.CONFIRMED
+    ):
+        return False
+    return presentation is None or not presentation.caller_finished
 
 
 def _dispatch_is_live(
@@ -169,6 +190,7 @@ def project_model_state(
             else "none"
         ),
         external_presentation_status=_presentation_status(operation, presentation),
+        password_presentation_active=presentation_is_active(operation, presentation),
         procedure_id=procedure.procedure_id if procedure is not None else None,
         procedure_current=procedure.current_step if procedure is not None else None,
     )
@@ -212,6 +234,7 @@ def projection_from_turn_inputs(
             else "none"
         ),
         external_presentation_status="not_applicable",
+        password_presentation_active=False,
         procedure_id=None,
         procedure_current=procedure_current,
     )

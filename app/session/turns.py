@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 from app.session.actions import Action
 from app.session.memory import (
@@ -47,7 +47,11 @@ from app.session.record import (
     PasswordPresentation,
     SessionRecord,
 )
-from app.session.state_projection import ModelStateProjection, project_model_state
+from app.session.state_projection import (
+    ModelStateProjection,
+    presentation_is_active,
+    project_model_state,
+)
 
 SAFE_FALLBACK_MESSAGE = (
     "No puedo confirmar eso en este momento. ¿Quieres que revisemos juntos tu solicitud?"
@@ -56,6 +60,12 @@ SAFE_FALLBACK_MESSAGE = (
 ESCALATION_MESSAGE = "No pudimos completar la validación de identidad. Te comunico con una persona."
 
 PROCESSING_MESSAGE = "Voy a procesar la solicitud. Puede tardar unos segundos."
+
+PRESENTATION_FINISHED_MESSAGE = "Perfecto. ¿Necesitas algo más?"
+
+PRESENTATION_WAITING_MESSAGE = (
+    "Sigo aquí con tu contraseña. Cuando quieras que te la repita, dímelo."
+)
 
 
 class Route(StrEnum):
@@ -175,6 +185,7 @@ class ModelTurnDecision(BaseModel):
     route: Route
     goal: GoalProposal | None = None
     goal_focus: GoalFocus = GoalFocus.NONE
+    password_presentation_finished: bool = False
     confirmation_request: bool = False
     confirmation_observation: ConfirmationObservation = ConfirmationObservation.NONE
     procedure_observation: ProcedureObservation = Field(
@@ -229,6 +240,7 @@ class TurnInput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     transcript: str | None = None
+    temporary_password: SecretStr | None = None
     identity_outcome: IdentityOutcome | None = None
     confirmation_event: ConfirmationEvent | None = None
     external_event: ExternalEvent | None = None
@@ -297,6 +309,7 @@ class TurnModel(Protocol):
         memory_context: str | None = None,
         procedure_current: str | None = None,
         state_projection: ModelStateProjection | None = None,
+        delivery_secret: str | None = None,
     ) -> ModelTurnDecision: ...
 
 
@@ -310,6 +323,7 @@ class GraphState(TypedDict):
     dispatch: AuthorizedDispatch | None
     external_operation: ExternalOperation | None
     password_presentation: PasswordPresentation | None
+    temporary_password: SecretStr | None
     experimental_config: ExperimentalMemoryConfig | None
     experimental_procedure: ExperimentalProcedureState | None
     experimental_suspended: ExperimentalSuspendedProcedure | None
@@ -334,6 +348,7 @@ class TurnDelta(TypedDict):
     confirmation: ConfirmationChallenge | None
     dispatch: AuthorizedDispatch | None
     external_operation: ExternalOperation | None
+    password_presentation: PasswordPresentation | None
     experimental_procedure: ExperimentalProcedureState | None
     experimental_suspended: ExperimentalSuspendedProcedure | None
     experimental_window: tuple[ExperimentalTurnPair, ...]
@@ -362,6 +377,7 @@ def initial_graph_state(
         dispatch=record.dispatch,
         external_operation=record.external_operation,
         password_presentation=record.password_presentation,
+        temporary_password=turn.temporary_password,
         experimental_config=experimental,
         experimental_procedure=procedure,
         experimental_suspended=suspended,
@@ -391,11 +407,19 @@ async def run_model(
     nothing new.
     """
     transcript = state["transcript"]
-    if transcript is None:
+    presentation_active = presentation_is_active(
+        state["external_operation"], state["password_presentation"]
+    )
+    secret = state["temporary_password"] if presentation_active else None
+    if transcript is None and secret is None:
+        # The only transcript-less turn is the first password vocalization: it
+        # exists precisely because the ephemeral secret is present.
         return {"model_decision": None}
     memory_context: str | None = None
     render_ms: float | None = None
-    if state["experimental_config"] is not None:
+    if state["experimental_config"] is not None and not presentation_active:
+        # Presentation turns are potentially sensitive (the caller may repeat
+        # the secret), so recent memory is neither rendered nor appended.
         memory_context, render_ms = render_memory_block(
             state["experimental_window"],
             state["experimental_procedure"],
@@ -415,7 +439,7 @@ async def run_model(
         now=state["now"],
     )
     decision = await model.decide(
-        transcript=transcript,
+        transcript=transcript or "",
         goal=state["goal"],
         identity_validated=state["identity"].is_valid_at(state["now"]),
         confirmation=state["confirmation"],
@@ -423,6 +447,7 @@ async def run_model(
         memory_context=memory_context,
         procedure_current=procedure.current_step if procedure is not None else None,
         state_projection=projection,
+        delivery_secret=secret.get_secret_value() if secret is not None else None,
     )
     return {"model_decision": decision, "memory_render_ms": render_ms}
 
@@ -801,16 +826,23 @@ def advance_turn(state: GraphState) -> TurnDelta:
         challenge = None
 
     decision = state["model_decision"]
+    presentation_active = presentation_is_active(
+        state["external_operation"], state["password_presentation"]
+    )
+    secret = state["temporary_password"] if presentation_active else None
     proposal_error: str | None = None
     goal = state["goal"]
-    if decision is not None:
+    if decision is not None and not presentation_active:
+        # During the password presentation the model owns only language: a
+        # repeat or clarification never registers a new goal, opens a
+        # challenge or authorizes a dispatch.
         goal, challenge, proposal_error = _apply_goal_proposal(goal, challenge, decision.goal)
 
     dispatch = state["dispatch"]
     operation = state["external_operation"]
     binding_error: str | None = None
     dispatched_this_turn = False
-    if decision is not None:
+    if decision is not None and not presentation_active:
         if (
             decision.confirmation_observation is ConfirmationObservation.CANCEL
             and challenge is not None
@@ -854,6 +886,19 @@ def advance_turn(state: GraphState) -> TurnDelta:
         # wipe a new goal proposed in the same turn.
         goal = None
 
+    presentation = state["password_presentation"]
+    if (
+        presentation_active
+        and secret is not None
+        and decision is not None
+        and decision.password_presentation_finished
+        and presentation is not None
+    ):
+        # Only the caller's semantic decision can finish the lifecycle, and it
+        # is persisted as a non-sensitive boolean. A finish without a playback
+        # plane is not persisted: no presentation fact is invented.
+        presentation = presentation.model_copy(update={"caller_finished": True})
+
     experimental = state["experimental_config"]
     procedure = state["experimental_procedure"]
     suspended = state["experimental_suspended"]
@@ -878,7 +923,27 @@ def advance_turn(state: GraphState) -> TurnDelta:
         error for error in (proposal_error, binding_error) if error is not None
     )
     outcome: TurnOutcomeState | None
-    if dispatched_this_turn and dispatch is not None:
+    if presentation_active:
+        if secret is None:
+            # Nothing to dictate this turn: keep the lifecycle open without
+            # inventing or echoing any secret.
+            outcome = TurnOutcomeState(
+                message=PRESENTATION_WAITING_MESSAGE,
+                next_step=NextStep.LISTEN,
+            )
+        elif decision is not None and decision.password_presentation_finished:
+            outcome = TurnOutcomeState(
+                message=PRESENTATION_FINISHED_MESSAGE,
+                next_step=NextStep.LISTEN,
+            )
+        else:
+            outcome = TurnOutcomeState(
+                message=(
+                    decision.message if decision is not None else PRESENTATION_WAITING_MESSAGE
+                ),
+                next_step=NextStep.DELIVER_PASSWORD,
+            )
+    elif dispatched_this_turn and dispatch is not None:
         # The durable guard exists: the boundary must deliver its command even
         # if the same model turn proposed something illegal. The runtime
         # message replaces the model message, so no unbacked claim is spoken;
@@ -908,6 +973,7 @@ def advance_turn(state: GraphState) -> TurnDelta:
     if (
         experimental is not None
         and experimental.with_window
+        and not presentation_active
         and state["transcript"] is not None
         and decision is not None
         and outcome is not None
@@ -931,6 +997,7 @@ def advance_turn(state: GraphState) -> TurnDelta:
         confirmation=challenge,
         dispatch=dispatch,
         external_operation=operation,
+        password_presentation=presentation,
         experimental_procedure=procedure,
         experimental_suspended=suspended,
         experimental_window=window,

@@ -1,20 +1,22 @@
 """Durable session contract for the Thin Firestore Session Repository.
 
-Version 4 separates the semantic planes ADR-0010 requires without fusing
+Version 5 separates the semantic planes ADR-0010 requires without fusing
 them: the conversational plan, the identity authorization with its absolute
 TTL, the per-operation confirmation challenge and dispatch guard, the truth
 of the external operation, the bounded polling plane (sequence receipts and
-validated waiting feedback), the password-presentation facts and the
-consecutive voice-retry counter the pre-turn bootstrap needs. The record
-stays small, closed and PII-free: only these fields reach Firestore, and raw
-DTMF, transcripts, raw RD bodies, unknown raw statuses, documents, entry
-dates, email addresses, passwords, tools, tool schemas, SDK clients and
+validated waiting feedback), the password-presentation lifecycle (playback
+fact plus the non-sensitive caller-finished flag) and the consecutive
+voice-retry counter the pre-turn bootstrap needs. The record stays small,
+closed and PII-free: only these fields reach Firestore, and raw DTMF,
+transcripts, raw RD bodies, unknown raw statuses, documents, entry dates,
+email addresses, temporary passwords, tools, tool schemas, SDK clients and
 LangGraph internals never belong here.
 
-Versions 1, 2 and 3 migrate in memory, fail-closed, on the next legitimate
+Versions 1, 2, 3 and 4 migrate in memory, fail-closed, on the next legitimate
 save; nothing here rewrites stored documents in bulk. A document is rejected
 when a field it carries cannot be translated honestly into the current
-planes instead of being silently dropped.
+planes instead of being silently dropped. The legacy presentation email
+fields stay readable but are never part of a new decision or event.
 """
 
 from collections.abc import Mapping
@@ -53,7 +55,7 @@ __all__ = [
     "session_record_to_document",
 ]
 
-SCHEMA_VERSION: Literal[4] = 4
+SCHEMA_VERSION: Literal[5] = 5
 
 IDENTITY_TTL = timedelta(minutes=30)
 
@@ -142,23 +144,25 @@ class PlaybackVoice(StrEnum):
 
 
 class EmailAcceptance(StrEnum):
-    """Whether the caller accepted the email channel; UNKNOWN until evidence."""
+    """Legacy email-acceptance fact; no longer part of the active semantics."""
 
     UNKNOWN = "UNKNOWN"
 
 
 class EmailDelivery(StrEnum):
-    """Whether the email was delivered; UNKNOWN until evidence exists."""
+    """Legacy email-delivery fact; no longer part of the active semantics."""
 
     UNKNOWN = "UNKNOWN"
 
 
 class PasswordPresentation(BaseModel):
-    """Password-presentation facts reported after a confirmed reset.
+    """Voice password-presentation lifecycle of a confirmed reset.
 
     The password itself never enters the backend: this plane records only the
-    closed playback/email facts XCALLY reports. It is a separate fact from
-    both the reset result and any legacy delivery status.
+    closed playback fact XCALLY reports plus the non-sensitive
+    ``caller_finished`` flag the semantic model decides. It is a separate fact
+    from the reset result. The legacy email fields stay optional so records
+    written before schema v5 keep loading; no new decision reads them.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -167,9 +171,10 @@ class PasswordPresentation(BaseModel):
     action: Action = Action.RESET_PASSWORD
     goal_revision: int = Field(ge=0)
     voice: PlaybackVoice
-    email_requested: int = Field(ge=0, le=1)
-    email_acceptance: EmailAcceptance
-    email_delivery: EmailDelivery
+    caller_finished: bool = False
+    email_requested: int | None = Field(default=None, ge=0, le=1)
+    email_acceptance: EmailAcceptance | None = None
+    email_delivery: EmailDelivery | None = None
     presented_at: AwareDatetime
 
     @model_validator(mode="after")
@@ -285,7 +290,7 @@ class SessionRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[4] = SCHEMA_VERSION
+    schema_version: Literal[5] = SCHEMA_VERSION
     conversation_id: str = Field(min_length=1)
     turn_count: int = Field(ge=0)
     revision: int = Field(ge=0)
@@ -475,12 +480,13 @@ def _migrate_v2(document: Mapping[str, object]) -> SessionRecord:
 
 
 def _migrate_v3(document: Mapping[str, object]) -> SessionRecord:
-    """Migrate a version 3 document fail-closed into the v4 contract.
+    """Migrate a version 3 document fail-closed into the current contract.
 
-    The translation is honest by construction: every v3 plane exists in v4
-    unchanged, and the only new v4 field starts at zero because a v3 document
-    never observed a voice-retry cycle. A v3 document with a field the closed
-    v3 whitelist does not define is rejected instead of migrated.
+    The translation is honest by construction: every v3 plane exists in v5
+    unchanged, and the fields added later start at their neutral values because
+    a v3 document never observed a voice-retry cycle or a caller-finished
+    presentation. A v3 document with a field the closed v3 whitelist does not
+    define is rejected instead of migrated.
     """
     legacy = _LegacySessionRecordV3.model_validate(dict(document))
     return SessionRecord(
@@ -501,6 +507,20 @@ def _migrate_v3(document: Mapping[str, object]) -> SessionRecord:
         created_at=legacy.created_at,
         updated_at=legacy.updated_at,
     )
+
+
+def _migrate_v4(document: Mapping[str, object]) -> SessionRecord:
+    """Migrate a version 4 document fail-closed into the v5 contract.
+
+    Every v4 plane exists in v5 unchanged; the only additions are the neutral
+    ``password_presentation.caller_finished`` flag and the optional legacy email
+    fields, so a v4 document is validated against the current closed model with
+    its schema version promoted. No stored fact is reinterpreted and no
+    presentation is invented; extra fields still fail validation.
+    """
+    promoted = dict(document)
+    promoted["schema_version"] = SCHEMA_VERSION
+    return SessionRecord.model_validate(promoted)
 
 
 def session_record_to_document(record: SessionRecord) -> dict[str, object]:
@@ -582,9 +602,18 @@ def session_record_to_document(record: SessionRecord) -> dict[str, object]:
                 "action": record.password_presentation.action.value,
                 "goal_revision": record.password_presentation.goal_revision,
                 "voice": record.password_presentation.voice.value,
+                "caller_finished": record.password_presentation.caller_finished,
                 "email_requested": record.password_presentation.email_requested,
-                "email_acceptance": record.password_presentation.email_acceptance.value,
-                "email_delivery": record.password_presentation.email_delivery.value,
+                "email_acceptance": (
+                    record.password_presentation.email_acceptance.value
+                    if record.password_presentation.email_acceptance is not None
+                    else None
+                ),
+                "email_delivery": (
+                    record.password_presentation.email_delivery.value
+                    if record.password_presentation.email_delivery is not None
+                    else None
+                ),
                 "presented_at": record.password_presentation.presented_at,
             }
             if record.password_presentation is not None
@@ -610,7 +639,7 @@ def session_record_to_document(record: SessionRecord) -> dict[str, object]:
 
 
 def session_record_from_document(document: Mapping[str, object]) -> SessionRecord:
-    """Validate a stored document; versions 1-3 migrate in memory, fail-closed."""
+    """Validate a stored document; versions 1-4 migrate in memory, fail-closed."""
     version = document.get("schema_version")
     if version == 1:
         return _migrate_v1(document)
@@ -618,6 +647,8 @@ def session_record_from_document(document: Mapping[str, object]) -> SessionRecor
         return _migrate_v2(document)
     if version == 3:
         return _migrate_v3(document)
+    if version == 4:
+        return _migrate_v4(document)
     if version == SCHEMA_VERSION:
         return SessionRecord.model_validate(dict(document))
     raise ValueError("unsupported durable schema version")

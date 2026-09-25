@@ -139,13 +139,40 @@ def active_conversation_baseline(*, project: str = "tivit-cu013-prd") -> GeminiB
     )
 
 
+DELIVERY_CONTEXT_OPEN = "<entrega_ephemera>"
+DELIVERY_CONTEXT_CLOSE = "</entrega_ephemera>"
+
+
+def render_delivery_context(secret: str) -> str:
+    """Render the ephemeral delivery block; never persisted, never logged.
+
+    The exact temporary password travels only inside this block of the current
+    model request. The password is never normalized: the model must verbalize
+    exactly what XCALLY supplied.
+    """
+    return (
+        f"{DELIVERY_CONTEXT_OPEN}\n"
+        "presentación de contraseña activa\n"
+        f"contraseña temporal exacta: {secret}\n"
+        "Verbalízala exactamente como se recibió, carácter por carácter cuando "
+        "corresponda; no la corrijas, no la sustituyas y no inventes otra.\n"
+        f"{DELIVERY_CONTEXT_CLOSE}"
+    )
+
+
 def contents_for(
     *,
     state_block: str,
     transcript: str,
+    delivery_block: str | None = None,
 ) -> str:
     """Effective model contents: semantic projection plus current transcript."""
-    return "Estado del sistema:\n" + state_block + "\nTurno del llamante:\n" + transcript
+    caller_turn = transcript if transcript else "(primera vocalización, sin transcripción)"
+    parts = ["Estado del sistema:\n" + state_block]
+    if delivery_block is not None:
+        parts.append(delivery_block)
+    parts.append("Turno del llamante:\n" + caller_turn)
+    return "\n".join(parts)
 
 
 def response_schema_for(baseline: GeminiBaseline) -> Any:
@@ -172,6 +199,7 @@ def response_schema_for(baseline: GeminiBaseline) -> Any:
         "procedure_observation",
         "goal",
         "goal_focus",
+        "password_presentation_finished",
         "confirmation_request",
         "confirmation_observation",
         "handoff_cause",
@@ -292,6 +320,7 @@ class GeminiTurnModel:
         memory_context: str | None = None,
         procedure_current: str | None = None,
         state_projection: ModelStateProjection | None = None,
+        delivery_secret: str | None = None,
     ) -> ModelTurnDecision:
         start = time.monotonic()
         try:
@@ -317,6 +346,11 @@ class GeminiTurnModel:
                     contents=contents_for(
                         state_block=state_block,
                         transcript=transcript,
+                        delivery_block=(
+                            render_delivery_context(delivery_secret)
+                            if delivery_secret is not None
+                            else None
+                        ),
                     ),
                     config=self._config(goal, procedure_current),
                 )

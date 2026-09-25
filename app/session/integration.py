@@ -62,8 +62,6 @@ from app.session.record import (
     AuthorizedDispatch,
     ConfirmationChallenge,
     ConversationGoal,
-    EmailAcceptance,
-    EmailDelivery,
     ExternalOperation,
     IdentityState,
     OperationStatus,
@@ -343,10 +341,11 @@ class AccountActionErrorV1Event(BaseModel):
 
 
 class PasswordPresentationResultEvent(BaseModel):
-    """Next-step-v1 password-presentation facts; the password never arrives.
+    """Next-step-v1 playback fact of a password presentation; no secret arrives.
 
-    ``email_requested`` is a strict 0/1 integer. Acceptance and delivery start
-    as UNKNOWN: no delivery claim is possible until real evidence exists.
+    Only the playback fact travels: the caller-finished lifecycle flag belongs
+    to the semantic turn and the legacy email facts are no longer part of the
+    active contract.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -356,9 +355,6 @@ class PasswordPresentationResultEvent(BaseModel):
     action: Literal[Action.RESET_PASSWORD]
     goal_revision: int = Field(strict=True, ge=0)
     voice: PlaybackVoice
-    email_requested: int = Field(strict=True, ge=0, le=1)
-    email_acceptance: Literal[EmailAcceptance.UNKNOWN]
-    email_delivery: Literal[EmailDelivery.UNKNOWN]
 
 
 IntegrationEvent = Annotated[
@@ -1170,20 +1166,33 @@ class IntegrationEventService:
             action=event.action,
             goal_revision=event.goal_revision,
             voice=event.voice,
-            email_requested=event.email_requested,
-            email_acceptance=event.email_acceptance,
-            email_delivery=event.email_delivery,
             presented_at=now,
         )
         existing = record.password_presentation
         if existing is not None:
-            identical = (
-                existing.voice == candidate.voice
-                and existing.email_requested == candidate.email_requested
-                and existing.email_acceptance == candidate.email_acceptance
-                and existing.email_delivery == candidate.email_delivery
-            )
-            if identical:
+            if existing.voice is candidate.voice:
+                # Identical playback fact: an ACK that never re-speaks.
+                return (record, self._presentation_outcome(record, operation), False)
+            if (
+                existing.voice is PlaybackVoice.PRESENTATION_FAILED_BEFORE_PLAYBACK
+                and candidate.voice is PlaybackVoice.PLAYBACK_RETURNED
+            ):
+                # Playback truth is monotonic: a failure before playback may
+                # still be followed by a valid playback, never the reverse.
+                updated = record.model_copy(
+                    update={
+                        "password_presentation": existing.model_copy(
+                            update={"voice": candidate.voice}
+                        ),
+                        "updated_at": now,
+                    }
+                )
+                return (updated, self._presentation_outcome(updated, operation), True)
+            if (
+                existing.voice is PlaybackVoice.PLAYBACK_RETURNED
+                and candidate.voice is PlaybackVoice.PRESENTATION_FAILED_BEFORE_PLAYBACK
+            ):
+                # A late failure never degrades a returned playback.
                 return (record, self._presentation_outcome(record, operation), False)
             raise IntegrationEventRejected(RejectionReason.PASSWORD_PRESENTATION_CONFLICT)
         updated = record.model_copy(update={"password_presentation": candidate, "updated_at": now})
