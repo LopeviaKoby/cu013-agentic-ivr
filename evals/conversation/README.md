@@ -319,3 +319,17 @@ declares one experimental variable: `prompt_composition`.
   the caller turn and assistant message per case ID. Its output is review
   material only and must never be copied into shared artifacts; message text
   is never persisted.
+
+
+## Sonda de vocalización de contraseña
+
+evals/password_vocalization_probe.py es la sonda focalizada real-model del
+slice de vocalización: genera contraseñas sintéticas en runtime por perfil,
+las reenvía por turno como 	emporary_password y reporta sólo hechos cerrados
+(
+ext_step, caller_finished, clase de correspondencia ull|partial|none,
+redespacho, latencia). Nunca imprime ni guarda el secreto ni el mensaje.
+
+El decodificador evals/password_oracle.py es tooling de evaluación: valida
+orden, case y símbolos de un dictado hablado contra el valor sintético y no se
+usa en runtime.

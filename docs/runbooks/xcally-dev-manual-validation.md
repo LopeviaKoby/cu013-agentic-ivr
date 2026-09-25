@@ -48,20 +48,60 @@ body exacto, sin incluir nunca la contraseña:
   "operation_id": "<operation_id>",
   "action": "RESET_PASSWORD",
   "goal_revision": <goal_revision>,
-  "voice": "PRESENTATION_FAILED_BEFORE_PLAYBACK",
-  "email_requested": 0,
-  "email_acceptance": "UNKNOWN",
-  "email_delivery": "UNKNOWN"
+  "voice": "PRESENTATION_FAILED_BEFORE_PLAYBACK"
 }
 ```
 
-- `goal_revision` y `email_requested` son enteros; el adapter v1 tolera la
-  representación decimal canónica entre comillas.
+- `goal_revision` es un entero; el adapter v1 tolera la representación decimal
+  canónica entre comillas. Los campos legacy de email ya no forman parte del
+  evento activo: incluirlos produce `422`.
 - Efecto en CU013: `next_step=LISTEN`, `operation_state=SUCCEEDED`; el reset
   permanece confirmado, no se re-despacha, no se crea operación nueva y no se
   promete correo.
 - Para el caso de playback devuelto, usar `"voice": "PLAYBACK_RETURNED"` con el
   mismo body.
+
+## 2b. Wiring de vocalización por voz (owner)
+
+Flujo manual a configurar en Cally Square (sin inventar bloques no observados):
+
+```text
+ACCOUNT_ACTION_STATUS/SUCESSO (reset)
+→ XCALLY conserva la contraseña call-local
+→ POST /turns con header next-step-v1:
+   { "temporary_password": "<secreto>", "transcript": null }
+→ CU013 responde next_step=DELIVER_PASSWORD + message
+→ XCALLY reproduce el message por TTS
+→ POST /integration-events PASSWORD_PRESENTATION_RESULT (playback)
+→ next_step=LISTEN; la presentación sigue activa
+→ ASR captura la respuesta del llamante
+→ POST /turns con { "temporary_password": "<mismo secreto>", "transcript": "<ASR>" }
+→ repetición / ancla / aclaración → DELIVER_PASSWORD
+→ "ya está" → LISTEN con caller_finished=true
+```
+
+- El secreto se reenvía en **cada** turno de presentación; CU013 no lo
+  conserva entre turnos.
+- No usar el carril legacy para estos turnos: rechaza `temporary_password` con
+  `422`.
+- Un `temporary_password` fuera de la presentación se ignora y nunca llega al
+  modelo.
+
+## 2c. Logs IVR (revisión del owner)
+
+Sin tocar XCALLY desde el repo, el owner debe localizar y retirar tras el E2E
+cualquier exposición temporal de:
+
+- `RD_POLL.password`;
+- el body RD con secreto;
+- el body del request `/turns` (no debe loguearse);
+- el `message` de respuesta con la contraseña.
+
+No añadir logs nuevos. Mantener la evidencia existente sólo mientras sea
+necesaria para cerrar el slice y, tras validar la vocalización, retirarla y
+comprobar con un canary sintético que el secreto deja de aparecer. CU013 no
+loguea el secreto, el transcript de presentación ni el message: si aparece en
+logs, el origen es XCALLY.
 
 ## 3. Limpieza y continuidad
 

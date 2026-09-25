@@ -108,6 +108,9 @@ Proyecciones por endpoint:
 | `UNLOCK_ACCOUNT` confirmado | `LISTEN` |
 | `RESET_PASSWORD` confirmado sin presentación | `DELIVER_PASSWORD` |
 | operación fallida o presentación de reset reportada | `LISTEN` |
+| `/turns` con presentación activa y `temporary_password` | `DELIVER_PASSWORD` |
+| `/turns` con `password_presentation_finished=true` | `LISTEN` |
+| `/turns` con presentación activa pero sin secreto en el turno | `LISTEN` |
 | `PASSWORD_PRESENTATION_RESULT` (retornada o fallida antes del playback) | `LISTEN` |
 | presupuesto de polling agotado | `TRANSFER` |
 | `IDENTITY_INPUT_FAILURE` o máximo de fallos de identidad | `TRANSFER` |
@@ -122,7 +125,7 @@ Proyecciones por endpoint:
 |---|---|
 | `ACCOUNT_ACTION_STATUS` | `goal_revision`, `poll_sequence` |
 | `ACCOUNT_ACTION_ERROR` | `goal_revision`, `poll_sequence` sólo si está presente |
-| `PASSWORD_PRESENTATION_RESULT` | `goal_revision`, `email_requested` |
+| `PASSWORD_PRESENTATION_RESULT` | `goal_revision` |
 
 Se aceptan enteros JSON nativos y strings decimales canónicas (`0|[1-9][0-9]*` con fullmatch ASCII): `"1"` se normaliza a `1` antes de validar. Cualquier otra forma (`""`, `"01"`, `" 1"`, `"1 "`, `"+1"`, `"-1"`, `"1.0"`, `"1e2"`, `true`, `1.0`, placeholders sin resolver) queda intacta y el schema estricto la rechaza. `bool` nunca pasa como número (`type(value) is int`). La normalización no renombra claves, no completa campos faltantes, no borra extras, no infiere `action`/`operation_id`, no altera `status`, no resuelve placeholders y no persiste la string; no aplica a `http_status`, `operation_id`, `status`, `action`, `phase`, `error_kind`, `voice`, otros enteros presentes o futuros, ni al carril legacy, que recibe el payload intacto. La tolerancia vive sólo en el adapter HTTP v1: los modelos de dominio exigen `goal_revision` estricto y rechazan `"1"` cuando se validan directamente. Los `422` siguen registrando únicamente `loc`/`type`, sin body ni valores.
 
@@ -144,15 +147,18 @@ POST /api/v1/conversations/{conversation_id}/turns
 
 ### Request
 
-Sólo transcript ASR; `transcript` es obligatorio y las variantes anteriores sin `asr_confidence` ni `channel` siguen siendo válidas:
+`transcript` es obligatorio salvo en la primera vocalización de la contraseña, donde puede ser `null` si `temporary_password` está presente; las variantes anteriores sin `asr_confidence` ni `channel` siguen siendo válidas:
 
 ```json
 {
   "transcript": "{GOOGLE_ASR_TRANSCRIPT}",
+  "temporary_password": null,
   "asr_confidence": 0.0,
   "channel": "voice"
 }
 ```
+
+`temporary_password` es opcional, **sólo next-step-v1**, efímero y nunca durable ni loggable; el carril legacy lo rechaza con `422`. En cada turno de presentación XCALLY reenvía el mismo secreto junto con el transcript actual (o `null` en la primera vocalización). No se aplica `strip`, `casefold` ni normalización alguna al secreto.
 
 El modelo cierra el contrato con `extra="forbid"`: un campo desconocido no se acepta. Las formas crudas de identidad (`IDENTITY_DATA`, `document_id`, fecha de ingreso o cualquier DTMF) fueron retiradas del contrato activo y se rechazan como payload inválido: el backend no necesita documento ni fecha para conversar ni para conservar autorización. La captura y validación pertenecen a XCALLY; su resultado llega por `/integration-events`.
 
@@ -374,19 +380,16 @@ Sólo `CAPTURE_EXHAUSTED`. No es `INVALID`, no suma intentos imputables al calle
   "operation_id": "opaque-operation-id",
   "action": "RESET_PASSWORD",
   "goal_revision": 2,
-  "voice": "PLAYBACK_RETURNED",
-  "email_requested": 1,
-  "email_acceptance": "UNKNOWN",
-  "email_delivery": "UNKNOWN"
+  "voice": "PLAYBACK_RETURNED"
 }
 ```
 
-- Sólo aplica a `RESET_PASSWORD` confirmado por el boundary; la contraseña nunca entra al backend.
-- `voice` admite `PLAYBACK_RETURNED` o `PRESENTATION_FAILED_BEFORE_PLAYBACK`; `email_requested` es un entero estricto `0/1`; aceptación y entrega comienzan sólo en `UNKNOWN`.
-- `PRESENTATION_FAILED_BEFORE_PLAYBACK` no cambia el resultado del reset (`operation_state=SUCCEEDED`), no repite el despacho, no crea una operación nueva y no promete correo. El email nunca se reporta como entregado mientras siga `UNKNOWN`.
-- Un duplicado idéntico es un ACK idempotente; un evento incompatible o tardío es un 409. Un duplicado nunca reemite `DELIVER_PASSWORD`.
-- Mientras la entrega siga `UNKNOWN`, la respuesta es `next_step=LISTEN` sin afirmar envío ni entrega.
-- El contrato legacy lo rechaza.
+- Sólo aplica a `RESET_PASSWORD` confirmado por el boundary; la contraseña nunca entra por este evento.
+- `voice` admite `PLAYBACK_RETURNED` o `PRESENTATION_FAILED_BEFORE_PLAYBACK`. El playback es monótono: failed-before-playback puede evolucionar a returned; un returned no se degrada por un evento tardío de fallo.
+- `PRESENTATION_FAILED_BEFORE_PLAYBACK` no cambia el resultado del reset (`operation_state=SUCCEEDED`), no repite el despacho, no crea una operación nueva y mantiene la presentación activa.
+- Un duplicado idéntico es un ACK idempotente; nunca reemite `DELIVER_PASSWORD`.
+- La respuesta es `next_step=LISTEN` sin afirmar entrega. El fin de la presentación lo decide el modelo en `/turns` y se persiste como `caller_finished` no sensible.
+- Los campos legacy de email no forman parte del evento activo: un payload que los incluya se rechaza. El contrato legacy lo rechaza.
 
 ### Feedback de espera contextual (next-step-v1)
 
@@ -518,7 +521,7 @@ El shape exacto de errores que Cally Square interpreta sigue pendiente de eviden
 - El grafo del turno es `START → run_model → advance_turn → END`; la consolidación durable excluye transcript y decisión del modelo.
 - `/integration-events` no usa el grafo ni el modelo conversacional: un load y, sólo si el evento muta estado, un save. No incrementa `turn_count` ni `revision`. La única llamada de modelo posible es la redacción estrecha de feedback de espera.
 - `external_operation` conserva la metadata técnica mínima de anti-silencio legacy (`last_progress_feedback_at`, `progress_feedback_index`).
-- El contrato durable es la versión 4. Añade planos separados: `polling` (operación, `started_at`, `observation_limit`, receipts de `sequence` + fingerprint SHA-256, `last_feedback_attempt_at` y hasta dos mensajes validados), `password_presentation` (operación, acción, revisión, `voice`, `email_requested`, aceptación y entrega) y `voice_retry_count`, el contador escalar, consecutivo y PII-safe de voice failures. Los documentos v1, v2 y v3 migran en memoria fail-closed; un v2 con `delivery` no nulo se traduce sin reinterpretarlo y cualquier campo fuera del whitelist cerrado se rechaza.
+- El contrato durable es la versión 5. Añade planos separados: `polling` (operación, `started_at`, `observation_limit`, receipts de `sequence` + fingerprint SHA-256, `last_feedback_attempt_at` y hasta dos mensajes validados), `password_presentation` (operación, acción, revisión, `voice`, `caller_finished`, `presented_at` y los campos legacy de email opcionales, sólo lectura/migración) y `voice_retry_count`, el contador escalar, consecutivo y PII-safe de voice failures. Los documentos v1, v2, v3 y v4 migran en memoria fail-closed; `caller_finished` inicializa en `false` sin inventar presentación y cualquier campo fuera del whitelist cerrado se rechaza.
 - `voice_retry_count` empieza en 0, avanza con cada voice failure recibido (acotado a 4 por la política aceptada) y se reinicia a 0 sólo tras un `/turns` válido y persistido. No conserva reason ni texto y no reutiliza intentos de identidad, `turn_count`, `revision` ni la secuencia de polling.
 - El bootstrap usa exclusivamente un create condicional (precondición de inexistencia); nunca un `set()` sobre un identificador que parecía ausente. Un conflicto de create no es un 503: se recarga el documento real y el evento se aplica sobre él.
 - Un `/turns` válido preserva `polling` y `password_presentation` del registro previo y sólo reinicia el contador de voz; no reconstruye parcialmente el documento.

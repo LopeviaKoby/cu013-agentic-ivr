@@ -68,10 +68,13 @@ Un turno normal apunta a una sola solicitud al modelo. Si una interacción lógi
 - **ACCEPTED.** La autorización de despacho se consume al alcanzar el resultado terminal: `external_action_allowed=false`. El guard durable se conserva sólo como metadata de correlación (late results y presentación de contraseña) y nunca se reutiliza para un nuevo despacho; toda acción futura crea autorización/dispatch nuevos.
 - **ACCEPTED.** Un turno lateral u off-topic no implica handoff, identidad ni acción: se responde brevemente y se redirige si corresponde, preservando el goal vigente para retomarlo cuando el caller lo avance de nuevo. El contrato del modelo distingue esa relación con el goal (`SIDE`) sin heurísticas ni una segunda llamada.
 
-### Verdad de presentación (RESET_PASSWORD)
+### Presentación de la contraseña temporal (RESET_PASSWORD)
 
-- **ACCEPTED.** El resultado del reset, la presentación hablada de la contraseña, la solicitud de correo, la entrega del correo y el ciclo conversacional son hechos separados y ninguno implica a otro.
-- **ACCEPTED.** El boundary puede reportar la presentación como `PLAYBACK_RETURNED` o `PRESENTATION_FAILED_BEFORE_PLAYBACK`. Un fallo antes del playback no cambia el resultado del reset, no repite el despacho, no crea una nueva operación y no promete correo; el reset permanece `confirmed` y la presentación permanece fallida. La entrega del correo nunca se infiere de una solicitud, de un `SendMail` alcanzado ni de una aceptación asíncrona.
+- **ACCEPTED.** La entrega de la contraseña temporal es por **voz efímera**: XCALLY la mantiene en su ámbito call-local y la reenvía en cada turno de presentación; el backend la usa sólo durante ese request. SMS queda **DEFERRED** y email/SendMail queda **superseded** como vía de entrega ([ADR-0012](../decisions/0012-use-ephemeral-voice-for-temporary-password.md)).
+- **ACCEPTED.** El resultado del reset, el playback de la presentación, el fin indicado por el llamante (`caller_finished`) y el ciclo conversacional son hechos separados y ninguno implica a otro. El boundary reporta el playback como `PLAYBACK_RETURNED` o `PRESENTATION_FAILED_BEFORE_PLAYBACK`; un fallo antes del playback no cambia el reset, no re-despacha y mantiene la presentación activa.
+- **ACCEPTED.** El secreto es efímero: nunca entra a Firestore, `SessionRecord`, memoria durable o reciente, logs, métricas, artefactos de evaluación, fixtures, documentos, Git ni payloads de error. Puede transitar por el request `/turns`, los objetos transitorios, el `GraphState`, la entrada/salida de Gemini y el mensaje HTTP de ese turno.
+- **ACCEPTED.** No existe caché de contraseña entre turnos y la primera vocalización no exige un `PasswordPresentation` previo: es elegible con el reset confirmado y la presentación no finalizada. Una sola llamada a Gemini por turno; sin motor de spelling productivo.
+- **ACCEPTED.** Durante la presentación no se registra goal nuevo, no se abre challenge, no se autoriza despacho y no se re-despacha. La memoria reciente no se renderiza ni se anexa en turnos de presentación porque el transcript puede repetir el secreto.
 
 ### Identidad
 

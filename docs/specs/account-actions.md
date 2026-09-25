@@ -225,33 +225,43 @@ Una afirmación del caller o del LLM no puede convertirse en resultado empresari
 
 La estrategia de idempotencia, correlación, polling, retries y resultados tardíos permanece experimental y se gestiona en [docs/gaps.md](../gaps.md). No se autorizan retries automáticos de acciones de cuenta hasta aceptar una política respaldada por evidencia.
 
-## Contraseña temporal y SendMail
+## Contraseña temporal y entrega por voz
 
-- Status: Deferred
-- Sequence: XCALLY voice baseline → AD/TIVIT integration → log-driven debugging/caller tests → SendMail
+- Entrega actual: **voz efímera** ([ADR-0012](../decisions/0012-use-ephemeral-voice-for-temporary-password.md)).
+- Email/SendMail: **superseded** como vía de entrega.
+- SMS: **DEFERRED**.
 
 La entrega aceptada es:
 
 ```text
 TIVIT/AD devuelve resultado
-→ XCALLY/Cally Square obtiene la contraseña cuando corresponda
-→ SendMail de Cally Square envía la contraseña
-→ CU013 recibe sólo el resultado/estado del envío
-→ el agente informa éxito o fallo al caller
+→ XCALLY/Cally Square obtiene la contraseña call-local
+→ /turns con temporary_password (transcript null en la primera vocalización)
+→ CU013 responde con el mensaje hablado y DELIVER_PASSWORD
+→ XCALLY TTS
+→ PASSWORD_PRESENTATION_RESULT (playback)
+→ LISTEN; repeticiones vía /turns con el mismo temporary_password
+→ el llamante indica que terminó (caller_finished) → LISTEN
 ```
 
-CU013 no implementará un servicio de correo propio.
+**ACCEPTED (ephemeral).** La contraseña temporal puede transitar efímeramente
+por XCALLY call-local, el request `/turns`, los objetos transitorios, el
+`GraphState`, Gemini (entrada/salida) y el mensaje HTTP de ese turno. Nunca
+debe persistirse en Firestore, `SessionRecord`, memoria durable o reciente,
+logs, métricas, artefactos de evaluación, fixtures, documentos, Git ni
+payloads de error. No existe caché entre turnos: XCALLY reenvía el secreto en
+cada turno de presentación y CU013 no lo conserva.
 
-La contraseña temporal nunca debe:
-
-- persistirse en Firestore;
-- enviarse al LLM;
-- registrarse en logs o telemetría;
-- conservarse en fixtures.
-
-**PROVISIONAL (presentation facts).** El boundary puede informar el hecho de presentación al llamante (`PASSWORD_PRESENTATION_RESULT`): reproducción devuelta y, cuando corresponda, si se solicitó email y su aceptación y entrega, inicialmente `UNKNOWN`. Es un hecho separado del resultado del reset y de la entrega SendMail: presentar la contraseña no equivale a entregarla, y el runtime no afirma envío ni entrega mientras la entrega siga `UNKNOWN`.
-
-El resultado exacto de SendMail permanece Deferred y fuera del alcance inmediato. No bloquea el baseline de voz XCALLY aislado ni la integración AD/TIVIT posterior.
+**ACCEPTED (lifecycle).** La primera vocalización no exige un
+`PasswordPresentation` previo: basta el reset confirmado y la presentación no
+finalizada. `PASSWORD_PRESENTATION_RESULT` reporta sólo el playback
+(`PLAYBACK_RETURNED` o `PRESENTATION_FAILED_BEFORE_PLAYBACK`); el fin lo decide
+el modelo (`caller_finished`) y se persiste como booleano no sensible. El
+playback es monótono: un fallo antes del playback puede evolucionar a returned
+y un returned no se degrada. Durante la presentación no se registra goal nuevo,
+no se abre challenge, no se autoriza despacho y no se re-despacha. Los campos
+de email del plano durable se conservan sólo para lectura y migración y no
+participan en ninguna decisión ni evento nuevo.
 
 ## Persistencia y concurrencia
 

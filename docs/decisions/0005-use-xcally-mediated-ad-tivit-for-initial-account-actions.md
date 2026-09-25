@@ -1,6 +1,7 @@
 # ADR-0005: Usar AD/TIVIT mediado por XCALLY para las acciones de cuenta iniciales
 
 - Status: Accepted
+- Superseded (entrega de la contraseña temporal): la vía SendMail queda sustituida por la voz efímera de [ADR-0012](0012-use-ephemeral-voice-for-temporary-password.md); la ruta XCALLY/Orchestrator/TIVIT/AD permanece aceptada.
 - Fecha: 2026-09-11
 
 ## Contexto y problema
