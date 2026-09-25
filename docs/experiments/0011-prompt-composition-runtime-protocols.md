@@ -823,3 +823,58 @@ judge es un turno sustituido por el runtime). El owner debe decidir entre una
 iteración acotada a la clase "continuación genérica + confirmación prematura",
 aceptar con las desviaciones declaradas, o rechazar. Cloud Run, secretos,
 XCALLY y caching siguen sin tocarse.
+
+## Cierre pre-E2E — cobertura XCALLY, aprovisionamiento TIVIT y validación EN
+
+XML autoritativo: `CU013_HelpDesk_IVR_Agents.xml` (Downloads, 55 377 bytes,
+sha256 `f2859230…`), 81 bloques; es el que contiene `Switch_NEXT_STEP`,
+`GetDigits_DOCUMENTO` y `GetDigits_START_DATE` con `retry="3"`. El defecto de
+rama combinada está confirmado: la arista 837 de `Switch_NEXT_STEP` tiene valor
+`"TRANSFER, COMPLETE"` (target `Clear_EXIT_DOCUMENTO`), con `-` ? default ?
+`Set_LOCAL_TRANSFER`; `GoToIf_EXIT_COMPLETE` ya existe y ramifica
+true ? `Hangup_COMPLETE`, false ? `GoTo_HELPDESK`. Los 11 bloques CU013
+(`Rest_TURN`, `Rest_VOICE_FAILURE_*`, `Rest_EVENT_*`) apuntan a la tag
+`e2e-4b72dfa` y ya llevan `X-Request-ID: {UNIQUEID}` y
+`X-CU013-Response-Contract: next-step-v1`.
+
+### Matriz de cobertura (extracto por clase)
+
+| Ruta/estado XML | Clasificación | Capa de cobertura | Gap |
+|---|---|---|---|
+| WELCOME, ASR_LISTEN, TTS, cleanup, hangup | XCALLY-MECHANICAL | E2E only | ninguno |
+| NO_SPEECH / LOW_CONFIDENCE (`Rest_VOICE_FAILURE_*`) | EXTERNAL-INTEGRATION | tests de voice-retry + E2E | E2E |
+| Rest_TURN HTTP failure / message playback | RUNTIME-DETERMINISTIC + XCALLY-MECHANICAL | taxonomía de errores + E2E | E2E |
+| LISTEN (side questions, ambigüedad) | MODEL-SEMANTIC | golden + metamorphic + synthetic + fresh | defecto residual conocido |
+| COLLECT_IDENTITY | MODEL-SEMANTIC + RUNTIME-DETERMINISTIC | golden + synthetic + held-out + fresh | ninguno |
+| EXECUTE_ACTION, dispatch/poll HTTP error | RUNTIME-DETERMINISTIC | guards + polling tests | E2E RD |
+| POLL_RD, ACCOUNT_ACTION_STATUS, pending/terminal/unknown, budget | RUNTIME-DETERMINISTIC + EXTERNAL-INTEGRATION | tests de máquina de operación + integration-events | E2E RD |
+| DELIVER_PASSWORD, password/email present/usable, PRESENTATION_RESULT | EXTERNAL-INTEGRATION | tests de presentación + E2E | E2E SendMail |
+| TRANSFER / COMPLETE / default | XCALLY-MECHANICAL | fix manual del owner | owner |
+| GetDigits retries, date mismatch, FOUND/NOT_FOUND | XCALLY-MECHANICAL / EXTERNAL-INTEGRATION | events tests + E2E | E2E |
+| identity VALID/INVALID/TECHNICAL_FAILURE/exhausted | RUNTIME-DETERMINISTIC + MODEL-SEMANTIC | golden identity + synthetic | ninguno |
+
+Ningún gap **MODEL-SEMANTIC** nuevo: los dos defectos residuales ya están
+cubiertos por golden/synthetic/held-out/fresh.
+
+### Procedencia de los datasets (auditoría)
+
+- **Golden**: corpus versionado escrito a mano (familias semánticas), ampliado
+  con casos de ambigüedad y re-request; independiente de bugs históricos.
+- **Metamórfica**: generada por transformación determinista de 6 familias
+  golden (filler, frustración, repetición, autocorrección, contexto
+  irrelevante, cierre coloquial, duración); no es LLM-generated.
+- **Synthetic dev / held-out**: bancos de enunciados y tabla de composición
+  **autorados por el modelo Implementer** con composición determinista; no
+  combinatoria pura (fases, ruido y capacidades) ni variantes de bugs.
+- **Fresh robustness (nuevo, congelado antes de Gemini)**: 59 escenarios
+  autorados por el Implementer con bancos nuevos (cooperativo, poco claro,
+  mínima respuesta, confusión reset/unlock, frustración, autocorrección,
+  retomar tras explicación, dato necesario, qué sigue, humano, otra
+  capability, cancel/re-request, procedimiento guiado), `seed
+  fresh-2026-09-25`, sha256 `09a44e71…`.
+- **Judge**: modelo Implementer con rúbrica corta; no Gemini.
+
+### Aprovisionamiento y validación
+
+Pendiente de ejecución al cierre de esta sección; se registrarán recursos,
+hashes, digest, revisión, DRS, focal/full/robustez EN, latencia y handoff.

@@ -1,0 +1,1635 @@
+schema_version: 1
+seed: fresh-2026-09-25
+generator: implementer-model (deepseek-v4.1-flash) authored banks; deterministic composition
+generated_at: '2026-09-25T03:32:51+00:00'
+protocol_hashes:
+  RESET_PASSWORD.runtime.md: b0f15d03889b4ec12d431333de7b5baf351f3590e141a6d91cf3eee5e15fc35a
+  UNLOCK_ACCOUNT.runtime.md: a8a0c61fffe953e5b35f28edc11adca5ef93390964c384a52df76ade926012d8
+  catalog.md: 8de53b831ddbabf505c529163f2a1172a0730b2eec0afdcd2f0cc64fa8149fdb
+  core.md: f08b58ba2c6a8483b965a1c4140ffe2a43b1bfcf943982032c965ca06dd9cf63
+  few_shot_min.md: b402cad1ab515b0dcfeec317d5bc2814c4b856c9a97565cba9338d6301bdfa7a
+cases:
+- case_id: fresh-no-goal-cooperative-direct-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: null
+    goal_revision: 0
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: hola, buenos días, necesito desbloquear mi cuenta por favor
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal registered pre-auth
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+  tags:
+  - phase:no_goal
+  - utterance:cooperative_direct
+- case_id: fresh-no-goal-unclear-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: null
+    goal_revision: 0
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: es que no sé, mi jefe me dijo que llame pero no entiendo bien
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: null
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: no goal from an unclear turn
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+  tags:
+  - phase:no_goal
+  - utterance:unclear
+- case_id: fresh-confusion-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: null
+    goal_revision: 0
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: no sé si es cambiar la contraseña o desbloquearla
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: null
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: confusion clarified without a goal
+    allowed_claims:
+    - one brief clarification
+    forbidden_claims:
+    - operation dispatched
+  tags:
+  - phase:no_goal
+  - utterance:confusion
+- case_id: fresh-missing-lateral-doubt-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: oye, ¿y si me equivoco al escribir algo?
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:lateral_doubt
+- case_id: fresh-missing-lateral-doubt-reset-password-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿puedo hacer esto desde el celular?
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:lateral_doubt
+- case_id: fresh-missing-consequence-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿qué pasa si no lo hago hoy?
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:consequence
+- case_id: fresh-missing-consequence-reset-password-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿esto tiene algún efecto en mis otros accesos?
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:consequence
+- case_id: fresh-missing-duration-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿cuánto se demora esto más o menos?
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:duration
+- case_id: fresh-missing-duration-reset-password-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿me va a quedar tiempo para mi reunión?
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:duration
+- case_id: fresh-missing-frustration-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ya no sé qué hacer, esto me tiene harto
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:frustration
+- case_id: fresh-missing-frustration-reset-password-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: por favor, llevo todo el día intentando
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:frustration
+- case_id: fresh-missing-minimal-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: sí
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:minimal
+- case_id: fresh-missing-minimal-reset-password-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ok
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:minimal
+- case_id: fresh-missing-minimal-reset-password-2
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ya
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:minimal
+- case_id: fresh-valid-lateral-doubt-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: oye, ¿y si me equivoco al escribir algo?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:lateral_doubt
+- case_id: fresh-valid-lateral-doubt-reset-password-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿puedo hacer esto desde el celular?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:lateral_doubt
+- case_id: fresh-valid-consequence-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿qué pasa si no lo hago hoy?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:consequence
+- case_id: fresh-valid-consequence-reset-password-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿esto tiene algún efecto en mis otros accesos?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:consequence
+- case_id: fresh-valid-duration-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿cuánto se demora esto más o menos?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:duration
+- case_id: fresh-valid-duration-reset-password-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿me va a quedar tiempo para mi reunión?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:duration
+- case_id: fresh-valid-minimal-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: sí
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:minimal
+- case_id: fresh-valid-minimal-reset-password-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ok
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:minimal
+- case_id: fresh-valid-minimal-reset-password-2
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ya
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:minimal
+- case_id: fresh-valid-next-steps-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿y después de esto qué pasa?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:next_steps
+- case_id: fresh-procedure-repeat-request-0
+  family: fresh-robustness
+  scenario_kind: sequence
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: quiero restablecer mi contraseña
+    expect:
+      goal: RESET_PASSWORD
+      goal_transition: created
+      procedure_current: microsoft_portal
+  - transcript: ¿me repites lo que debo hacer?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:procedure
+  - utterance:repeat_request
+- case_id: fresh-procedure-needed-data-0
+  family: fresh-robustness
+  scenario_kind: sequence
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: quiero restablecer mi contraseña
+    expect:
+      goal: RESET_PASSWORD
+      goal_transition: created
+      procedure_current: microsoft_portal
+  - transcript: ¿qué dato te voy a dar?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:procedure
+  - utterance:needed_data
+- case_id: fresh-procedure-next-steps-0
+  family: fresh-robustness
+  scenario_kind: sequence
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: quiero restablecer mi contraseña
+    expect:
+      goal: RESET_PASSWORD
+      goal_transition: created
+      procedure_current: microsoft_portal
+  - transcript: ¿y después de esto qué pasa?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:procedure
+  - utterance:next_steps
+- case_id: fresh-procedure-resume-after-explanation-0
+  family: fresh-robustness
+  scenario_kind: sequence
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: quiero restablecer mi contraseña
+    expect:
+      goal: RESET_PASSWORD
+      goal_transition: created
+      procedure_current: microsoft_portal
+  - transcript: gracias por explicarme, sigamos entonces
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:procedure
+  - utterance:resume_after_explanation
+- case_id: fresh-self-correction-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: perdón, me equivoqué, en realidad quiero desbloquearla
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: self-correction kept the same goal
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+  tags:
+  - phase:identity_missing
+  - utterance:self_correction
+- case_id: fresh-other-capability-reset-password-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: por cierto, ¿también arreglan impresoras?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:other_capability
+- case_id: fresh-cancel-rerequest-reset-password
+  family: fresh-robustness
+  scenario_kind: sequence
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: mejor no, déjalo así
+    expect:
+      goal: null
+      goal_transition: cleared
+      confirmation: absent
+      dispatch_count_unchanged: true
+  - transcript: bueno, al final sí quiero hacerlo
+    expect:
+      goal: RESET_PASSWORD
+      goal_transition: created
+      confirmation: absent
+      dispatch_count_unchanged: true
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: cancel then fresh request with identity already valid
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+  tags:
+  - phase:cancel_rerequest
+  - utterance:re_request
+- case_id: fresh-no-goal-cooperative-direct-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: null
+    goal_revision: 0
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: hola, buenos días, necesito desbloquear mi cuenta por favor
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal registered pre-auth
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+  tags:
+  - phase:no_goal
+  - utterance:cooperative_direct
+- case_id: fresh-no-goal-unclear-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: null
+    goal_revision: 0
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: es que no sé, mi jefe me dijo que llame pero no entiendo bien
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: null
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: no goal from an unclear turn
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+  tags:
+  - phase:no_goal
+  - utterance:unclear
+- case_id: fresh-confusion-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: null
+    goal_revision: 0
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: no sé si es cambiar la contraseña o desbloquearla
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: null
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: confusion clarified without a goal
+    allowed_claims:
+    - one brief clarification
+    forbidden_claims:
+    - operation dispatched
+  tags:
+  - phase:no_goal
+  - utterance:confusion
+- case_id: fresh-missing-lateral-doubt-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: oye, ¿y si me equivoco al escribir algo?
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:lateral_doubt
+- case_id: fresh-missing-lateral-doubt-unlock-account-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿puedo hacer esto desde el celular?
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:lateral_doubt
+- case_id: fresh-missing-consequence-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿qué pasa si no lo hago hoy?
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:consequence
+- case_id: fresh-missing-consequence-unlock-account-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿esto tiene algún efecto en mis otros accesos?
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:consequence
+- case_id: fresh-missing-duration-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿cuánto se demora esto más o menos?
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:duration
+- case_id: fresh-missing-duration-unlock-account-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿me va a quedar tiempo para mi reunión?
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:duration
+- case_id: fresh-missing-frustration-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ya no sé qué hacer, esto me tiene harto
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:frustration
+- case_id: fresh-missing-frustration-unlock-account-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: por favor, llevo todo el día intentando
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:frustration
+- case_id: fresh-missing-minimal-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: sí
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:minimal
+- case_id: fresh-missing-minimal-unlock-account-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ok
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:minimal
+- case_id: fresh-missing-minimal-unlock-account-2
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ya
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal kept while identity is still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:minimal
+- case_id: fresh-valid-lateral-doubt-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: oye, ¿y si me equivoco al escribir algo?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:lateral_doubt
+- case_id: fresh-valid-lateral-doubt-unlock-account-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿puedo hacer esto desde el celular?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:lateral_doubt
+- case_id: fresh-valid-consequence-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿qué pasa si no lo hago hoy?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:consequence
+- case_id: fresh-valid-consequence-unlock-account-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿esto tiene algún efecto en mis otros accesos?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:consequence
+- case_id: fresh-valid-duration-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿cuánto se demora esto más o menos?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:duration
+- case_id: fresh-valid-duration-unlock-account-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿me va a quedar tiempo para mi reunión?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:duration
+- case_id: fresh-valid-minimal-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: sí
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:minimal
+- case_id: fresh-valid-minimal-unlock-account-1
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ok
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:minimal
+- case_id: fresh-valid-minimal-unlock-account-2
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ya
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:minimal
+- case_id: fresh-valid-next-steps-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿y después de esto qué pasa?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:next_steps
+- case_id: fresh-self-correction-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: false
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: perdón, me equivoqué, en realidad quiero desbloquearla
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: self-correction kept the same goal
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+  tags:
+  - phase:identity_missing
+  - utterance:self_correction
+- case_id: fresh-other-capability-unlock-account-0
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: por cierto, ¿también arreglan impresoras?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: lateral noise kept goal and progress
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - operation succeeded
+  tags:
+  - phase:identity_valid
+  - utterance:other_capability
+- case_id: fresh-cancel-rerequest-unlock-account
+  family: fresh-robustness
+  scenario_kind: sequence
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: mejor no, déjalo así
+    expect:
+      goal: null
+      goal_transition: cleared
+      confirmation: absent
+      dispatch_count_unchanged: true
+  - transcript: bueno, al final sí quiero hacerlo
+    expect:
+      goal: UNLOCK_ACCOUNT
+      goal_transition: created
+      confirmation: absent
+      dispatch_count_unchanged: true
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: cancel then fresh request with identity already valid
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+  tags:
+  - phase:cancel_rerequest
+  - utterance:re_request
+- case_id: fresh-human-unlock
+  family: fresh-robustness
+  scenario_kind: independent_trial
+  description: Fresh pre-E2E robustness scenario authored by the Implementer model.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿me puedes comunicar con una persona?
+  external_events: []
+  expected:
+    route: ESCALATE
+    conversation_goal: UNLOCK_ACCOUNT
+    dispatch_count: 0
+    escalation_eligibility: eligible
+    handoff_cause: CALLER_REQUEST
+    state_delta: goal preserved through handoff
+    allowed_claims: []
+    forbidden_claims:
+    - goal cancelled
+  tags:
+  - phase:identity_valid
+  - utterance:human

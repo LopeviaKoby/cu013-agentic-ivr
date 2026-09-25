@@ -461,6 +461,360 @@ def compose_scenarios() -> list[dict[str, Any]]:
     return cases
 
 
+FRESH_SEED = "fresh-2026-09-25"
+FRESH_PATH = REPO_ROOT / "evals" / "conversation" / "synthetic" / "fresh-robustness.yaml"
+
+# Fresh banks authored by the Implementer model for the pre-E2E robustness set:
+# they deliberately avoid repeating the first synthetic set's wording and
+# cover cooperative, unclear, minimal, frustrated and confused callers.
+FRESH_BANKS: dict[str, list[str]] = {
+    "cooperative_direct": [
+        "hola, buenos días, necesito desbloquear mi cuenta por favor",
+        "sí, quiero cambiar mi contraseña, ¿me ayudas?",
+    ],
+    "unclear": [
+        "es que no sé, mi jefe me dijo que llame pero no entiendo bien",
+        "mmm, creo que algo de mi usuario, no estoy seguro",
+    ],
+    "consequence": [
+        "¿qué pasa si no lo hago hoy?",
+        "¿esto tiene algún efecto en mis otros accesos?",
+    ],
+    "duration": [
+        "¿cuánto se demora esto más o menos?",
+        "¿me va a quedar tiempo para mi reunión?",
+    ],
+    "lateral_doubt": [
+        "oye, ¿y si me equivoco al escribir algo?",
+        "¿puedo hacer esto desde el celular?",
+    ],
+    "frustration": [
+        "ya no sé qué hacer, esto me tiene harto",
+        "por favor, llevo todo el día intentando",
+    ],
+    "minimal": ["sí", "ok", "ya"],
+    "self_correction": [
+        "perdón, me equivoqué, en realidad quiero desbloquearla",
+        "no, espera, olvida eso, sigo con lo mismo",
+    ],
+    "resume_after_explanation": [
+        "gracias por explicarme, sigamos entonces",
+        "entendido, ¿qué hago ahora?",
+    ],
+    "confusion_reset_unlock": [
+        "no sé si es cambiar la contraseña o desbloquearla",
+        "me dijeron que mi clave no sirve, ¿eso es reset o bloqueo?",
+    ],
+    "repeat_request": [
+        "¿me repites lo que debo hacer?",
+        "¿cómo era el paso?",
+    ],
+    "needed_data": [
+        "¿qué dato te voy a dar?",
+        "¿necesitas mi documento?",
+    ],
+    "next_steps": [
+        "¿y después de esto qué pasa?",
+        "¿qué sigue cuando termine?",
+    ],
+    "human": [
+        "¿me puedes comunicar con una persona?",
+        "prefiero hablar con alguien",
+    ],
+    "other_capability": [
+        "por cierto, ¿también arreglan impresoras?",
+        "¿ustedes instalan software?",
+    ],
+    "cancel": [
+        "mejor no, déjalo así",
+        "olvídalo, después lo veo",
+    ],
+    "re_request": [
+        "bueno, al final sí quiero hacerlo",
+        "pensándolo bien, sigamos con eso",
+    ],
+}
+
+
+LIMITED_KINDS = {
+    "cooperative_direct",
+    "unclear",
+    "confusion_reset_unlock",
+    "self_correction",
+    "other_capability",
+    "repeat_request",
+    "needed_data",
+    "next_steps",
+    "resume_after_explanation",
+}
+FRESH_SELECTED = {
+    kind: (values[:1] if kind in LIMITED_KINDS else values) for kind, values in FRESH_BANKS.items()
+}
+
+
+def _fresh_case(
+    *,
+    case_id: str,
+    state: dict[str, Any],
+    turns: list[dict[str, Any]],
+    expected: dict[str, Any],
+    tags: list[str],
+) -> dict[str, Any]:
+    return {
+        "case_id": case_id,
+        "family": "fresh-robustness",
+        "scenario_kind": "sequence" if len(turns) > 1 else "independent_trial",
+        "description": "Fresh pre-E2E robustness scenario authored by the Implementer model.",
+        "initial_state": state,
+        "turns": turns,
+        "external_events": [],
+        "expected": expected,
+        "tags": tags,
+    }
+
+
+def _lateral_expected(action: str | None) -> dict[str, Any]:
+    return {
+        "route": "CONTINUE",
+        "conversation_goal": action,
+        "confirmation_state": "none",
+        "dispatch_count": 0,
+        "escalation_eligibility": "not_eligible",
+        "state_delta": "lateral noise kept goal and progress",
+        "allowed_claims": [],
+        "forbidden_claims": ["operation dispatched", "operation succeeded"],
+    }
+
+
+def compose_fresh_scenarios() -> list[dict[str, Any]]:
+    """40-60 fresh multi-turn scenarios for the pre-E2E robustness pass."""
+    cases: list[dict[str, Any]] = []
+    for action in ("RESET_PASSWORD", "UNLOCK_ACCOUNT"):
+        slug = action.lower().replace("_", "-")
+
+        # Cooperative and unclear callers with no goal yet.
+        for kind in ("cooperative_direct", "unclear"):
+            for index, utterance in enumerate(FRESH_SELECTED[kind]):
+                cases.append(
+                    _fresh_case(
+                        case_id=f"fresh-no-goal-{kind}-{slug}-{index}".replace("_", "-"),
+                        state=dict(NO_GOAL_STATE),
+                        turns=[{"transcript": utterance}],
+                        expected=(
+                            {
+                                "route": "COLLECT_IDENTITY",
+                                "conversation_goal": action,
+                                "confirmation_state": "none",
+                                "dispatch_count": 0,
+                                "escalation_eligibility": "not_eligible",
+                                "state_delta": "goal registered pre-auth",
+                                "allowed_claims": [],
+                                "forbidden_claims": ["operation dispatched"],
+                            }
+                            if kind == "cooperative_direct"
+                            else {
+                                "route": "CONTINUE",
+                                "conversation_goal": None,
+                                "confirmation_state": "none",
+                                "dispatch_count": 0,
+                                "escalation_eligibility": "not_eligible",
+                                "state_delta": "no goal from an unclear turn",
+                                "allowed_claims": [],
+                                "forbidden_claims": ["operation dispatched"],
+                            }
+                        ),
+                        tags=["phase:no_goal", f"utterance:{kind}"],
+                    )
+                )
+
+        # Confusion between reset and unlock stays ambiguous.
+        for index, utterance in enumerate(FRESH_SELECTED["confusion_reset_unlock"]):
+            cases.append(
+                _fresh_case(
+                    case_id=f"fresh-confusion-{slug}-{index}",
+                    state=dict(NO_GOAL_STATE),
+                    turns=[{"transcript": utterance}],
+                    expected={
+                        "route": "CONTINUE",
+                        "conversation_goal": None,
+                        "confirmation_state": "none",
+                        "dispatch_count": 0,
+                        "escalation_eligibility": "not_eligible",
+                        "state_delta": "confusion clarified without a goal",
+                        "allowed_claims": ["one brief clarification"],
+                        "forbidden_claims": ["operation dispatched"],
+                    },
+                    tags=["phase:no_goal", "utterance:confusion"],
+                )
+            )
+
+        # Lateral noise with identity missing.
+        for kind in ("lateral_doubt", "consequence", "duration", "frustration", "minimal"):
+            for index, utterance in enumerate(FRESH_SELECTED[kind]):
+                cases.append(
+                    _fresh_case(
+                        case_id=f"fresh-missing-{kind}-{slug}-{index}".replace("_", "-"),
+                        state=_state(goal=action, identity=False),
+                        turns=[{"transcript": utterance}],
+                        expected={
+                            "route": "COLLECT_IDENTITY",
+                            "conversation_goal": action,
+                            "confirmation_state": "none",
+                            "dispatch_count": 0,
+                            "escalation_eligibility": "not_eligible",
+                            "state_delta": "goal kept while identity is still missing",
+                            "allowed_claims": [],
+                            "forbidden_claims": ["operation dispatched", "identity validated"],
+                        },
+                        tags=["phase:identity_missing", f"utterance:{kind}"],
+                    )
+                )
+
+        # Lateral noise with identity valid and no challenge.
+        for kind in ("lateral_doubt", "consequence", "duration", "minimal", "next_steps"):
+            for index, utterance in enumerate(FRESH_SELECTED[kind]):
+                cases.append(
+                    _fresh_case(
+                        case_id=f"fresh-valid-{kind}-{slug}-{index}".replace("_", "-"),
+                        state=_state(goal=action, identity=True),
+                        turns=[{"transcript": utterance}],
+                        expected=_lateral_expected(action),
+                        tags=["phase:identity_valid", f"utterance:{kind}"],
+                    )
+                )
+
+        # Guided-procedure questions with a RESET procedure open.
+        if action == "RESET_PASSWORD":
+            for kind in ("repeat_request", "needed_data", "next_steps", "resume_after_explanation"):
+                for index, utterance in enumerate(FRESH_SELECTED[kind]):
+                    cases.append(
+                        _fresh_case(
+                            case_id=f"fresh-procedure-{kind}-{index}".replace("_", "-"),
+                            state=_state(goal=action, identity=True),
+                            turns=[
+                                {
+                                    "transcript": "quiero restablecer mi contraseña",
+                                    "expect": {
+                                        "goal": action,
+                                        "goal_transition": "created",
+                                        "procedure_current": "microsoft_portal",
+                                    },
+                                },
+                                {"transcript": utterance},
+                            ],
+                            expected=_lateral_expected(action),
+                            tags=["phase:procedure", f"utterance:{kind}"],
+                        )
+                    )
+
+        # Self-correction inside an active goal.
+        for index, utterance in enumerate(FRESH_SELECTED["self_correction"]):
+            cases.append(
+                _fresh_case(
+                    case_id=f"fresh-self-correction-{slug}-{index}".replace("_", "-"),
+                    state=_state(goal=action, identity=False),
+                    turns=[{"transcript": utterance}],
+                    expected={
+                        "route": "COLLECT_IDENTITY",
+                        "conversation_goal": action,
+                        "confirmation_state": "none",
+                        "dispatch_count": 0,
+                        "escalation_eligibility": "not_eligible",
+                        "state_delta": "self-correction kept the same goal",
+                        "allowed_claims": [],
+                        "forbidden_claims": ["operation dispatched"],
+                    },
+                    tags=["phase:identity_missing", "utterance:self_correction"],
+                )
+            )
+
+        # Other-capability mention never registers that capability.
+        for index, utterance in enumerate(FRESH_SELECTED["other_capability"]):
+            cases.append(
+                _fresh_case(
+                    case_id=f"fresh-other-capability-{slug}-{index}".replace("_", "-"),
+                    state=_state(goal=action, identity=True),
+                    turns=[{"transcript": utterance}],
+                    expected=_lateral_expected(action),
+                    tags=["phase:identity_valid", "utterance:other_capability"],
+                )
+            )
+
+        # Cancel then explicit re-request with identity already valid.
+        cases.append(
+            _fresh_case(
+                case_id=f"fresh-cancel-rerequest-{slug}",
+                state=_state(goal=action, identity=True),
+                turns=[
+                    {
+                        "transcript": FRESH_SELECTED["cancel"][0],
+                        "expect": {
+                            "goal": None,
+                            "goal_transition": "cleared",
+                            "confirmation": "absent",
+                            "dispatch_count_unchanged": True,
+                        },
+                    },
+                    {
+                        "transcript": FRESH_SELECTED["re_request"][0],
+                        "expect": {
+                            "goal": action,
+                            "goal_transition": "created",
+                            "confirmation": "absent",
+                            "dispatch_count_unchanged": True,
+                        },
+                    },
+                ],
+                expected={
+                    "route": "CONTINUE",
+                    "conversation_goal": action,
+                    "dispatch_count": 0,
+                    "escalation_eligibility": "not_eligible",
+                    "state_delta": "cancel then fresh request with identity already valid",
+                    "allowed_claims": [],
+                    "forbidden_claims": ["operation dispatched"],
+                },
+                tags=["phase:cancel_rerequest", "utterance:re_request"],
+            )
+        )
+
+    # Human request preserves the goal.
+    cases.append(
+        _fresh_case(
+            case_id="fresh-human-unlock",
+            state=_state(goal="UNLOCK_ACCOUNT", identity=True),
+            turns=[{"transcript": FRESH_SELECTED["human"][0]}],
+            expected={
+                "route": "ESCALATE",
+                "conversation_goal": "UNLOCK_ACCOUNT",
+                "dispatch_count": 0,
+                "escalation_eligibility": "eligible",
+                "handoff_cause": "CALLER_REQUEST",
+                "state_delta": "goal preserved through handoff",
+                "allowed_claims": [],
+                "forbidden_claims": ["goal cancelled"],
+            },
+            tags=["phase:identity_valid", "utterance:human"],
+        )
+    )
+    return cases
+
+
+def freeze_fresh(cases: list[dict[str, Any]], protocol_hashes: dict[str, str]) -> str:
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "seed": FRESH_SEED,
+        "generator": GENERATOR,
+        "generated_at": utc_now(),
+        "protocol_hashes": protocol_hashes,
+        "cases": cases,
+    }
+    FRESH_PATH.parent.mkdir(parents=True, exist_ok=True)
+    text = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+    FRESH_PATH.write_text(text, encoding="utf-8")
+    return hash_text(text)
+
+
 def split_scenarios(cases: list[dict[str, Any]]) -> tuple[list[dict], list[dict]]:
     """Deterministic two-thirds development, one-third frozen held-out."""
     dev: list[dict[str, Any]] = []
@@ -568,6 +922,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--freeze-held-out", action="store_true")
     parser.add_argument("--run-dev", action="store_true")
     parser.add_argument("--run-held-out", action="store_true")
+    parser.add_argument("--freeze-fresh", action="store_true")
+    parser.add_argument("--run-fresh", action="store_true")
     parser.add_argument("--protocol-dir", default=None)
     parser.add_argument("--harness-language", choices=["es", "en"], default="es")
     args = parser.parse_args(argv)
@@ -578,15 +934,26 @@ def main(argv: list[str] | None = None) -> int:
             print(f"GENERATED {problem}", file=sys.stderr)
         return 2
     dev, held = split_scenarios(cases)
-    if args.freeze_held_out:
+    if args.freeze_held_out or args.freeze_fresh:
         from app.conversation.prompt_loader import load_prompt_bundle
 
         bundle = load_prompt_bundle(
             protocol_dir=Path(args.protocol_dir) if args.protocol_dir else None
         )
-        digest = freeze_held_out(held, bundle.module_hashes())
-        print(f"held-out frozen: cases={len(held)} sha256={digest}")
-        print(f"path={HELD_OUT_PATH}")
+        if args.freeze_held_out:
+            digest = freeze_held_out(held, bundle.module_hashes())
+            print(f"held-out frozen: cases={len(held)} sha256={digest}")
+            print(f"path={HELD_OUT_PATH}")
+        if args.freeze_fresh:
+            fresh = compose_fresh_scenarios()
+            fresh_problems = validate_corpus(fresh)
+            if fresh_problems:
+                for problem in fresh_problems:
+                    print(f"FRESH {problem}", file=sys.stderr)
+                return 2
+            fresh_digest = freeze_fresh(fresh, bundle.module_hashes())
+            print(f"fresh frozen: cases={len(fresh)} sha256={fresh_digest}")
+            print(f"path={FRESH_PATH}")
     if args.run_dev:
         return asyncio.run(run_cases(dev, args.harness_language, phase="synthetic-dev"))
     if args.run_held_out:
@@ -606,7 +973,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"HELD-OUT MODULE DRIFT: {drift}", file=sys.stderr)
             return 2
         return asyncio.run(run_cases(held_cases, args.harness_language, phase="synthetic-held-out"))
-    if not (args.freeze_held_out or args.run_dev or args.run_held_out):
+    if args.run_fresh:
+        fresh_cases = compose_fresh_scenarios()
+        fresh_problems = validate_corpus(fresh_cases)
+        if fresh_problems:
+            for problem in fresh_problems:
+                print(f"FRESH {problem}", file=sys.stderr)
+            return 2
+        return asyncio.run(run_cases(fresh_cases, args.harness_language, phase="fresh-robustness"))
+    if not (args.freeze_held_out or args.run_dev or args.run_held_out or args.freeze_fresh):
         parser.error("pass --freeze-held-out, --run-dev and/or --run-held-out")
     return 0
 
