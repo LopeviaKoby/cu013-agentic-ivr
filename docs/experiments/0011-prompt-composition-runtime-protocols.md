@@ -660,3 +660,166 @@ confirmaciï¿½n prematura en peticiï¿½n directa, `procedure_current` 11?3,
 ausente en el probe hablado). El owner debe decidir entre una iteraciï¿½n
 acotada especï¿½ficamente a esa clase semï¿½ntica, aceptar con la desviaciï¿½n
 declarada, o rechazar. Cloud Run, secretos y XCALLY siguen sin tocarse.
+
+## Iteración final pre-voz — robustez + A/B de harness + migración DEV
+
+Objetivo: cerrar el gate semántico/UX pre-voz con capas de robustez, un A/B
+controlado español/inglés y la migración del entorno DEV a `tivit-cu013-prd`.
+Todo local; sin deploy, sin secretos, sin XCALLY y **sin push** (los commits
+quedan sólo en la rama local).
+
+### Migración DEV (tivit-cu013-prd)
+
+`config.yaml`, el fallback de proyecto en `gemini.py`, los runbooks y los ocho
+scripts de `ops/gcp` apuntan ahora a `tivit-cu013-prd` con la runtime SA
+`cu013-cloud-run-sa@tivit-cu013-prd.iam.gserviceaccount.com`, sin
+impersonation, con el guard de rama como allow-list cerrada
+(`-AllowedBranches`) y tiers intactos (cpu 1, 512Mi, concurrency 1, max 1,
+min 0, benchmark min 1, billing request, región us-east1, modelo global).
+`bootstrap-dev.ps1` y `verify-dev.ps1` se reescribieron como herramientas
+TIVIT mínimas e idempotentes (sin crear SAs; dry-run por defecto en el
+bootstrap). Lectura read-only: proyecto 731118338507, Firestore `(default)`
+Native us-east1 vacío, APIs requeridas habilitadas, sin AR/secreto/servicio
+todavía; ADC es `pedro.lopez@tivit.com` sin impersonation y Vertex respondió
+(count_tokens OK). Aprovisionamiento **preparado, no ejecutado**; riesgo DRS
+documentado en el deploy. Tests de acreditación en
+`tests/test_dev_environment_migration.py`.
+
+### Semántica
+
+- Regla de evidencia de progreso al inicio del core (pregunta lateral,
+  explicación o continuación genérica no completan el paso; sólo evidencia
+  semántica o respuesta inequívoca a una pregunta directa).
+- Grounding externo: con `external_success_claim_allowed=false` no se afirma
+  éxito presente ni se promete éxito futuro; FAILED = fracaso confirmado con
+  escalamiento; UNKNOWN = resultado no confirmable con escalamiento, sin
+  inventar causa técnica ni agrupar con FAILED; sin "alternativa disponible"
+  inventada.
+- Identidad: puente verbal sin pedir el número ni duplicar el audio DTMF.
+- Discovery §15/§16: entre `GET validauser = FOUND` y la fecha DTMF **no
+  existe** hoy una llamada a CU013/Gemini (vive en el bloque XCALLY) y el
+  retry pertenece al mismo bloque DTMF/XCALLY; por tanto no se añadió
+  inferencia Gemini ni evento nuevo (ownership actual reportado al owner).
+
+### Ablación de contenido F4
+
+| Variante | reps P/F | INFRA | procF | confF | tok p50 |
+|---|---:|---:|---:|---:|---:|
+| F4 | 18/3 | 0 | 4 | 1 | 4228 |
+| F4-e1 (positivo ADVANCE) | 20/0 | 1 | 4 | 2 | 4142 |
+| F4-e2 (continuación) | 21/0 | 0 | 5 | 1 | 4157 |
+| F4-e3 (lateral) | 20/1 | 0 | 5 | 1 | 4152 |
+| F4-e4 (cancelación) | 21/0 | 0 | 3 | 2 | 4162 |
+
+Ninguna remoción elimina la deriva de `side-question-return` (3/3 en todas) ?
+el defecto residual no es de few-shot. El ejemplo de cancelación es redundante
+(la propiedad re-request pasa también en F0). Se adopta `few_shot_min.md`
+(ejemplos 1–3) como default y se conserva F4 como referencia de ablación.
+
+### A/B de harness español vs inglés
+
+Misma suite focal (9 familias), 3 reps, dos muestras independientes por
+lenguaje; protocolos, valores de estado y schema sin traducir; salida hablada
+forzada a español.
+
+| Muestra | reps P/F | INFRA | críticos | procF | confF | goalTrF | tok p50/p95 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ES-1 | 40/0 | 2 | 0 | 6 | 2 | 6 | 4205/5540 |
+| ES-2 | 40/1 | 1 | 0 | 5 | 2 | 6 | 4206/5540 |
+| EN-1 | 42/0 | 0 | 0 | 1 | 2 | 6 | 3913/5244 |
+| EN-2 | 42/0 | 0 | 0 | 3 | 1 | 6 | 3912/5244 |
+
+El inglés es reproduciblemente mejor en `procedure_current` (1–3 vs 5–6) y
+~7% más barato en tokens, con confirmación/goal equivalentes y 0 FAIL de caso
+en 2/2 muestras. El probe en inglés confirmó salida en español. **Ganador A/B:
+EN**, pero **no se adopta en esta iteración** porque el held-out congelado y
+el full paired corresponden al candidato ES; adoptarlo exigiría un held-out
+nuevo (regla §24). Se eleva como recomendación para el siguiente ciclo.
+
+### Capas de robustez
+
+- **Golden**: full paired del candidato ES (191 pares válidos tras reruns,
+  0 INFRA en la comparación final, 0 críticos, 0 regresiones objetivo, 9 no
+  objetivo, `confirmation_state` FAIL 8?1, `procedure_current` 11?13) ?
+  NEEDS OWNER DECISION.
+- **Metamórfica**: 7 transformaciones invariantes (filler, frustración,
+  repetición, autocorrección, contexto irrelevante, cierre coloquial, pregunta
+  de duración) sobre 6 familias fuente; **invariance 1.0 (0 divergencias de
+  47 comparadas)**; los 15 FAIL absolutos coinciden con los FAIL preexistentes
+  de sus casos fuente.
+- **Sintética (dev)**: generador del Implementer (bancos de enunciados y
+  tabla de composición deterministas), 43 casos: ES 37 PASS/5 FAIL/1 INFRA y
+  EN 36 PASS/5 FAIL/2 INFRA; defectos generales reproducidos: apertura
+  prematura de challenge ante pregunta lateral (3–4 casos) y cancelación ante
+  negativa de confirmación (1 caso). 0 críticos.
+- **Held-out (una sola ejecución)**: 35 casos congelados (seed
+  `syn-2026-09-25`, hashes de protocolos/módulos, `sha256 4bd84550…`):
+  31 PASS/4 FAIL. Dos fallos son defecto de oráculo del generador (route
+  esperada COLLECT_IDENTITY con identidad ya válida en re-request) y dos son
+  los defectos residuales reales (challenge prematuro, cancelación por
+  negativa). Sin críticos.
+
+### LLM judge (rúbrica corta, modelo del Implementer)
+
+Muestra de 15 mensajes del probe ES: **9 MEETS / 2 CONCERN / 0 FAIL**.
+CONCERN: avance de progreso en "listo, continuemos" (defecto residual) y una
+promesa futura en el turno de confirmación (el runtime sustituye el mensaje
+por PROCESSING_MESSAGE). Español correcto, sin formato visual, sin
+confirmación prematura en petición directa. Calibración humana pendiente
+(el judge no se calibró contra revisión humana a escala).
+
+### Spike de frameworks
+
+| Framework | Multi-turn | Datasets/versionado | Sintético | Metamórfico | Judge | Evaluadores propios | Local | Egress/privacidad | Integración GCP/LangGraph | Coste/esfuerzo | Lock-in | Decisión |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Vertex Gen AI Eval (Agent Platform) | Sí (métricas multi-turn por rúbrica) | Dataset en GCS/BigQuery | No nativo | No nativo | Sí (rúbricas) | Sí (custom code metric remoto/local) | SDK Python | Datos en el proyecto GCP | Natural en Vertex; agnóstico del grafo | Medio | GCP | **DEFER** como complemento (requiere dependencia `google-cloud-aiplatform`) |
+| Promptfoo | Parcial (conversation-relevance) | Configs YAML | No | No | Sí (llm-rubric, multi-judge) | Sí (python/js) | Sí, self-hosted (SQLite, 1 réplica) | Datos fuera salvo self-host | Ninguna nativa | Bajo | MIT/Node | **DEFER** (complemento CI si aparece la brecha) |
+| DeepEval | Turn-by-turn | No en OSS | No | No | Sí | Sí (pytest) | Sí | Local | Ninguna | Bajo | Apache-2.0 | **REJECT** (no cubre multi-turn ni oráculos duros mejor que el harness) |
+| LangSmith | Sí | Sí (hosted) | No | No | Sí | Sí | Parcial | Servicio externo por defecto | LangChain/LangGraph | Medio | Alto | **REJECT** (egress y lock-in; no aporta sobre el harness actual) |
+
+Decisión: **KEEP CURRENT HARNESS**. Ningún framework cubre mejor los oráculos
+deterministas, la privacidad y el corpus congelado; adoptar uno obligaría a
+dependencia nueva y a duplicar capas sin resolver una brecha material. La
+opción complementaria propuesta para un ciclo futuro es Vertex Gen AI
+Evaluation con métricas de código custom (dev-only).
+
+### Coste de la campaña
+
+~900 llamadas a `gemini-3.5-flash-lite` (ablación 225, A/B 260, sintética
+dev 90, held-out 35, metamórfica 86, probes/judge 40, full paired y reruns
+~160), ~3.6M tokens de entrada y ~0.1M de salida. Con precios públicos
+aproximados de Flash-Lite (0,075/0,30 USD por millón) el coste estimado es
+**< US$0,50**, dentro del presupuesto de US$5. No se consultó la tarifa
+vigente en esta sesión: es una estimación.
+
+### Gates
+
+```text
+python -m pytest            715 passed
+python -m ruff check .      All checks passed
+python -m ruff format --check .  144 files already formatted
+python -m mypy app          Success: no issues found in 30 source files
+python -B evals/conversation_eval.py --validate-only  cases=50 problems=0
+git diff --check            limpio
+docker build                OK (digest sha256:104f572b… re-verificado con los
+                            templates del harness y el módulo few_shot_min)
+```
+
+### Veredicto de la iteración final pre-voz
+
+```text
+INCONCLUSIVE — OWNER DECISION REQUIRED
+NOT MERGED TO DEV / NOT PUSHED
+```
+
+Gate §35: 0 críticos ?; 0 confirmación prematura reproducible ? (persiste en
+sintética/held-out y en el caso golden `promise-capability-distinction` de
+algunas muestras); 0 stale cancel/re-request reproducible ? (corpus y capas
+sintéticas pasan; la cancelación por negativa es el defecto restante);
+**0 avance procedimental por side question reproducible ?** (persiste
+`side-question-return` 2–3/3 en cada variante y en ambos idiomas); 0 promesa
+futura no respaldada reproducible ? (canon aplicado; el único CONCERN del
+judge es un turno sustituido por el runtime). El owner debe decidir entre una
+iteración acotada a la clase "continuación genérica + confirmación prematura",
+aceptar con las desviaciones declaradas, o rechazar. Cloud Run, secretos,
+XCALLY y caching siguen sin tocarse.
