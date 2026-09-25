@@ -117,7 +117,7 @@ class FakeAsyncClient:
 async def test_missing_session_loads_as_a_fresh_semantic_record(store) -> None:
     repository = SessionRepository(store)
     record = await repository.load("conversation-1")
-    assert record.schema_version == 4
+    assert record.schema_version == 5
     assert record.conversation_id == "conversation-1"
     assert record.turn_count == 0
     assert record.revision == 0
@@ -144,7 +144,7 @@ async def test_load_migrates_a_v1_document_in_memory_without_rewriting_it(store)
     store.documents["conversation-1"] = dict(V1_DOCUMENT)
     repository = SessionRepository(store)
     record = await repository.load("conversation-1")
-    assert record.schema_version == 4
+    assert record.schema_version == 5
     assert record.goal is not None
     assert record.goal.action is Action.UNLOCK_ACCOUNT
     assert record.identity.validated_at is None
@@ -155,12 +155,12 @@ async def test_load_migrates_a_v1_document_in_memory_without_rewriting_it(store)
     assert store.writes == 0
 
 
-async def test_saving_a_migrated_record_writes_the_v4_document(store) -> None:
+async def test_saving_a_migrated_record_writes_the_v5_document(store) -> None:
     store.documents["conversation-1"] = dict(V1_DOCUMENT)
     repository = SessionRepository(store)
     record = await repository.load("conversation-1")
     await repository.save(record)
-    assert store.documents["conversation-1"]["schema_version"] == 4
+    assert store.documents["conversation-1"]["schema_version"] == 5
     assert store.documents["conversation-1"]["identity"] == {
         "validated_at": None,
         "caller_failures": 0,
@@ -262,7 +262,7 @@ async def test_firestore_adapter_create_is_conditional() -> None:
         client,  # type: ignore[arg-type]
         "cu013_test_sessions",
     )
-    document: dict[str, object] = {"conversation_id": "conversation-1", "schema_version": 4}
+    document: dict[str, object] = {"conversation_id": "conversation-1", "schema_version": 5}
     assert await document_store.create("conversation-1", document) is True
     assert await document_store.create("conversation-1", document) is False
     assert await document_store.read("conversation-1") == document

@@ -50,6 +50,7 @@ class ScriptedModel:
         memory_context: str | None = None,
         procedure_current: str | None = None,
         state_projection: object | None = None,
+        delivery_secret: str | None = None,
     ) -> ModelTurnDecision:
         self.calls.append(
             {

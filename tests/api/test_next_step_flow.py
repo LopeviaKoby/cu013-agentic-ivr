@@ -72,9 +72,6 @@ def _presentation_body(**overrides: object) -> dict[str, object]:
         "action": "RESET_PASSWORD",
         "goal_revision": 1,
         "voice": "PLAYBACK_RETURNED",
-        "email_requested": 1,
-        "email_acceptance": "UNKNOWN",
-        "email_delivery": "UNKNOWN",
     }
     values.update(overrides)
     return values
@@ -255,7 +252,7 @@ async def test_v1_reset_presents_the_password_once(client, store) -> None:
     assert presented.json()["next_step"] == "LISTEN"
     assert presented.json()["message"] is None
     document = store.documents["conversation-1"]
-    assert document["password_presentation"]["email_delivery"] == "UNKNOWN"
+    assert document["password_presentation"]["caller_finished"] is False
     assert "password" not in repr(document["password_presentation"]).replace(
         "'password_presentation'", ""
     )

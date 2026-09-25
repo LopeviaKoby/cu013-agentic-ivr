@@ -131,9 +131,6 @@ def _presentation(**overrides: object) -> PasswordPresentationResultEvent:
         "action": "RESET_PASSWORD",
         "goal_revision": 1,
         "voice": "PLAYBACK_RETURNED",
-        "email_requested": 1,
-        "email_acceptance": "UNKNOWN",
-        "email_delivery": "UNKNOWN",
     }
     values.update(overrides)
     return PasswordPresentationResultEvent.model_validate(values)
@@ -364,9 +361,7 @@ async def test_presentation_persists_facts_and_a_duplicate_acks() -> None:
     stored = _stored(store)
     assert stored.password_presentation is not None
     assert stored.password_presentation.voice.value == "PLAYBACK_RETURNED"
-    assert stored.password_presentation.email_requested == 1
-    assert stored.password_presentation.email_acceptance.value == "UNKNOWN"
-    assert stored.password_presentation.email_delivery.value == "UNKNOWN"
+    assert stored.password_presentation.caller_finished is False
 
     writes_before = store.writes
     duplicate = await service.handle_event("conversation-1", _presentation())
@@ -386,7 +381,7 @@ async def test_presentation_failure_keeps_the_reset_confirmed_and_listens() -> N
 
     failed = await service.handle_event(
         "conversation-1",
-        _presentation(voice="PRESENTATION_FAILED_BEFORE_PLAYBACK", email_requested=0),
+        _presentation(voice="PRESENTATION_FAILED_BEFORE_PLAYBACK"),
     )
     # A presentation that never reached playback is its own fact: the reset
     # stays confirmed, nothing is re-dispatched and the conversation continues.
@@ -397,7 +392,7 @@ async def test_presentation_failure_keeps_the_reset_confirmed_and_listens() -> N
     assert stored.external_operation.status is OperationStatus.CONFIRMED
     assert stored.password_presentation is not None
     assert stored.password_presentation.voice.value == "PRESENTATION_FAILED_BEFORE_PLAYBACK"
-    assert stored.password_presentation.email_delivery.value == "UNKNOWN"
+    assert stored.password_presentation.caller_finished is False
 
 
 async def test_reset_presentation_success_resolves_the_goal_and_listens() -> None:
@@ -416,16 +411,35 @@ async def test_reset_presentation_success_resolves_the_goal_and_listens() -> Non
     assert stored.external_operation.status is OperationStatus.CONFIRMED
 
 
-async def test_incompatible_presentation_is_rejected() -> None:
+async def test_playback_truth_is_monotonic() -> None:
     store = InMemorySessionDocumentStore()
     _seed_dispatched(store, action=Action.RESET_PASSWORD)
     service = _service(store)
     await service.handle_event(
         "conversation-1", _status(1, action="RESET_PASSWORD", status="SUCESSO")
     )
-    await service.handle_event("conversation-1", _presentation())
-    with pytest.raises(IntegrationEventRejected):
-        await service.handle_event("conversation-1", _presentation(email_requested=0))
+    failed = _presentation(voice="PRESENTATION_FAILED_BEFORE_PLAYBACK")
+    await service.handle_event("conversation-1", failed)
+    assert (
+        _stored(store).password_presentation.voice.value  # type: ignore[union-attr]
+        == "PRESENTATION_FAILED_BEFORE_PLAYBACK"
+    )
+    returned = await service.handle_event("conversation-1", _presentation())
+    assert returned.next_step is NextStep.LISTEN
+    assert (
+        _stored(store).password_presentation.voice.value  # type: ignore[union-attr]
+        == "PLAYBACK_RETURNED"
+    )
+
+    # A late failure never degrades a returned playback.
+    writes_before = store.writes
+    late = await service.handle_event("conversation-1", failed)
+    assert late.next_step is NextStep.LISTEN
+    assert store.writes == writes_before
+    assert (
+        _stored(store).password_presentation.voice.value  # type: ignore[union-attr]
+        == "PLAYBACK_RETURNED"
+    )
 
 
 async def test_presentation_before_a_confirmed_reset_is_rejected() -> None:
@@ -457,10 +471,10 @@ async def test_terminal_reset_is_not_re_presented_after_presentation() -> None:
     assert replay.message is None
 
 
-def test_presentation_email_requested_is_a_strict_zero_or_one() -> None:
-    for invalid in (2, -1, "1", True):
+def test_presentation_event_rejects_legacy_email_fields() -> None:
+    for legacy in ("email_requested", "email_acceptance", "email_delivery"):
         with pytest.raises(ValidationError):
-            _presentation(email_requested=invalid)
+            _presentation(**{legacy: 1})
 
 
 # --- waiting feedback -------------------------------------------------------

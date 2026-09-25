@@ -115,6 +115,7 @@ class FakeTurnModel:
         memory_context: str | None = None,
         procedure_current: str | None = None,
         state_projection: ModelStateProjection | None = None,
+        delivery_secret: str | None = None,
     ) -> ModelTurnDecision:
         self.calls.append(
             {
@@ -126,6 +127,7 @@ class FakeTurnModel:
                 "memory_context": memory_context,
                 "procedure_current": procedure_current,
                 "state_projection": state_projection,
+                "delivery_secret": delivery_secret,
             }
         )
         if self.error is not None:
@@ -232,6 +234,7 @@ def make_state(**overrides: object) -> GraphState:
         "dispatch": None,
         "external_operation": None,
         "password_presentation": None,
+        "temporary_password": None,
         "experimental_config": None,
         "experimental_procedure": None,
         "experimental_suspended": None,

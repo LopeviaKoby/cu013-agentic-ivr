@@ -54,6 +54,7 @@ ALLOWED_KEYS = {
     "external_operation_status",
     "external_delivery_status",
     "external_presentation_status",
+    "password_presentation_active",
     "procedure_id",
     "procedure_current",
 }

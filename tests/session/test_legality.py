@@ -49,7 +49,7 @@ from tests.session.doubles import (
 def _presentation(
     *,
     voice: PlaybackVoice = PlaybackVoice.PLAYBACK_RETURNED,
-    email_requested: int = 1,
+    caller_finished: bool = False,
 ) -> PasswordPresentation:
     """Synthetic presentation facts; never carries a password."""
     return PasswordPresentation(
@@ -57,9 +57,7 @@ def _presentation(
         action=Action.RESET_PASSWORD,
         goal_revision=1,
         voice=voice,
-        email_requested=email_requested,
-        email_acceptance="UNKNOWN",
-        email_delivery="UNKNOWN",
+        caller_finished=caller_finished,
         presented_at=NOW,
     )
 
@@ -836,6 +834,7 @@ def test_delivery_is_a_separate_fact_from_the_reset_result() -> None:
     confirmed = advance_turn(
         make_state(
             external_operation=make_operation(Action.RESET_PASSWORD, OperationStatus.CONFIRMED),
+            password_presentation=_presentation(caller_finished=True),
             model_decision=make_decision(
                 route=Route.CONTINUE, claims=[{"kind": "DELIVERY_CONFIRMED"}]
             ),
@@ -849,6 +848,7 @@ def test_delivery_is_a_separate_fact_from_the_reset_result() -> None:
     delivered = advance_turn(
         make_state(
             external_operation=make_operation(Action.RESET_PASSWORD, OperationStatus.CONFIRMED),
+            password_presentation=_presentation(caller_finished=True),
             external_event=ExternalEvent(
                 kind=ExternalEventKind.DELIVERY,
                 operation_id="operation-1",
@@ -904,6 +904,7 @@ def test_invented_delivery_claim_is_rejected() -> None:
     delta = advance_turn(
         make_state(
             external_operation=make_operation(Action.RESET_PASSWORD, OperationStatus.CONFIRMED),
+            password_presentation=_presentation(caller_finished=True),
             model_decision=make_decision(
                 route=Route.COMPLETE, claims=[{"kind": "DELIVERY_CONFIRMED"}]
             ),
@@ -1077,14 +1078,17 @@ def test_complete_cannot_close_a_reset_before_it_is_presented() -> None:
             model_decision=make_decision(route=Route.COMPLETE),
         )
     )
-    assert_fallback(delta)
+    # The presentation is still owed: the runtime keeps the lifecycle open and
+    # never closes the conversation on a COMPLETE proposal.
+    assert delta["outcome"] is not None
+    assert delta["outcome"].next_step is NextStep.LISTEN
 
 
 def test_complete_is_permitted_once_the_reset_password_was_presented() -> None:
     delta = advance_turn(
         make_state(
             external_operation=make_operation(Action.RESET_PASSWORD, OperationStatus.CONFIRMED),
-            password_presentation=_presentation(),
+            password_presentation=_presentation(caller_finished=True),
             model_decision=make_decision(route=Route.COMPLETE),
         )
     )
@@ -1097,7 +1101,8 @@ def test_complete_is_permitted_after_a_failed_playback() -> None:
         make_state(
             external_operation=make_operation(Action.RESET_PASSWORD, OperationStatus.CONFIRMED),
             password_presentation=_presentation(
-                voice=PlaybackVoice.PRESENTATION_FAILED_BEFORE_PLAYBACK, email_requested=0
+                voice=PlaybackVoice.PRESENTATION_FAILED_BEFORE_PLAYBACK,
+                caller_finished=True,
             ),
             model_decision=make_decision(route=Route.COMPLETE),
         )

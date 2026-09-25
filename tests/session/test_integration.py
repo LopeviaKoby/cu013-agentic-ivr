@@ -707,7 +707,7 @@ async def test_v1_voice_failure_bootstraps_a_minimal_pre_turn_record() -> None:
     assert outcome.operation_state is None
     assert store.writes == 1
     stored = _stored(store)
-    assert stored.schema_version == 4
+    assert stored.schema_version == 5
     assert stored.turn_count == 0
     assert stored.goal is None
     assert stored.identity.validated_at is None
