@@ -107,8 +107,23 @@ def test_prompt_keeps_cancellation_and_completion_semantics(tmp_path: Path) -> N
     text = normalized(base_text(tmp_path))
     assert "cancelar termina la instancia actual del objetivo" in text
     assert "no prohíbe una petición posterior" in text
-    assert "un paso sólo se completa cuando el llamante afirma" in text
+    assert "NO son evidencia de que el paso actual" in text
     assert "una continuación" in text
+
+
+def test_prompt_states_external_grounding_and_result_canon(tmp_path: Path) -> None:
+    text = normalized(base_text(tmp_path))
+    assert "external_success_claim_allowed=false" in text
+    assert "no afirmes éxito presente ni prometas éxito futuro" in text
+    assert "FAILED es fracaso confirmado" in text
+    assert "UNKNOWN es resultado no confirmable" in text
+    assert "no inventes una alternativa" in text
+
+
+def test_prompt_states_the_identity_bridge_wording(tmp_path: Path) -> None:
+    text = normalized(base_text(tmp_path))
+    assert "No solicites el número en voz alta" in text
+    assert "no dupliques las instrucciones de teclado" in text
 
 
 def test_prompt_states_the_ambiguity_rule(tmp_path: Path) -> None:
