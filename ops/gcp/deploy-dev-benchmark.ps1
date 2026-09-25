@@ -157,8 +157,8 @@ Invoke-Checked {
         --concurrency 1 --max-instances 1 --min-instances $MinInstances `
         --cpu-throttling --no-cpu-boost `
         --allow-unauthenticated `
-        --update-secrets "CU013_API_KEY=${SecretName}:${Version},${ProtocolMountDir}:RESET_PASSWORD.runtime.md=${ResetProtocolSecret}:${ResetVersion},${ProtocolMountDir}:UNLOCK_ACCOUNT.runtime.md=${UnlockProtocolSecret}:${UnlockVersion}" `
-        --update-env-vars "CU013_VERTEX_PROJECT=$ProjectId" `
+        --update-secrets "CU013_API_KEY=${SecretName}:${Version},${ProtocolMountDir}/reset:RESET_PASSWORD.runtime.md=${ResetProtocolSecret}:${ResetVersion},${ProtocolMountDir}/unlock:UNLOCK_ACCOUNT.runtime.md=${UnlockProtocolSecret}:${UnlockVersion}" `
+        --update-env-vars "CU013_VERTEX_PROJECT=$ProjectId,CU013_PROTOCOL_RESET_FILE=${ProtocolMountDir}/reset/RESET_PASSWORD.runtime.md,CU013_PROTOCOL_UNLOCK_FILE=${ProtocolMountDir}/unlock/UNLOCK_ACCOUNT.runtime.md" `
 } "cloud run deploy (min-instances=$MinInstances)"
 
 Write-Host "== effective configuration"

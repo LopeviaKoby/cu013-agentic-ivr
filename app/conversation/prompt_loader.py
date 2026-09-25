@@ -42,6 +42,13 @@ PROTOCOL_FILENAMES: Final[tuple[tuple[Action, str], ...]] = (
     (Action.RESET_PASSWORD, "RESET_PASSWORD.runtime.md"),
     (Action.UNLOCK_ACCOUNT, "UNLOCK_ACCOUNT.runtime.md"),
 )
+# Cloud Run forbids two secret volumes in one directory, so the deploy mounts
+# each protocol in its own directory and points these variables at the exact
+# files; the directory+filename convention remains the local default.
+PROTOCOL_FILE_ENV: Final[dict[Action, str]] = {
+    Action.RESET_PASSWORD: "CU013_PROTOCOL_RESET_FILE",
+    Action.UNLOCK_ACCOUNT: "CU013_PROTOCOL_UNLOCK_FILE",
+}
 # Guided runtime steps per action. The protocol's level-3 sections must follow
 # this order so the projected window stays deterministic; a cardinality
 # mismatch fails startup instead of composing the wrong section.
@@ -192,7 +199,15 @@ def load_prompt_bundle(
     """
     directory = protocol_directory(protocol_dir)
     protocols = tuple(
-        (action, read_protocol_module(directory / filename, action))
+        (
+            action,
+            read_protocol_module(
+                Path(os.environ[PROTOCOL_FILE_ENV[action]])
+                if os.environ.get(PROTOCOL_FILE_ENV[action])
+                else directory / filename,
+                action,
+            ),
+        )
         for action, filename in PROTOCOL_FILENAMES
     )
     core = read_template_module(core_name)

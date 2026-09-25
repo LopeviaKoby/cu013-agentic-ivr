@@ -661,136 +661,136 @@ ausente en el probe hablado). El owner debe decidir entre una iteraciï¿½n
 acotada especï¿½ficamente a esa clase semï¿½ntica, aceptar con la desviaciï¿½n
 declarada, o rechazar. Cloud Run, secretos y XCALLY siguen sin tocarse.
 
-## Iteración final pre-voz — robustez + A/B de harness + migración DEV
+## IteraciÃ³n final pre-voz â€” robustez + A/B de harness + migraciÃ³n DEV
 
-Objetivo: cerrar el gate semántico/UX pre-voz con capas de robustez, un A/B
-controlado español/inglés y la migración del entorno DEV a `tivit-cu013-prd`.
+Objetivo: cerrar el gate semÃ¡ntico/UX pre-voz con capas de robustez, un A/B
+controlado espaÃ±ol/inglÃ©s y la migraciÃ³n del entorno DEV a `tivit-cu013-prd`.
 Todo local; sin deploy, sin secretos, sin XCALLY y **sin push** (los commits
-quedan sólo en la rama local).
+quedan sÃ³lo en la rama local).
 
-### Migración DEV (tivit-cu013-prd)
+### MigraciÃ³n DEV (tivit-cu013-prd)
 
 `config.yaml`, el fallback de proyecto en `gemini.py`, los runbooks y los ocho
 scripts de `ops/gcp` apuntan ahora a `tivit-cu013-prd` con la runtime SA
 `cu013-cloud-run-sa@tivit-cu013-prd.iam.gserviceaccount.com`, sin
 impersonation, con el guard de rama como allow-list cerrada
 (`-AllowedBranches`) y tiers intactos (cpu 1, 512Mi, concurrency 1, max 1,
-min 0, benchmark min 1, billing request, región us-east1, modelo global).
+min 0, benchmark min 1, billing request, regiÃ³n us-east1, modelo global).
 `bootstrap-dev.ps1` y `verify-dev.ps1` se reescribieron como herramientas
-TIVIT mínimas e idempotentes (sin crear SAs; dry-run por defecto en el
+TIVIT mÃ­nimas e idempotentes (sin crear SAs; dry-run por defecto en el
 bootstrap). Lectura read-only: proyecto 731118338507, Firestore `(default)`
-Native us-east1 vacío, APIs requeridas habilitadas, sin AR/secreto/servicio
-todavía; ADC es `pedro.lopez@tivit.com` sin impersonation y Vertex respondió
+Native us-east1 vacÃ­o, APIs requeridas habilitadas, sin AR/secreto/servicio
+todavÃ­a; ADC es `pedro.lopez@tivit.com` sin impersonation y Vertex respondiÃ³
 (count_tokens OK). Aprovisionamiento **preparado, no ejecutado**; riesgo DRS
-documentado en el deploy. Tests de acreditación en
+documentado en el deploy. Tests de acreditaciÃ³n en
 `tests/test_dev_environment_migration.py`.
 
-### Semántica
+### SemÃ¡ntica
 
 - Regla de evidencia de progreso al inicio del core (pregunta lateral,
-  explicación o continuación genérica no completan el paso; sólo evidencia
-  semántica o respuesta inequívoca a una pregunta directa).
+  explicaciÃ³n o continuaciÃ³n genÃ©rica no completan el paso; sÃ³lo evidencia
+  semÃ¡ntica o respuesta inequÃ­voca a una pregunta directa).
 - Grounding externo: con `external_success_claim_allowed=false` no se afirma
-  éxito presente ni se promete éxito futuro; FAILED = fracaso confirmado con
+  Ã©xito presente ni se promete Ã©xito futuro; FAILED = fracaso confirmado con
   escalamiento; UNKNOWN = resultado no confirmable con escalamiento, sin
-  inventar causa técnica ni agrupar con FAILED; sin "alternativa disponible"
+  inventar causa tÃ©cnica ni agrupar con FAILED; sin "alternativa disponible"
   inventada.
-- Identidad: puente verbal sin pedir el número ni duplicar el audio DTMF.
-- Discovery §15/§16: entre `GET validauser = FOUND` y la fecha DTMF **no
+- Identidad: puente verbal sin pedir el nÃºmero ni duplicar el audio DTMF.
+- Discovery Â§15/Â§16: entre `GET validauser = FOUND` y la fecha DTMF **no
   existe** hoy una llamada a CU013/Gemini (vive en el bloque XCALLY) y el
-  retry pertenece al mismo bloque DTMF/XCALLY; por tanto no se añadió
+  retry pertenece al mismo bloque DTMF/XCALLY; por tanto no se aÃ±adiÃ³
   inferencia Gemini ni evento nuevo (ownership actual reportado al owner).
 
-### Ablación de contenido F4
+### AblaciÃ³n de contenido F4
 
 | Variante | reps P/F | INFRA | procF | confF | tok p50 |
 |---|---:|---:|---:|---:|---:|
 | F4 | 18/3 | 0 | 4 | 1 | 4228 |
 | F4-e1 (positivo ADVANCE) | 20/0 | 1 | 4 | 2 | 4142 |
-| F4-e2 (continuación) | 21/0 | 0 | 5 | 1 | 4157 |
+| F4-e2 (continuaciÃ³n) | 21/0 | 0 | 5 | 1 | 4157 |
 | F4-e3 (lateral) | 20/1 | 0 | 5 | 1 | 4152 |
-| F4-e4 (cancelación) | 21/0 | 0 | 3 | 2 | 4162 |
+| F4-e4 (cancelaciÃ³n) | 21/0 | 0 | 3 | 2 | 4162 |
 
-Ninguna remoción elimina la deriva de `side-question-return` (3/3 en todas) ?
-el defecto residual no es de few-shot. El ejemplo de cancelación es redundante
-(la propiedad re-request pasa también en F0). Se adopta `few_shot_min.md`
-(ejemplos 1–3) como default y se conserva F4 como referencia de ablación.
+Ninguna remociÃ³n elimina la deriva de `side-question-return` (3/3 en todas) ?
+el defecto residual no es de few-shot. El ejemplo de cancelaciÃ³n es redundante
+(la propiedad re-request pasa tambiÃ©n en F0). Se adopta `few_shot_min.md`
+(ejemplos 1â€“3) como default y se conserva F4 como referencia de ablaciÃ³n.
 
-### A/B de harness español vs inglés
+### A/B de harness espaÃ±ol vs inglÃ©s
 
 Misma suite focal (9 familias), 3 reps, dos muestras independientes por
 lenguaje; protocolos, valores de estado y schema sin traducir; salida hablada
-forzada a español.
+forzada a espaÃ±ol.
 
-| Muestra | reps P/F | INFRA | críticos | procF | confF | goalTrF | tok p50/p95 |
+| Muestra | reps P/F | INFRA | crÃ­ticos | procF | confF | goalTrF | tok p50/p95 |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | ES-1 | 40/0 | 2 | 0 | 6 | 2 | 6 | 4205/5540 |
 | ES-2 | 40/1 | 1 | 0 | 5 | 2 | 6 | 4206/5540 |
 | EN-1 | 42/0 | 0 | 0 | 1 | 2 | 6 | 3913/5244 |
 | EN-2 | 42/0 | 0 | 0 | 3 | 1 | 6 | 3912/5244 |
 
-El inglés es reproduciblemente mejor en `procedure_current` (1–3 vs 5–6) y
-~7% más barato en tokens, con confirmación/goal equivalentes y 0 FAIL de caso
-en 2/2 muestras. El probe en inglés confirmó salida en español. **Ganador A/B:
-EN**, pero **no se adopta en esta iteración** porque el held-out congelado y
-el full paired corresponden al candidato ES; adoptarlo exigiría un held-out
-nuevo (regla §24). Se eleva como recomendación para el siguiente ciclo.
+El inglÃ©s es reproduciblemente mejor en `procedure_current` (1â€“3 vs 5â€“6) y
+~7% mÃ¡s barato en tokens, con confirmaciÃ³n/goal equivalentes y 0 FAIL de caso
+en 2/2 muestras. El probe en inglÃ©s confirmÃ³ salida en espaÃ±ol. **Ganador A/B:
+EN**, pero **no se adopta en esta iteraciÃ³n** porque el held-out congelado y
+el full paired corresponden al candidato ES; adoptarlo exigirÃ­a un held-out
+nuevo (regla Â§24). Se eleva como recomendaciÃ³n para el siguiente ciclo.
 
 ### Capas de robustez
 
-- **Golden**: full paired del candidato ES (191 pares válidos tras reruns,
-  0 INFRA en la comparación final, 0 críticos, 0 regresiones objetivo, 9 no
+- **Golden**: full paired del candidato ES (191 pares vÃ¡lidos tras reruns,
+  0 INFRA en la comparaciÃ³n final, 0 crÃ­ticos, 0 regresiones objetivo, 9 no
   objetivo, `confirmation_state` FAIL 8?1, `procedure_current` 11?13) ?
   NEEDS OWNER DECISION.
-- **Metamórfica**: 7 transformaciones invariantes (filler, frustración,
-  repetición, autocorrección, contexto irrelevante, cierre coloquial, pregunta
-  de duración) sobre 6 familias fuente; **invariance 1.0 (0 divergencias de
+- **MetamÃ³rfica**: 7 transformaciones invariantes (filler, frustraciÃ³n,
+  repeticiÃ³n, autocorrecciÃ³n, contexto irrelevante, cierre coloquial, pregunta
+  de duraciÃ³n) sobre 6 familias fuente; **invariance 1.0 (0 divergencias de
   47 comparadas)**; los 15 FAIL absolutos coinciden con los FAIL preexistentes
   de sus casos fuente.
-- **Sintética (dev)**: generador del Implementer (bancos de enunciados y
-  tabla de composición deterministas), 43 casos: ES 37 PASS/5 FAIL/1 INFRA y
+- **SintÃ©tica (dev)**: generador del Implementer (bancos de enunciados y
+  tabla de composiciÃ³n deterministas), 43 casos: ES 37 PASS/5 FAIL/1 INFRA y
   EN 36 PASS/5 FAIL/2 INFRA; defectos generales reproducidos: apertura
-  prematura de challenge ante pregunta lateral (3–4 casos) y cancelación ante
-  negativa de confirmación (1 caso). 0 críticos.
-- **Held-out (una sola ejecución)**: 35 casos congelados (seed
-  `syn-2026-09-25`, hashes de protocolos/módulos, `sha256 4bd84550…`):
-  31 PASS/4 FAIL. Dos fallos son defecto de oráculo del generador (route
-  esperada COLLECT_IDENTITY con identidad ya válida en re-request) y dos son
-  los defectos residuales reales (challenge prematuro, cancelación por
-  negativa). Sin críticos.
+  prematura de challenge ante pregunta lateral (3â€“4 casos) y cancelaciÃ³n ante
+  negativa de confirmaciÃ³n (1 caso). 0 crÃ­ticos.
+- **Held-out (una sola ejecuciÃ³n)**: 35 casos congelados (seed
+  `syn-2026-09-25`, hashes de protocolos/mÃ³dulos, `sha256 4bd84550â€¦`):
+  31 PASS/4 FAIL. Dos fallos son defecto de orÃ¡culo del generador (route
+  esperada COLLECT_IDENTITY con identidad ya vÃ¡lida en re-request) y dos son
+  los defectos residuales reales (challenge prematuro, cancelaciÃ³n por
+  negativa). Sin crÃ­ticos.
 
-### LLM judge (rúbrica corta, modelo del Implementer)
+### LLM judge (rÃºbrica corta, modelo del Implementer)
 
 Muestra de 15 mensajes del probe ES: **9 MEETS / 2 CONCERN / 0 FAIL**.
 CONCERN: avance de progreso en "listo, continuemos" (defecto residual) y una
-promesa futura en el turno de confirmación (el runtime sustituye el mensaje
-por PROCESSING_MESSAGE). Español correcto, sin formato visual, sin
-confirmación prematura en petición directa. Calibración humana pendiente
-(el judge no se calibró contra revisión humana a escala).
+promesa futura en el turno de confirmaciÃ³n (el runtime sustituye el mensaje
+por PROCESSING_MESSAGE). EspaÃ±ol correcto, sin formato visual, sin
+confirmaciÃ³n prematura en peticiÃ³n directa. CalibraciÃ³n humana pendiente
+(el judge no se calibrÃ³ contra revisiÃ³n humana a escala).
 
 ### Spike de frameworks
 
-| Framework | Multi-turn | Datasets/versionado | Sintético | Metamórfico | Judge | Evaluadores propios | Local | Egress/privacidad | Integración GCP/LangGraph | Coste/esfuerzo | Lock-in | Decisión |
+| Framework | Multi-turn | Datasets/versionado | SintÃ©tico | MetamÃ³rfico | Judge | Evaluadores propios | Local | Egress/privacidad | IntegraciÃ³n GCP/LangGraph | Coste/esfuerzo | Lock-in | DecisiÃ³n |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Vertex Gen AI Eval (Agent Platform) | Sí (métricas multi-turn por rúbrica) | Dataset en GCS/BigQuery | No nativo | No nativo | Sí (rúbricas) | Sí (custom code metric remoto/local) | SDK Python | Datos en el proyecto GCP | Natural en Vertex; agnóstico del grafo | Medio | GCP | **DEFER** como complemento (requiere dependencia `google-cloud-aiplatform`) |
-| Promptfoo | Parcial (conversation-relevance) | Configs YAML | No | No | Sí (llm-rubric, multi-judge) | Sí (python/js) | Sí, self-hosted (SQLite, 1 réplica) | Datos fuera salvo self-host | Ninguna nativa | Bajo | MIT/Node | **DEFER** (complemento CI si aparece la brecha) |
-| DeepEval | Turn-by-turn | No en OSS | No | No | Sí | Sí (pytest) | Sí | Local | Ninguna | Bajo | Apache-2.0 | **REJECT** (no cubre multi-turn ni oráculos duros mejor que el harness) |
-| LangSmith | Sí | Sí (hosted) | No | No | Sí | Sí | Parcial | Servicio externo por defecto | LangChain/LangGraph | Medio | Alto | **REJECT** (egress y lock-in; no aporta sobre el harness actual) |
+| Vertex Gen AI Eval (Agent Platform) | SÃ­ (mÃ©tricas multi-turn por rÃºbrica) | Dataset en GCS/BigQuery | No nativo | No nativo | SÃ­ (rÃºbricas) | SÃ­ (custom code metric remoto/local) | SDK Python | Datos en el proyecto GCP | Natural en Vertex; agnÃ³stico del grafo | Medio | GCP | **DEFER** como complemento (requiere dependencia `google-cloud-aiplatform`) |
+| Promptfoo | Parcial (conversation-relevance) | Configs YAML | No | No | SÃ­ (llm-rubric, multi-judge) | SÃ­ (python/js) | SÃ­, self-hosted (SQLite, 1 rÃ©plica) | Datos fuera salvo self-host | Ninguna nativa | Bajo | MIT/Node | **DEFER** (complemento CI si aparece la brecha) |
+| DeepEval | Turn-by-turn | No en OSS | No | No | SÃ­ | SÃ­ (pytest) | SÃ­ | Local | Ninguna | Bajo | Apache-2.0 | **REJECT** (no cubre multi-turn ni orÃ¡culos duros mejor que el harness) |
+| LangSmith | SÃ­ | SÃ­ (hosted) | No | No | SÃ­ | SÃ­ | Parcial | Servicio externo por defecto | LangChain/LangGraph | Medio | Alto | **REJECT** (egress y lock-in; no aporta sobre el harness actual) |
 
-Decisión: **KEEP CURRENT HARNESS**. Ningún framework cubre mejor los oráculos
-deterministas, la privacidad y el corpus congelado; adoptar uno obligaría a
+DecisiÃ³n: **KEEP CURRENT HARNESS**. NingÃºn framework cubre mejor los orÃ¡culos
+deterministas, la privacidad y el corpus congelado; adoptar uno obligarÃ­a a
 dependencia nueva y a duplicar capas sin resolver una brecha material. La
-opción complementaria propuesta para un ciclo futuro es Vertex Gen AI
-Evaluation con métricas de código custom (dev-only).
+opciÃ³n complementaria propuesta para un ciclo futuro es Vertex Gen AI
+Evaluation con mÃ©tricas de cÃ³digo custom (dev-only).
 
-### Coste de la campaña
+### Coste de la campaÃ±a
 
-~900 llamadas a `gemini-3.5-flash-lite` (ablación 225, A/B 260, sintética
-dev 90, held-out 35, metamórfica 86, probes/judge 40, full paired y reruns
-~160), ~3.6M tokens de entrada y ~0.1M de salida. Con precios públicos
-aproximados de Flash-Lite (0,075/0,30 USD por millón) el coste estimado es
-**< US$0,50**, dentro del presupuesto de US$5. No se consultó la tarifa
-vigente en esta sesión: es una estimación.
+~900 llamadas a `gemini-3.5-flash-lite` (ablaciÃ³n 225, A/B 260, sintÃ©tica
+dev 90, held-out 35, metamÃ³rfica 86, probes/judge 40, full paired y reruns
+~160), ~3.6M tokens de entrada y ~0.1M de salida. Con precios pÃºblicos
+aproximados de Flash-Lite (0,075/0,30 USD por millÃ³n) el coste estimado es
+**< US$0,50**, dentro del presupuesto de US$5. No se consultÃ³ la tarifa
+vigente en esta sesiÃ³n: es una estimaciÃ³n.
 
 ### Gates
 
@@ -801,35 +801,35 @@ python -m ruff format --check .  144 files already formatted
 python -m mypy app          Success: no issues found in 30 source files
 python -B evals/conversation_eval.py --validate-only  cases=50 problems=0
 git diff --check            limpio
-docker build                OK (digest sha256:104f572b… re-verificado con los
-                            templates del harness y el módulo few_shot_min)
+docker build                OK (digest sha256:104f572bâ€¦ re-verificado con los
+                            templates del harness y el mÃ³dulo few_shot_min)
 ```
 
-### Veredicto de la iteración final pre-voz
+### Veredicto de la iteraciÃ³n final pre-voz
 
 ```text
-INCONCLUSIVE — OWNER DECISION REQUIRED
+INCONCLUSIVE â€” OWNER DECISION REQUIRED
 NOT MERGED TO DEV / NOT PUSHED
 ```
 
-Gate §35: 0 críticos ?; 0 confirmación prematura reproducible ? (persiste en
-sintética/held-out y en el caso golden `promise-capability-distinction` de
+Gate Â§35: 0 crÃ­ticos ?; 0 confirmaciÃ³n prematura reproducible ? (persiste en
+sintÃ©tica/held-out y en el caso golden `promise-capability-distinction` de
 algunas muestras); 0 stale cancel/re-request reproducible ? (corpus y capas
-sintéticas pasan; la cancelación por negativa es el defecto restante);
+sintÃ©ticas pasan; la cancelaciÃ³n por negativa es el defecto restante);
 **0 avance procedimental por side question reproducible ?** (persiste
-`side-question-return` 2–3/3 en cada variante y en ambos idiomas); 0 promesa
-futura no respaldada reproducible ? (canon aplicado; el único CONCERN del
+`side-question-return` 2â€“3/3 en cada variante y en ambos idiomas); 0 promesa
+futura no respaldada reproducible ? (canon aplicado; el Ãºnico CONCERN del
 judge es un turno sustituido por el runtime). El owner debe decidir entre una
-iteración acotada a la clase "continuación genérica + confirmación prematura",
+iteraciÃ³n acotada a la clase "continuaciÃ³n genÃ©rica + confirmaciÃ³n prematura",
 aceptar con las desviaciones declaradas, o rechazar. Cloud Run, secretos,
 XCALLY y caching siguen sin tocarse.
 
-## Cierre pre-E2E — cobertura XCALLY, aprovisionamiento TIVIT y validación EN
+## Cierre pre-E2E â€” cobertura XCALLY, aprovisionamiento TIVIT y validaciÃ³n EN
 
 XML autoritativo: `CU013_HelpDesk_IVR_Agents.xml` (Downloads, 55 377 bytes,
-sha256 `f2859230…`), 81 bloques; es el que contiene `Switch_NEXT_STEP`,
+sha256 `f2859230â€¦`), 81 bloques; es el que contiene `Switch_NEXT_STEP`,
 `GetDigits_DOCUMENTO` y `GetDigits_START_DATE` con `retry="3"`. El defecto de
-rama combinada está confirmado: la arista 837 de `Switch_NEXT_STEP` tiene valor
+rama combinada estÃ¡ confirmado: la arista 837 de `Switch_NEXT_STEP` tiene valor
 `"TRANSFER, COMPLETE"` (target `Clear_EXIT_DOCUMENTO`), con `-` ? default ?
 `Set_LOCAL_TRANSFER`; `GoToIf_EXIT_COMPLETE` ya existe y ramifica
 true ? `Hangup_COMPLETE`, false ? `GoTo_HELPDESK`. Los 11 bloques CU013
@@ -839,42 +839,42 @@ true ? `Hangup_COMPLETE`, false ? `GoTo_HELPDESK`. Los 11 bloques CU013
 
 ### Matriz de cobertura (extracto por clase)
 
-| Ruta/estado XML | Clasificación | Capa de cobertura | Gap |
+| Ruta/estado XML | ClasificaciÃ³n | Capa de cobertura | Gap |
 |---|---|---|---|
 | WELCOME, ASR_LISTEN, TTS, cleanup, hangup | XCALLY-MECHANICAL | E2E only | ninguno |
 | NO_SPEECH / LOW_CONFIDENCE (`Rest_VOICE_FAILURE_*`) | EXTERNAL-INTEGRATION | tests de voice-retry + E2E | E2E |
-| Rest_TURN HTTP failure / message playback | RUNTIME-DETERMINISTIC + XCALLY-MECHANICAL | taxonomía de errores + E2E | E2E |
-| LISTEN (side questions, ambigüedad) | MODEL-SEMANTIC | golden + metamorphic + synthetic + fresh | defecto residual conocido |
+| Rest_TURN HTTP failure / message playback | RUNTIME-DETERMINISTIC + XCALLY-MECHANICAL | taxonomÃ­a de errores + E2E | E2E |
+| LISTEN (side questions, ambigÃ¼edad) | MODEL-SEMANTIC | golden + metamorphic + synthetic + fresh | defecto residual conocido |
 | COLLECT_IDENTITY | MODEL-SEMANTIC + RUNTIME-DETERMINISTIC | golden + synthetic + held-out + fresh | ninguno |
 | EXECUTE_ACTION, dispatch/poll HTTP error | RUNTIME-DETERMINISTIC | guards + polling tests | E2E RD |
-| POLL_RD, ACCOUNT_ACTION_STATUS, pending/terminal/unknown, budget | RUNTIME-DETERMINISTIC + EXTERNAL-INTEGRATION | tests de máquina de operación + integration-events | E2E RD |
-| DELIVER_PASSWORD, password/email present/usable, PRESENTATION_RESULT | EXTERNAL-INTEGRATION | tests de presentación + E2E | E2E SendMail |
+| POLL_RD, ACCOUNT_ACTION_STATUS, pending/terminal/unknown, budget | RUNTIME-DETERMINISTIC + EXTERNAL-INTEGRATION | tests de mÃ¡quina de operaciÃ³n + integration-events | E2E RD |
+| DELIVER_PASSWORD, password/email present/usable, PRESENTATION_RESULT | EXTERNAL-INTEGRATION | tests de presentaciÃ³n + E2E | E2E SendMail |
 | TRANSFER / COMPLETE / default | XCALLY-MECHANICAL | fix manual del owner | owner |
 | GetDigits retries, date mismatch, FOUND/NOT_FOUND | XCALLY-MECHANICAL / EXTERNAL-INTEGRATION | events tests + E2E | E2E |
 | identity VALID/INVALID/TECHNICAL_FAILURE/exhausted | RUNTIME-DETERMINISTIC + MODEL-SEMANTIC | golden identity + synthetic | ninguno |
 
-Ningún gap **MODEL-SEMANTIC** nuevo: los dos defectos residuales ya están
+NingÃºn gap **MODEL-SEMANTIC** nuevo: los dos defectos residuales ya estÃ¡n
 cubiertos por golden/synthetic/held-out/fresh.
 
-### Procedencia de los datasets (auditoría)
+### Procedencia de los datasets (auditorÃ­a)
 
-- **Golden**: corpus versionado escrito a mano (familias semánticas), ampliado
-  con casos de ambigüedad y re-request; independiente de bugs históricos.
-- **Metamórfica**: generada por transformación determinista de 6 familias
-  golden (filler, frustración, repetición, autocorrección, contexto
-  irrelevante, cierre coloquial, duración); no es LLM-generated.
-- **Synthetic dev / held-out**: bancos de enunciados y tabla de composición
-  **autorados por el modelo Implementer** con composición determinista; no
+- **Golden**: corpus versionado escrito a mano (familias semÃ¡nticas), ampliado
+  con casos de ambigÃ¼edad y re-request; independiente de bugs histÃ³ricos.
+- **MetamÃ³rfica**: generada por transformaciÃ³n determinista de 6 familias
+  golden (filler, frustraciÃ³n, repeticiÃ³n, autocorrecciÃ³n, contexto
+  irrelevante, cierre coloquial, duraciÃ³n); no es LLM-generated.
+- **Synthetic dev / held-out**: bancos de enunciados y tabla de composiciÃ³n
+  **autorados por el modelo Implementer** con composiciÃ³n determinista; no
   combinatoria pura (fases, ruido y capacidades) ni variantes de bugs.
 - **Fresh robustness (nuevo, congelado antes de Gemini)**: 59 escenarios
   autorados por el Implementer con bancos nuevos (cooperativo, poco claro,
-  mínima respuesta, confusión reset/unlock, frustración, autocorrección,
-  retomar tras explicación, dato necesario, qué sigue, humano, otra
+  mÃ­nima respuesta, confusiÃ³n reset/unlock, frustraciÃ³n, autocorrecciÃ³n,
+  retomar tras explicaciÃ³n, dato necesario, quÃ© sigue, humano, otra
   capability, cancel/re-request, procedimiento guiado), `seed
-  fresh-2026-09-25`, sha256 `09a44e71…`.
-- **Judge**: modelo Implementer con rúbrica corta; no Gemini.
+  fresh-2026-09-25`, sha256 `09a44e71â€¦`.
+- **Judge**: modelo Implementer con rÃºbrica corta; no Gemini.
 
-### Aprovisionamiento y validación
+### Aprovisionamiento y validaciÃ³n
 
-Pendiente de ejecución al cierre de esta sección; se registrarán recursos,
-hashes, digest, revisión, DRS, focal/full/robustez EN, latencia y handoff.
+Pendiente de ejecuciÃ³n al cierre de esta secciÃ³n; se registrarÃ¡n recursos,
+hashes, digest, revisiÃ³n, DRS, focal/full/robustez EN, latencia y handoff.

@@ -21,6 +21,7 @@ from app.conversation.prompt_loader import (
     validate_prompt_module,
 )
 from app.conversation.prompt_renderer import hash_prompt_text
+from app.session.actions import Action
 from tests.conversation.prompt_fixtures import (
     SYNTHETIC_RESET_BODY,
     write_synthetic_protocols,
@@ -200,10 +201,38 @@ def test_english_harness_templates_load_without_touching_protocols(
 
 
 def _goal_for(action: str):  # type: ignore[no-untyped-def]
-    from app.session.actions import Action
     from app.session.record import ConversationGoal
 
     return ConversationGoal(action=Action(action), revision=1)
+
+
+def test_explicit_protocol_file_paths_override_the_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.conversation.prompt_loader import PROTOCOL_FILE_ENV
+    from tests.conversation.prompt_fixtures import PROTOCOL_BODIES
+
+    write_synthetic_protocols(tmp_path / "bundle")
+    reset_dir = tmp_path / "reset"
+    unlock_dir = tmp_path / "unlock"
+    reset_dir.mkdir()
+    unlock_dir.mkdir()
+    (reset_dir / "RESET_PASSWORD.runtime.md").write_text(
+        PROTOCOL_BODIES["RESET_PASSWORD.runtime.md"], encoding="utf-8"
+    )
+    (unlock_dir / "UNLOCK_ACCOUNT.runtime.md").write_text(
+        PROTOCOL_BODIES["UNLOCK_ACCOUNT.runtime.md"], encoding="utf-8"
+    )
+    monkeypatch.setenv(
+        PROTOCOL_FILE_ENV[Action.RESET_PASSWORD], str(reset_dir / "RESET_PASSWORD.runtime.md")
+    )
+    monkeypatch.setenv(
+        PROTOCOL_FILE_ENV[Action.UNLOCK_ACCOUNT], str(unlock_dir / "UNLOCK_ACCOUNT.runtime.md")
+    )
+    bundle = load_prompt_bundle(protocol_dir=tmp_path / "bundle")
+    assert SYNTHETIC_RESET_BODY in bundle.system_instructions(_goal_for("RESET_PASSWORD"))
+    monkeypatch.delenv(PROTOCOL_FILE_ENV[Action.RESET_PASSWORD])
+    monkeypatch.delenv(PROTOCOL_FILE_ENV[Action.UNLOCK_ACCOUNT])
 
 
 def test_guided_step_cardinality_mismatch_fails_startup(tmp_path: Path) -> None:
