@@ -61,6 +61,18 @@ Un turno normal apunta a una sola solicitud al modelo. Si una interacción lógi
   6. resultado externo confirmado (`confirmed external result`).
 - **ACCEPTED.** Toda afirmación (`claim`) comunicada al caller debe estar respaldada por el estado runtime observable. El modelo no crea verdad; la verdad del sistema proviene del estado durable y de resultados externos confirmados.
 
+### Continuidad tras una operación resuelta
+
+- **ACCEPTED.** Una operación terminal (`confirmed`/`failed`) no cierra la conversación: el resultado se comunica con la verdad observada, se invita a continuar y el runtime escucha (`LISTEN`). `COMPLETE` se reserva al cierre conversacional explícito del caller.
+- **ACCEPTED.** Al confirmarse un resultado terminal, el goal queda resuelto: se marca y se limpia para impedir un redespacho obsoleto. El resultado se conserva en `external_operation` para grounding. Una necesidad nueva crea un goal nuevo; una pregunta sobre lo recién resuelto se responde desde el historial de la operación sin reactivar el goal ni repetir el despacho.
+- **ACCEPTED.** La autorización de despacho se consume al alcanzar el resultado terminal: `external_action_allowed=false`. El guard durable se conserva sólo como metadata de correlación (late results y presentación de contraseña) y nunca se reutiliza para un nuevo despacho; toda acción futura crea autorización/dispatch nuevos.
+- **ACCEPTED.** Un turno lateral u off-topic no implica handoff, identidad ni acción: se responde brevemente y se redirige si corresponde, preservando el goal vigente para retomarlo cuando el caller lo avance de nuevo. El contrato del modelo distingue esa relación con el goal (`SIDE`) sin heurísticas ni una segunda llamada.
+
+### Verdad de presentación (RESET_PASSWORD)
+
+- **ACCEPTED.** El resultado del reset, la presentación hablada de la contraseña, la solicitud de correo, la entrega del correo y el ciclo conversacional son hechos separados y ninguno implica a otro.
+- **ACCEPTED.** El boundary puede reportar la presentación como `PLAYBACK_RETURNED` o `PRESENTATION_FAILED_BEFORE_PLAYBACK`. Un fallo antes del playback no cambia el resultado del reset, no repite el despacho, no crea una nueva operación y no promete correo; el reset permanece `confirmed` y la presentación permanece fallida. La entrega del correo nunca se infiere de una solicitud, de un `SendMail` alcanzado ni de una aceptación asíncrona.
+
 ### Identidad
 
 - **ACCEPTED.** La identidad validada está limitada a la llamada actual y expira con un TTL absoluto de 30 minutos desde su validación, sea cual sea la actividad de la conversación. Sin identidad vigente no existe autorización de despacho.
@@ -96,7 +108,7 @@ Ante un crash a mitad del turno, el siguiente request reinicia desde la última 
 
 **PROVISIONAL — implemented DEV baseline.** CU013 materializa un boundary HTTP mínimo para DEV. El contrato implementado, sus restricciones y su evolución basada en evidencia viven en [Boundary HTTP XCALLY ↔ CU013](xcally-boundary.md); no constituye todavía el contrato integrado final con Cally Square ni define órdenes/resultados AD/TIVIT.
 
-**PROVISIONAL — two temporary serializers.** Un único dominio de transición alimenta el envelope legacy y el envelope común `next-step-v1` seleccionado por el header canónico `X-CU013-Response-Contract`. El runtime decide `next_step` a partir del estado consolidado; el modelo no puede decidirlo. Con un goal soportado pendiente y sin autorización, el runtime exige la captura de identidad aunque el modelo haya propuesto `CONTINUE`. La rotación fija de frases de progreso sobrevive sólo en el carril legacy y el feedback contextual v1 puede delegar una única redacción estrecha sin cambiar estado empresarial.
+**PROVISIONAL — two temporary serializers.** Un único dominio de transición alimenta el envelope legacy y el envelope común `next-step-v1` seleccionado por el header canónico `X-CU013-Response-Contract`. El runtime decide `next_step` a partir del estado consolidado; el modelo no puede decidirlo. El contrato del modelo expone una señal semántica cerrada de relación con el goal (`goal_focus`: `PROGRESS | SIDE | NONE`): con un goal soportado pendiente, sin autorización y un turno que lo avanza (`PROGRESS`), el runtime exige la captura de identidad aunque el modelo haya propuesto `CONTINUE`; un turno lateral u off-topic (`SIDE`) responde y escucha preservando el goal, sin forzar identidad, acción ni handoff. La rotación fija de frases de progreso sobrevive sólo en el carril legacy y el feedback contextual v1 puede delegar una única redacción estrecha sin cambiar estado empresarial.
 
 ## Entorno GCP actual
 

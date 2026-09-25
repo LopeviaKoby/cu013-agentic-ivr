@@ -105,11 +105,14 @@ Proyecciones por endpoint:
 | `ACCOUNT_ACTION_STATUS` no terminal | `POLL_RD` |
 | `ACCOUNT_ACTION_ERROR/POLL` no terminal | `POLL_RD` |
 | `ACCOUNT_ACTION_ERROR/DISPATCH` | `POLL_RD` |
-| `UNLOCK_ACCOUNT` confirmado | `COMPLETE` |
+| `UNLOCK_ACCOUNT` confirmado | `LISTEN` |
 | `RESET_PASSWORD` confirmado sin presentación | `DELIVER_PASSWORD` |
-| operación fallida o reset ya presentado | `LISTEN` |
+| operación fallida o presentación de reset reportada | `LISTEN` |
+| `PASSWORD_PRESENTATION_RESULT` (retornada o fallida antes del playback) | `LISTEN` |
 | presupuesto de polling agotado | `TRANSFER` |
 | `IDENTITY_INPUT_FAILURE` o máximo de fallos de identidad | `TRANSFER` |
+
+**Operación terminal y conversación (owner decision, 2026-09-25).** Un resultado terminal no cierra la conversación: la operación queda completa, el goal se resuelve y se limpia para impedir un redespacho obsoleto, la autorización de despacho se consume (`external_action_allowed=false`, el guard se conserva sólo para correlación) y el runtime escucha. `COMPLETE` sólo proviene de la ruta conversacional del modelo, y tras un reset queda permitido una vez reportada la presentación (retornada o fallida).
 
 **Precedencia de estado (owner decision).** El runtime deriva `next_step` del estado consolidado, no sólo de la propuesta del modelo. Con un goal soportado pendiente, identidad no válida y ninguna operación activa, el `CONTINUE` residual se proyecta a `COLLECT_IDENTITY`: el mensaje del modelo sigue respondiendo la necesidad inmediata y el goal se conserva, pero XCALLY recibe la capacidad que el estado exige. Los guards de `COMPLETE` y `ESCALATE` conservan su precedencia.
 
@@ -379,7 +382,8 @@ Sólo `CAPTURE_EXHAUSTED`. No es `INVALID`, no suma intentos imputables al calle
 ```
 
 - Sólo aplica a `RESET_PASSWORD` confirmado por el boundary; la contraseña nunca entra al backend.
-- `voice` sólo admite `PLAYBACK_RETURNED`; `email_requested` es un entero estricto `0/1`; aceptación y entrega comienzan sólo en `UNKNOWN`.
+- `voice` admite `PLAYBACK_RETURNED` o `PRESENTATION_FAILED_BEFORE_PLAYBACK`; `email_requested` es un entero estricto `0/1`; aceptación y entrega comienzan sólo en `UNKNOWN`.
+- `PRESENTATION_FAILED_BEFORE_PLAYBACK` no cambia el resultado del reset (`operation_state=SUCCEEDED`), no repite el despacho, no crea una operación nueva y no promete correo. El email nunca se reporta como entregado mientras siga `UNKNOWN`.
 - Un duplicado idéntico es un ACK idempotente; un evento incompatible o tardío es un 409. Un duplicado nunca reemite `DELIVER_PASSWORD`.
 - Mientras la entrega siga `UNKNOWN`, la respuesta es `next_step=LISTEN` sin afirmar envío ni entrega.
 - El contrato legacy lo rechaza.
@@ -437,8 +441,8 @@ No se repite automáticamente el POST tras `UNKNOWN`; un terminal correlacionado
 
 ### Terminales
 
-- `UNLOCK_ACCOUNT` + `SUCESSO`: se persiste `confirmed` y se devuelve `COMPLETE` con `"El desbloqueo fue confirmado correctamente."`. No se mencionan AD, RD, Orchestrator ni detalles internos.
-- `RESET_PASSWORD` + `SUCESSO`: se persiste el reset confirmado, pero no se trata como entrega confirmada. SendMail sigue Deferred, la contraseña temporal nunca llega a CU013 y el reset no se declara completado al caller mientras el contrato de entrega siga abierto: directiva `RESUME_CONVERSATION` con un mensaje que sólo afirma el reset confirmado.
+- `UNLOCK_ACCOUNT` + `SUCESSO`: se persiste `confirmed` y se devuelve `RESUME_CONVERSATION`/`LISTEN` con `"El desbloqueo fue confirmado correctamente. ¿Necesitas algo más?"`. El goal se resuelve y se limpia; la operación queda completa, la conversación no. No se mencionan AD, RD, Orchestrator ni detalles internos.
+- `RESET_PASSWORD` + `SUCESSO`: se persiste el reset confirmado, pero no se trata como entrega confirmada. SendMail sigue Deferred, la contraseña temporal nunca llega a CU013 y el reset no se declara completado al caller mientras el contrato de entrega siga abierto: directiva `RESUME_CONVERSATION` con un mensaje que sólo afirma el reset confirmado. La presentación hablada se reporta por separado y un fallo antes del playback no cambia el reset ni promete correo.
 - Fallos RD conocidos: se persiste `failed` sin inventar semántica más específica que la evidencia. Baseline local: mensaje seguro grounded y `RESUME_CONVERSATION`, salvo que una regla Accepted obligue inequívocamente a `ESCALATE`. Mientras XC-006 siga abierto no se codifica una tabla irreversible status RD → escalamiento; el E2E decidirá el mapping final.
 
 ## Correlación, duplicados y late results

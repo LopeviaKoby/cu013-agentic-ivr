@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Keep the conversation open after a terminal external operation: a confirmed
+  `UNLOCK_ACCOUNT` and a `RESET_PASSWORD` whose presentation was reported both
+  project `LISTEN` and {`RESUME_CONVERSATION`}, communicate the confirmed
+  result and invite continuation. `COMPLETE` stays reserved for the caller's
+  explicit conversational close. A terminal result resolves and clears the
+  goal so nothing is re-dispatched, while `external_operation` is preserved
+  for grounding.
+- Consume the dispatch authorization once its operation reaches a terminal
+  result: `external_action_allowed` becomes false and the durable guard is kept
+  only to correlate late results and the password presentation. A future action
+  must create a new authorization and dispatch.
+- Separate the password-presentation truth: `PASSWORD_PRESENTATION_RESULT`
+  now accepts `PLAYBACK_RETURNED` or `PRESENTATION_FAILED_BEFORE_PLAYBACK`,
+  independent of the reset result and the email delivery. A failure before
+  playback never marks the reset as failed, never re-dispatches, never creates
+  a new operation and never promises an email.
+
+### Added
+
+- Add the closed model-facing `goal_focus` signal (`PROGRESS | SIDE | NONE`):
+  the runtime captures identity for a pending supported goal only when the
+  turn advances it (`PROGRESS`), so a side or off-topic turn answers and
+  `LISTEN`s while preserving the goal. The deterministic identity guard is
+  retained and no heuristic or second model call is introduced.
+- Clear the caller identity-failure counter after a positive validation; only
+  `IDENTITY_VALIDATION_RESULT/INVALID` counts an attempt toward the third
+  failure handoff.
+
 ### Fixed
 
 - Accept canonical decimal strings for the closed numeric whitelist of the

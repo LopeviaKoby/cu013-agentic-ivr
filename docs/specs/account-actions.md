@@ -45,7 +45,7 @@ La semántica local de CU013/XCALLY es un dominio distinto que no se atribuye a 
 - lookup `FOUND` y fecha de ingreso correcta → `VALID`;
 - timeout, HTTP error o respuesta inesperada → `TECHNICAL_FAILURE`.
 
-El contador de intentos pertenece al runtime CU013: `INVALID` consume un intento imputable al caller, `TECHNICAL_FAILURE` no consume intento y `VALID` tampoco. RD/TIVIT no conoce ni devuelve ese contador.
+El contador de intentos pertenece al runtime CU013: sólo `INVALID` consume un intento imputable al caller; `TECHNICAL_FAILURE`, `IDENTITY_INPUT_FAILURE` y `VOICE_INPUT_FAILURE` no consumen intento, y `VALID` resuelve la fase y limpia el contador. RD/TIVIT no conoce ni devuelve ese contador.
 
 **PROVISIONAL (evidence).** La consulta por documento está acreditada; falta demostrar E2E el recorrido completo `FOUND → captura DDMMYYYY → comparación con resposta2 → evento VALID/INVALID → backend` (ID-001).
 
@@ -66,7 +66,7 @@ Los valores crudos de documento y fecha de ingreso:
 
 ## Intentos de validación de identidad
 
-**ACCEPTED.** Se permiten hasta tres fallos de identidad imputables al caller por llamada (documento o fecha incorrectos). Al tercer fallo el agente ejecuta handoff.
+**ACCEPTED.** Se permiten hasta tres fallos de identidad imputables al caller por llamada (documento o fecha incorrectos). Al tercer fallo el agente ejecuta handoff. El runtime cuenta únicamente el evento `IDENTITY_VALIDATION_RESULT` con outcome `INVALID`: los fallos técnicos, de captura de identidad, de captura de voz, de HTTP y una confirmación de acción negativa no incrementan el contador.
 
 **ACCEPTED.** Los fallos técnicos de validación (indisponibilidad o timeout del boundary externo) no consumen intentos del caller. No confunden la validación con la confirmación HITL: son fases distintas.
 
@@ -119,7 +119,9 @@ CU013 ↔ XCALLY/Cally Square ↔ Orchestrator/TIVIT/AD
 
 El agente no debe afirmar que la contraseña fue restablecida ni que su entrega fue exitosa hasta recibir un resultado verificable del boundary autorizado.
 
-**ACCEPTED.** `reset confirmed` (resultado de AD/TIVIT) y `delivery confirmed` (estado de SendMail) son hechos separados; ninguno implica al otro y cada uno se comunica sólo con el estado recibido. El reset real para callers queda gated por SendMail validado: mientras SendMail esté Deferred, el reset directo no se declara completado para el caller sin su resultado de entrega.
+**ACCEPTED.** `reset confirmed` (resultado de AD/TIVIT), la presentación hablada de la contraseña (`PLAYBACK_RETURNED` o `PRESENTATION_FAILED_BEFORE_PLAYBACK`) y `delivery confirmed` (estado de SendMail) son hechos separados; ninguno implica al otro y cada uno se comunica sólo con el estado recibido. Un fallo de presentación antes del playback no cambia el resultado del reset, no repite el despacho, no crea una nueva operación y no promete correo. El reset real para callers queda gated por SendMail validado: mientras SendMail esté Deferred, el reset directo no se declara completado para el caller sin su resultado de entrega.
+
+**ACCEPTED (continuity).** Al confirmarse el reset, el goal queda resuelto y el runtime escucha; tras una presentación retornada o fallida la conversación continúa y sólo el cierre explícito del caller usa `COMPLETE`. Una operación resuelta no se redespacha.
 
 ## UNLOCK_ACCOUNT
 
@@ -128,6 +130,8 @@ No existe una vía de autoservicio guiado aceptada para desbloquear una cuenta.
 Después de capturar por DTMF el documento, completar el lookup `FOUND` + fecha de ingreso `DDMMYYYY`, obtener una validación positiva y obtener la confirmación verbal de esa acción concreta, el agente puede solicitar directamente el desbloqueo mediante XCALLY/Orchestrator. La respuesta al caller debe describir la acción y su resultado sin exponer nombres de servicios o componentes técnicos.
 
 La solicitud usa el comando externo observado `desbloqueio` mediante los bloques REST de Cally Square hacia Orchestrator/TIVIT/AD. La respuesta al caller deriva exclusivamente del resultado externo observado; ni una intención del caller ni una inferencia del LLM prueban el éxito.
+
+**ACCEPTED (continuity).** Al confirmarse el desbloqueo, el goal queda resuelto y el runtime comunica el éxito confirmado e invita a continuar en `LISTEN`: la operación está completa, la conversación no. El resultado se conserva para grounding y no se redespacha.
 
 ## Ticketing y Mesa de Servicio
 
