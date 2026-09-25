@@ -21,7 +21,9 @@ param(
     # Protocol mounts (numeric versions are resolved below when not pinned).
     [string]$ResetProtocolSecret = "cu013-protocol-reset-password-dev",
     [string]$UnlockProtocolSecret = "cu013-protocol-unlock-account-dev",
-    [string]$ProtocolMountDir = "/var/run/secrets/cu013/protocols",
+    # Cloud Run validates the parent directory of every secret volume, so each
+    # protocol mounts under its own parent tree.
+    [string]$ProtocolMountBase = "/var/run/secrets/cu013",
     [int]$MinInstances = 0,
     # Closed allow-list: deployments never accept an arbitrary branch.
     [string[]]$AllowedBranches = @("dev")
@@ -157,8 +159,8 @@ Invoke-Checked {
         --concurrency 1 --max-instances 1 --min-instances $MinInstances `
         --cpu-throttling --no-cpu-boost `
         --allow-unauthenticated `
-        --update-secrets "CU013_API_KEY=${SecretName}:${Version},${ProtocolMountDir}/reset=${ResetProtocolSecret}:${ResetVersion},${ProtocolMountDir}/unlock=${UnlockProtocolSecret}:${UnlockVersion}" `
-        --update-env-vars "CU013_VERTEX_PROJECT=$ProjectId,CU013_PROTOCOL_RESET_FILE=${ProtocolMountDir}/reset/${ResetProtocolSecret},CU013_PROTOCOL_UNLOCK_FILE=${ProtocolMountDir}/unlock/${UnlockProtocolSecret}" `
+        --update-secrets "CU013_API_KEY=${SecretName}:${Version},${ProtocolMountBase}-reset/protocols=${ResetProtocolSecret}:${ResetVersion},${ProtocolMountBase}-unlock/protocols=${UnlockProtocolSecret}:${UnlockVersion}" `
+        --update-env-vars "CU013_VERTEX_PROJECT=$ProjectId,CU013_PROTOCOL_RESET_FILE=${ProtocolMountBase}-reset/protocols/${ResetProtocolSecret},CU013_PROTOCOL_UNLOCK_FILE=${ProtocolMountBase}-unlock/protocols/${UnlockProtocolSecret}" `
 } "cloud run deploy (min-instances=$MinInstances)"
 
 Write-Host "== effective configuration"
