@@ -80,7 +80,7 @@ Fuera de alcance: ticketing ITSM, SendMail (Deferred), VPN (posterior) y acceso 
 | `evals/conversation_eval.py` | Laboratorio de evaluación: modelo real + runtime semántico contra el corpus versionado de `evals/conversation/`, con evidencia estructurada por run, caso/repetición y turno, warmups, INFRA por repetición y artefactos locales en `evals/results/` | ADC con impersonación |
 | `evals/conversation_compare.py` | Comparador pareado puro (sin modelo) contra el baseline aceptado: identidades, propiedades, rutas, divergencias, violaciones críticas, latencia/tokens y verdicto ACCEPT / REJECT / NEEDS OWNER DECISION | Ninguno (sin credenciales) |
 
-El corpus de evaluación conversacional (`evals/conversation/cases.yaml`, 47 casos, 39 familias, sintético y sin PII) expresa expectativas semánticas por familia — rutas, goals, confirmación, elegibilidad, handoff y claims — sin phrase matching. Cada caso declara `scenario_kind` (`independent_trial` o `sequence`); una clave `expected` presente afirma su valor (incluido `null` como ausencia) y una clave ausente se reporta `NOT ORACLED`. El baseline activo (Gemini 3.5 Flash-Lite, `global`, `MINIMAL`, clasificación procedimental obligatoria, memoria reciente de tres pares) se deriva de `config.yaml` y `app/conversation`; el harness calcula su fingerprint en runtime. La historia de selección vive en la ADR vigente, el Experimento 0009 y Git. Las tres capas de validación (tests deterministas, gate pareado conversacional y análisis de evidencia de llamada real) están en [testing standards](docs/engineering/testing.md).
+El corpus de evaluación conversacional (`evals/conversation/cases.yaml`, 50 casos, 41 familias, sintético y sin PII) expresa expectativas semánticas por familia — rutas, goals, confirmación, elegibilidad, handoff y claims — sin phrase matching. Cada caso declara `scenario_kind` (`independent_trial` o `sequence`); una clave `expected` presente afirma su valor (incluido `null` como ausencia) y una clave ausente se reporta `NOT ORACLED`. El baseline activo (Gemini 3.5 Flash-Lite, `global`, `MINIMAL`, clasificación procedimental obligatoria, memoria reciente de tres pares) se deriva de `config.yaml` y `app/conversation`; el harness calcula su fingerprint en runtime. La historia de selección vive en la ADR vigente, el Experimento 0009 y Git. Las tres capas de validación (tests deterministas, gate pareado conversacional y análisis de evidencia de llamada real) están en [testing standards](docs/engineering/testing.md).
 
 Metodología del benchmark: 5 warmups y luego 30 requests secuenciales medidas (13 `RESET`, 13 `UNLOCK`, secuencia multi-turn de 4), percentiles por segmento y verificación de continuidad durable del `SessionRecord`. Resultados en el [Experimento 0003](docs/experiments/0003-gemini-baseline-latency.md) (local) y el [Experimento 0004](docs/experiments/0004-cloud-run-latency.md) (in-region).
 
@@ -116,7 +116,7 @@ Infraestructura GCP confirmada:
 
 - proyecto `tivit-cu013-prd`, región primaria `us-east1`;
 - Firestore Native/Standard y Artifact Registry `cu013-containers-dev`;
-- service accounts de mínimo privilegio `cu013-spike-firestore` (spike), `cu013-runtime-dev` (runtime) y `cu013-deployer-dev` (despliegue);
+- service account de mínimo privilegio `cu013-cloud-run-sa@tivit-cu013-prd.iam.gserviceaccount.com` (runtime; sin impersonation);
 - APIs `aiplatform`, `artifactregistry`, `firestore`, `iam`, `iamcredentials`, `run` y `secretmanager`;
 - sin Terraform (Deferred): la reproducibilidad actual es `gcloud` + scripts idempotentes versionados.
 

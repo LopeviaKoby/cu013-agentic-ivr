@@ -157,8 +157,8 @@ if (-not [string]::IsNullOrWhiteSpace($ExpectedImageDigest)) {
 }
 
 Write-Host "---"
-Write-Host "model/location config: defaults baked in the image (project tivit-cu013-prd,"
-Write-Host "location us-east1, model gemini-2.5-flash-lite, thinking_budget=0)"
+Write-Host "model config: defaults baked in the image (project tivit-cu013-prd,"
+Write-Host "model location global, model gemini-3.5-flash-lite, thinking_level MINIMAL)"
 Write-Host "revision: $revisionName"
 Write-Host "url: $serviceUrl"
 Write-Host "expected min instances: $ExpectedMinInstances"

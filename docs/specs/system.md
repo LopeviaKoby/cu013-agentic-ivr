@@ -145,9 +145,8 @@ Este nivel no está implementado. Su necesidad recurrente es un trigger para rec
 
 ## Identidades
 
-- `cu013-spike-firestore`: aísla el spike local y se usa mediante ADC impersonation. Tiene `roles/datastore.user`.
-- `cu013-runtime-dev`: identidad de menor privilegio del servicio Cloud Run DEV (en uso). Tiene `roles/datastore.user` y `roles/aiplatform.user`, y sólo accede al secreto DEV por binding a nivel de secreto.
-- `cu013-deployer-dev`: separa despliegue y runtime, y prepara GitHub Actions. Tiene `roles/run.developer`, acceso writer al repositorio DEV y derecho a usar la runtime SA.
+- `cu013-cloud-run-sa@tivit-cu013-prd.iam.gserviceaccount.com`: identidad de menor privilegio del servicio Cloud Run DEV (en uso). Tiene `roles/datastore.user` y `roles/aiplatform.user`, y sólo accede a los secretos DEV por binding a nivel de secreto. No se usa impersonation.
+- Las identidades `cu013-spike-firestore`, `cu013-runtime-dev` y `cu013-deployer-dev` pertenecen al proyecto anterior `cu013-xcally-agentic` y se conservan como historia.
 
 **INVARIANT.** No se permiten long-lived service-account keys.
 
