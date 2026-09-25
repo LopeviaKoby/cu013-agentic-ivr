@@ -14,9 +14,9 @@ def test_rotation_accepts_unset_cloud_run_minimum() -> None:
     harness = r"""
 $global:rotated = $false
 $global:secretBytes = $null
-$global:image = 'us-east1-docker.pkg.dev/cu013-xcally-agentic/' +
-    'cu013-containers-dev/cu013-runtime-dev:a17e15545542e438a218538bf6e10745b88a0af8'
-$global:digest = 'us-east1-docker.pkg.dev/cu013-xcally-agentic/' +
+$global:image = 'us-east1-docker.pkg.dev/tivit-cu013-prd/' +
+    'cu013-containers-dev/cu013-runtime-dev:exp-prompt-protocols'
+$global:digest = 'us-east1-docker.pkg.dev/tivit-cu013-prd/' +
     'cu013-containers-dev/cu013-runtime-dev@sha256:' +
     '4dffcd59001312396912e4cac1c739e1c11d45ca8ff4a77185b3d046312b902a'
 function global:gcloud {
@@ -36,12 +36,12 @@ function global:gcloud {
         }
         if ($global:rotated) { $templateAnnotations['autoscaling.knative.dev/minScale'] = '1' }
         $result = @{
-            metadata = @{name='cu013-runtime-dev';namespace='17280606194';labels=@{'cloud.googleapis.com/location'='us-east1'};annotations=@{'run.googleapis.com/urls'='["https://cu013-runtime-dev-17280606194.us-east1.run.app"]'}}
+            metadata = @{name='cu013-runtime-dev';namespace='731118338507';labels=@{'cloud.googleapis.com/location'='us-east1'};annotations=@{'run.googleapis.com/urls'='["https://cu013-runtime-dev-731118338507.us-east1.run.app"]'}}
             spec = @{template=@{metadata=@{annotations=$templateAnnotations};spec=@{
-                containerConcurrency=1;serviceAccountName='cu013-runtime-dev@cu013-xcally-agentic.iam.gserviceaccount.com'
+                containerConcurrency=1;serviceAccountName='cu013-cloud-run-sa@tivit-cu013-prd.iam.gserviceaccount.com'
                 containers=@(@{image=$global:image;resources=@{limits=@{cpu='1';memory='512Mi'}};env=@(@{name='CU013_API_KEY';valueFrom=@{secretKeyRef=@{name='cu013-api-key-dev';key=$version}}})})
             }}}
-            status = @{url='https://cu013-runtime-dev-17280606194.us-east1.run.app';latestReadyRevisionName=$revision;conditions=@(@{type='Ready';status='True'})}
+            status = @{url='https://cu013-runtime-dev-731118338507.us-east1.run.app';latestReadyRevisionName=$revision;conditions=@(@{type='Ready';status='True'})}
         }
         ConvertTo-Json -InputObject $result -Depth 20
         return
@@ -79,7 +79,7 @@ function global:gcloud {
     }
     throw "unexpected gcloud invocation: $command"
 }
-& '__SCRIPT_PATH__'
+& '__SCRIPT_PATH__' -ExpectedImage $global:image -ExpectedImageDigest $global:digest
 if (-not $global:rotated) { throw 'rotation did not complete' }
 """.replace("__SCRIPT_PATH__", quoted_path)
 

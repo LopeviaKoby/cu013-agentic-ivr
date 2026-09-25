@@ -283,7 +283,7 @@ def test_baseline_from_env_uses_the_active_defaults(
         monkeypatch.delenv(var, raising=False)
     baseline = GeminiBaseline.from_env()
     assert baseline.provider == "vertex_ai"
-    assert baseline.project == "cu013-xcally-agentic"
+    assert baseline.project == "tivit-cu013-prd"
     assert baseline.location == "global"
     assert baseline.model == "gemini-3.5-flash-lite"
     assert baseline.api_version == "v1"

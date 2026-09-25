@@ -12,13 +12,14 @@ Remember to run stop-dev-benchmark.ps1 when the window ends (min=0).
 #>
 [CmdletBinding()]
 param(
-    [string]$ProjectId = "cu013-xcally-agentic",
+    [string]$ProjectId = "tivit-cu013-prd",
     [string]$Region = "us-east1",
     [string]$Service = "cu013-runtime-dev",
-    [string]$RuntimeSa = "cu013-runtime-dev@cu013-xcally-agentic.iam.gserviceaccount.com",
-    [string]$DeployerSa = "cu013-deployer-dev@cu013-xcally-agentic.iam.gserviceaccount.com",
+    [string]$RuntimeSa = "cu013-cloud-run-sa@tivit-cu013-prd.iam.gserviceaccount.com",
     [string]$SecretName = "cu013-api-key-dev",
-    [string]$ArtifactRepo = "cu013-containers-dev"
+    [string]$ArtifactRepo = "cu013-containers-dev",
+    # Closed allow-list: deployments never accept an arbitrary branch.
+    [string[]]$AllowedBranches = @("dev")
 )
 
 $ErrorActionPreference = "Stop"
@@ -58,8 +59,8 @@ function Get-PublicServiceUrl {
 Write-Host "== repository state"
 Invoke-Checked { git fetch origin dev } "fetch"
 $branch = (git branch --show-current).Trim()
-if ($branch -ne "dev") {
-    Write-Error "branch is '$branch', expected 'dev'"
+if ($AllowedBranches -notcontains $branch) {
+    Write-Error "branch is '$branch'; allowed: $($AllowedBranches -join ', ')"
     exit 1
 }
 if (git status --porcelain) {
@@ -104,10 +105,10 @@ Write-Host "secret: $SecretName (latest enabled version: $Version; value never p
 
 Invoke-Checked { docker build -t $Tag . } "docker build"
 
-Write-Host "== docker login (impersonated deployer token; token never printed)"
-$token = gcloud auth print-access-token --impersonate-service-account $DeployerSa
+Write-Host "== docker login (active-account token; never printed)"
+$token = gcloud auth print-access-token
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "cannot impersonate $DeployerSa; grant iam.serviceAccounts.getAccessToken first"
+    Write-Error "cannot obtain an access token for the active account"
     exit 1
 }
 $token | docker login -u oauth2accesstoken --password-stdin us-east1-docker.pkg.dev | Out-Null
@@ -118,6 +119,10 @@ if ($LASTEXITCODE -ne 0) {
 
 Invoke-Checked { docker push $Tag } "docker push"
 
+# DRS risk: if --allow-unauthenticated fails under
+# iam.allowedPolicyMemberDomains, STOP & REPORT — DRS OWNER DECISION REQUIRED
+# (folder/project exception or authenticated OIDC invocation); never improvise
+# a proxy or a different identity.
 Invoke-Checked {
     gcloud run deploy $Service `
         --project $ProjectId --region $Region `
@@ -128,13 +133,11 @@ Invoke-Checked {
         --cpu-throttling --no-cpu-boost `
         --allow-unauthenticated `
         --set-secrets "CU013_API_KEY=${SecretName}:${Version}" `
-        --impersonate-service-account $DeployerSa
 } "cloud run deploy (min-instances=1 for the benchmark window)"
 
 Write-Host "== effective configuration"
 $serviceOutput = @(& gcloud run services describe $Service `
     --project $ProjectId --region $Region `
-    --impersonate-service-account $DeployerSa `
     --format=json)
 if ($LASTEXITCODE -ne 0) {
     Write-Error "cannot describe deployed service (exit $LASTEXITCODE)"
@@ -155,7 +158,6 @@ if ([string]::IsNullOrWhiteSpace($url) -or [string]::IsNullOrWhiteSpace($revisio
 }
 $revisionOutput = @(& gcloud run revisions describe $revision `
     --project $ProjectId --region $Region `
-    --impersonate-service-account $DeployerSa `
     --format=json)
 if ($LASTEXITCODE -ne 0) {
     Write-Error "cannot describe deployed revision (exit $LASTEXITCODE)"

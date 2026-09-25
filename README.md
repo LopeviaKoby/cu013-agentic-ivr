@@ -114,7 +114,7 @@ Los gates deterministas (`pytest`, sin Gemini, Firestore ni credenciales) son la
 
 Infraestructura GCP confirmada:
 
-- proyecto `cu013-xcally-agentic`, región primaria `us-east1`;
+- proyecto `tivit-cu013-prd`, región primaria `us-east1`;
 - Firestore Native/Standard y Artifact Registry `cu013-containers-dev`;
 - service accounts de mínimo privilegio `cu013-spike-firestore` (spike), `cu013-runtime-dev` (runtime) y `cu013-deployer-dev` (despliegue);
 - APIs `aiplatform`, `artifactregistry`, `firestore`, `iam`, `iamcredentials`, `run` y `secretmanager`;
@@ -157,7 +157,7 @@ pwsh -NoProfile -File .\ops\gcp\verify-dev.ps1
 El bootstrap crea APIs, Firestore, Artifact Registry, service accounts e IAM; no crea Cloud Run, secretos, WIF ni Terraform. La autenticación local es ADC impersonation, nunca claves JSON:
 
 ```powershell
-gcloud auth application-default login --impersonate-service-account=cu013-runtime-dev@cu013-xcally-agentic.iam.gserviceaccount.com
+gcloud auth application-default login   # account pedro.lopez@tivit.com, no impersonation
 ```
 
 Detalle en el [runbook de bootstrap GCP DEV](docs/runbooks/gcp-dev-bootstrap.md).

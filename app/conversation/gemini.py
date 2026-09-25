@@ -112,7 +112,7 @@ class GeminiBaseline(BaseModel):
         thinking_level = os.environ.get("CU013_VERTEX_THINKING_LEVEL", ACTIVE_THINKING_LEVEL)
         strict_raw = os.environ.get("CU013_VERTEX_STRICT_PROC_OBS", "1")
         return cls(
-            project=os.environ.get("CU013_VERTEX_PROJECT", "cu013-xcally-agentic"),
+            project=os.environ.get("CU013_VERTEX_PROJECT", "tivit-cu013-prd"),
             location=os.environ.get("CU013_VERTEX_LOCATION", ACTIVE_MODEL_LOCATION),
             model=os.environ.get("CU013_VERTEX_MODEL", ACTIVE_CONVERSATION_MODEL),
             api_version=ACTIVE_API_VERSION,
@@ -124,7 +124,7 @@ class GeminiBaseline(BaseModel):
         )
 
 
-def active_conversation_baseline(*, project: str = "cu013-xcally-agentic") -> GeminiBaseline:
+def active_conversation_baseline(*, project: str = "tivit-cu013-prd") -> GeminiBaseline:
     """Explicit active conversational baseline (no hidden historic defaults)."""
     return GeminiBaseline(
         project=project,

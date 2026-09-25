@@ -7,11 +7,10 @@ numeric version only.
 #>
 [CmdletBinding()]
 param(
-    [string]$ProjectId = "cu013-xcally-agentic",
+    [string]$ProjectId = "tivit-cu013-prd",
     [string]$Region = "us-east1",
     [string]$Service = "cu013-runtime-dev",
-    [string]$RuntimeSa = "cu013-runtime-dev@cu013-xcally-agentic.iam.gserviceaccount.com",
-    [string]$DeployerSa = "cu013-deployer-dev@cu013-xcally-agentic.iam.gserviceaccount.com",
+    [string]$RuntimeSa = "cu013-cloud-run-sa@tivit-cu013-prd.iam.gserviceaccount.com",
     [string]$SecretName = "cu013-api-key-dev",
     [string]$ArtifactRepo = "cu013-containers-dev",
     [ValidateSet(0, 1)]
@@ -72,7 +71,6 @@ function Get-PublicServiceUrl {
 
 $serviceOutput = @(& gcloud run services describe $Service `
     --project $ProjectId --region $Region `
-    --impersonate-service-account $DeployerSa `
     --format=json)
 if ($LASTEXITCODE -ne 0) {
     Write-Error "cannot describe service (exit $LASTEXITCODE)"
@@ -140,7 +138,6 @@ else {
 
 $revisionOutput = @(& gcloud run revisions describe $revisionName `
     --project $ProjectId --region $Region `
-    --impersonate-service-account $DeployerSa `
     --format=json)
 if ($LASTEXITCODE -ne 0) {
     Write-Error "cannot describe revision (exit $LASTEXITCODE)"
@@ -160,7 +157,7 @@ if (-not [string]::IsNullOrWhiteSpace($ExpectedImageDigest)) {
 }
 
 Write-Host "---"
-Write-Host "model/location config: defaults baked in the image (project cu013-xcally-agentic,"
+Write-Host "model/location config: defaults baked in the image (project tivit-cu013-prd,"
 Write-Host "location us-east1, model gemini-2.5-flash-lite, thinking_budget=0)"
 Write-Host "revision: $revisionName"
 Write-Host "url: $serviceUrl"

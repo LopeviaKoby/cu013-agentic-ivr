@@ -104,7 +104,7 @@ Ante un crash a mitad del turno, el siguiente request reinicia desde la última 
 
 ```yaml
 gcp:
-  project_id: cu013-xcally-agentic
+  project_id: tivit-cu013-prd
   organization: ylopevia-org
   primary_region: us-east1
 ```

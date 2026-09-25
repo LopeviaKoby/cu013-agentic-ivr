@@ -3,7 +3,7 @@
 # Cloud runtime secrets must come from Secret Manager when they exist.
 
 gcp:
-  project_id: cu013-xcally-agentic
+  project_id: tivit-cu013-prd
   region: us-east1
 
 firestore:

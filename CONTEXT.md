@@ -24,12 +24,14 @@ El primer corte de acciones de cuenta es `RESET_PASSWORD` + `UNLOCK_ACCOUNT`, si
 - Firestore como único almacén durable aceptado.
 - Cloud Run como cómputo DEV desplegado (`min=0` en reposo; `min=1` sólo en ventanas autorizadas de benchmark o de validación DEV de voz controlada).
 - Docker, GitHub Actions, pytest, Ruff y MyPy.
-- Proyecto GCP: `cu013-xcally-agentic`.
+- Proyecto GCP vigente del entorno DEV: `tivit-cu013-prd` (runtime SA `cu013-cloud-run-sa@tivit-cu013-prd.iam.gserviceaccount.com`, sin impersonation). `cu013-xcally-agentic` queda como historia en experimentos y Git.
 - Región primaria: `us-east1`; ubicación del modelo: `global` (no confundir con infraestructura).
 
 ## Infraestructura actual
 
-Infraestructura GCP aprovisionada y confirmada por el propietario:
+El proyecto DEV vigente es `tivit-cu013-prd` (número 731118338507, organización 974679392812, `us-east1`), con Firestore `(default)` Native vacío, las APIs requeridas habilitadas y la runtime SA `cu013-cloud-run-sa@tivit-cu013-prd.iam.gserviceaccount.com`. El aprovisionamiento TIVIT (Artifact Registry, secreto, IAM y Cloud Run) está **preparado y no ejecutado**; los detalles siguientes describen el entorno anterior y se conservan como historia hasta que ese aprovisionamiento se autorice y ejecute.
+
+Infraestructura GCP aprovisionada y confirmada por el propietario (histórico, proyecto anterior):
 
 - APIs requeridas habilitadas;
 - Firestore `(default)`, Native/Standard, `us-east1`;
@@ -212,7 +214,7 @@ Pendiente:
 
 ## Control operativo previo al experimento
 
-El propietario confirmó desde el host real la cadena completa `ADC impersonation → google-auth refresh → Firestore read-only` con `cu013-spike-firestore` sobre el proyecto `cu013-xcally-agentic` y la base `(default)`. El control previo al experimento está aprobado.
+Histórico (proyecto anterior): el propietario confirmó desde el host real la cadena completa `ADC impersonation → google-auth refresh → Firestore read-only` con `cu013-spike-firestore` sobre el proyecto `cu013-xcally-agentic` y la base `(default)`. El control previo al experimento está aprobado. Para el entorno DEV vigente, ADC es la cuenta de usuario `pedro.lopez@tivit.com` sin impersonation y el acceso a Vertex en `tivit-cu013-prd` fue verificado read-only (count_tokens OK).
 
 El benchmark real de latencia del 16-09-2026 fue autorizado por el propietario y se ejecutó con ADC impersonando `cu013-runtime-dev`; las corridas locales y la corrida Cloud Run dejaron 97 documentos sintéticos bajo `cu013dev_sessions` que no fueron borrados. El despliegue y la ventana warm las ejecutó el propietario con el tooling versionado; el agente sólo hizo verificación y lecturas read-only. Nunca deshabilitar TLS ni la verificación de certificados para sortear el problema.
 

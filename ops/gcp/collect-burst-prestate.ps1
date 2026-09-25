@@ -5,7 +5,7 @@
 param(
   [string]$Service = "cu013-runtime-dev",
   [string]$Region = "us-east1",
-  [string]$Project = "cu013-xcally-agentic",
+    [string]$Project = "tivit-cu013-prd",
   [string]$OutDir = "evals/results"
 )
 

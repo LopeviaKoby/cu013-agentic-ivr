@@ -6,10 +6,9 @@ The service itself is kept deployed. Safe to run repeatedly.
 #>
 [CmdletBinding()]
 param(
-    [string]$ProjectId = "cu013-xcally-agentic",
+    [string]$ProjectId = "tivit-cu013-prd",
     [string]$Region = "us-east1",
-    [string]$Service = "cu013-runtime-dev",
-    [string]$DeployerSa = "cu013-deployer-dev@cu013-xcally-agentic.iam.gserviceaccount.com"
+    [string]$Service = "cu013-runtime-dev"
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,8 +16,7 @@ $ErrorActionPreference = "Stop"
 Write-Host "== cloud run min-instances=0"
 gcloud run services update $Service `
     --project $ProjectId --region $Region `
-    --min-instances 0 `
-    --impersonate-service-account $DeployerSa
+    --min-instances 0
 if ($LASTEXITCODE -ne 0) {
     Write-Error "update failed (exit $LASTEXITCODE)"
     exit 1
@@ -30,7 +28,6 @@ $verifier = Join-Path $PSScriptRoot "verify-dev-benchmark.ps1"
     -ProjectId $ProjectId `
     -Region $Region `
     -Service $Service `
-    -DeployerSa $DeployerSa `
     -ExpectedMinInstances 0
 if ($LASTEXITCODE -ne 0) {
     Write-Error "post-stop verification failed (exit $LASTEXITCODE)"
