@@ -44,6 +44,7 @@ from app.session.record import (
     ExternalOperation,
     IdentityState,
     OperationStatus,
+    PasswordPresentation,
     SessionRecord,
 )
 from app.session.state_projection import ModelStateProjection, project_model_state
@@ -108,6 +109,22 @@ class GoalProposal(BaseModel):
     action: Action | None = None
 
 
+class GoalFocus(StrEnum):
+    """How one turn relates to the supported goal, if any.
+
+    ``PROGRESS`` is the caller requesting, reiterating, correcting or
+    otherwise advancing the supported goal; ``SIDE`` is a lateral, off-topic
+    or explanatory turn that must preserve the goal without advancing it;
+    ``NONE`` means no supported goal is in play. The runtime uses this closed
+    signal to decide whether a pending unauthorized goal still needs identity
+    capture, so an off-topic turn never forces authorization by itself.
+    """
+
+    NONE = "NONE"
+    PROGRESS = "PROGRESS"
+    SIDE = "SIDE"
+
+
 class ConfirmationObservation(StrEnum):
     """How the model read the caller's answer to the active challenge."""
 
@@ -157,6 +174,7 @@ class ModelTurnDecision(BaseModel):
     message: str = Field(min_length=1)
     route: Route
     goal: GoalProposal | None = None
+    goal_focus: GoalFocus = GoalFocus.NONE
     confirmation_request: bool = False
     confirmation_observation: ConfirmationObservation = ConfirmationObservation.NONE
     procedure_observation: ProcedureObservation = Field(
@@ -291,6 +309,7 @@ class GraphState(TypedDict):
     confirmation: ConfirmationChallenge | None
     dispatch: AuthorizedDispatch | None
     external_operation: ExternalOperation | None
+    password_presentation: PasswordPresentation | None
     experimental_config: ExperimentalMemoryConfig | None
     experimental_procedure: ExperimentalProcedureState | None
     experimental_suspended: ExperimentalSuspendedProcedure | None
@@ -342,6 +361,7 @@ def initial_graph_state(
         confirmation=record.confirmation,
         dispatch=record.dispatch,
         external_operation=record.external_operation,
+        password_presentation=record.password_presentation,
         experimental_config=experimental,
         experimental_procedure=procedure,
         experimental_suspended=suspended,
@@ -390,6 +410,7 @@ async def run_model(
         confirmation=state["confirmation"],
         dispatch=state["dispatch"],
         operation=state["external_operation"],
+        presentation=state["password_presentation"],
         procedure=procedure,
         now=state["now"],
     )
@@ -412,9 +433,13 @@ def _apply_identity_outcome(
     *,
     now: datetime,
 ) -> IdentityState:
-    """Apply one boundary identity result; only caller mistakes count."""
+    """Apply one boundary identity result; only caller mistakes count.
+
+    A positive validation resolves the phase and clears the caller-failure
+    counter, so stale failures never carry over to a later fresh attempt.
+    """
     if outcome is IdentityOutcome.VALIDATED:
-        return IdentityState(validated_at=now, caller_failures=identity.caller_failures)
+        return IdentityState(validated_at=now, caller_failures=0)
     if outcome is IdentityOutcome.CALLER_FAILURE:
         return IdentityState(
             validated_at=identity.validated_at,
@@ -615,17 +640,25 @@ def _claim_is_backed(
     return operation is not None and operation.delivery is DeliveryStatus.CONFIRMED
 
 
-def _complete_is_backed(operation: ExternalOperation | None) -> bool:
-    """COMPLETE never proves a side effect and never closes unfinished business."""
+def _complete_is_backed(
+    operation: ExternalOperation | None,
+    presentation: PasswordPresentation | None,
+) -> bool:
+    """COMPLETE never proves a side effect and never closes unfinished business.
+
+    A confirmed reset still owes the caller the spoken password until the
+    presentation plane reports a returned or failed playback; the email
+    delivery fact is independent and never keeps the conversation open. Once
+    the presentation is known, or when the operation is not a confirmed reset,
+    the caller may close the conversation.
+    """
     if operation is None:
         return True
     if operation.is_active():
         return False
-    return not (
-        operation.action is Action.RESET_PASSWORD
-        and operation.status is OperationStatus.CONFIRMED
-        and operation.delivery is not DeliveryStatus.CONFIRMED
-    )
+    if operation.action is Action.RESET_PASSWORD and operation.status is OperationStatus.CONFIRMED:
+        return presentation is not None
+    return True
 
 
 def _handoff_cause_is_backed(
@@ -655,12 +688,16 @@ def _requires_identity_collection(
 ) -> bool:
     """A pending supported goal without authorization needs identity capture.
 
-    This is the runtime precedence over the residual ``CONTINUE`` proposal: the
-    model may answer the immediate conversational need, but XCALLY must receive
-    the capability the state requires. It never fires while an external
-    operation is active or when the identity is already valid.
+    This is the runtime precedence over the residual ``CONTINUE`` proposal, but
+    only when the closed semantic signal says the turn advances the supported
+    goal (``GoalFocus.PROGRESS``): the model may answer the immediate
+    conversational need, and an off-topic or lateral turn (``SIDE``) preserves
+    the goal and listens instead of forcing authorization. It never fires while
+    an external operation is active or when the identity is already valid.
     """
     if decision is None or decision.route is not Route.CONTINUE:
+        return False
+    if decision.goal_focus is not GoalFocus.PROGRESS:
         return False
     if goal is None or identity.is_valid_at(now):
         return False
@@ -692,6 +729,7 @@ def _guard_outcome(
     identity: IdentityState,
     dispatch: AuthorizedDispatch | None,
     operation: ExternalOperation | None,
+    presentation: PasswordPresentation | None,
     now: datetime,
     extra_violations: tuple[str, ...] = (),
 ) -> TurnOutcomeState | None:
@@ -708,7 +746,7 @@ def _guard_outcome(
         if decision.route is Route.ESCALATE and not identity.requires_handoff():
             if not _handoff_cause_is_backed(decision, identity=identity, operation=operation):
                 violations.append("ESCALATE without a permitted handoff cause")
-        if decision.route is Route.COMPLETE and not _complete_is_backed(operation):
+        if decision.route is Route.COMPLETE and not _complete_is_backed(operation, presentation):
             violations.append("COMPLETE asserted an unbacked business result")
     if identity.requires_handoff():
         return TurnOutcomeState(
@@ -799,7 +837,22 @@ def advance_turn(state: GraphState) -> TurnDelta:
                 operation=operation,
                 now=now,
             )
-    operation = _apply_external_event(operation, state["external_event"])
+    external_event = state["external_event"]
+    operation_was_active = operation is not None and operation.is_active()
+    operation = _apply_external_event(operation, external_event)
+    if (
+        operation_was_active
+        and operation is not None
+        and operation.status is OperationStatus.CONFIRMED
+        and external_event is not None
+        and external_event.kind in {ExternalEventKind.RESULT, ExternalEventKind.LATE_RESULT}
+    ):
+        # The boundary just confirmed the operation: it is resolved, so no goal
+        # remains to be re-dispatched. The history stays for grounding and a
+        # new need must propose a new goal. Only the terminal transition clears
+        # it; a confirmation observed on an already-terminal operation does not
+        # wipe a new goal proposed in the same turn.
+        goal = None
 
     experimental = state["experimental_config"]
     procedure = state["experimental_procedure"]
@@ -847,6 +900,7 @@ def advance_turn(state: GraphState) -> TurnDelta:
             identity=identity,
             dispatch=dispatch,
             operation=operation,
+            presentation=state["password_presentation"],
             now=now,
             extra_violations=extra_violations,
         )

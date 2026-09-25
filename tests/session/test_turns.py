@@ -82,6 +82,7 @@ def test_model_contract_cannot_express_runtime_authority() -> None:
         "message",
         "route",
         "goal",
+        "goal_focus",
         "confirmation_request",
         "confirmation_observation",
         "procedure_observation",

@@ -171,6 +171,7 @@ def response_schema_for(baseline: GeminiBaseline) -> Any:
         "route",
         "procedure_observation",
         "goal",
+        "goal_focus",
         "confirmation_request",
         "confirmation_observation",
         "handoff_cause",

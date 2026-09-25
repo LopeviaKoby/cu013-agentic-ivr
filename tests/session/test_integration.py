@@ -306,7 +306,7 @@ async def test_none_none_success_keeps_pending_until_the_terminal() -> None:
     assert second.operation_state is IntegrationOperationState.PENDING
 
     terminal = await service.handle_event("conversation-1", _status_event(status="SUCESSO"))
-    assert terminal.directive is IntegrationDirective.COMPLETE
+    assert terminal.directive is IntegrationDirective.RESUME_CONVERSATION
     assert terminal.operation_state is IntegrationOperationState.SUCCEEDED
     assert _stored(store).external_operation is not None
     assert _stored(store).external_operation.status is OperationStatus.CONFIRMED
@@ -378,11 +378,11 @@ async def test_duplicate_none_within_the_interval_is_idempotent() -> None:
     assert _stored(store).external_operation.status is OperationStatus.PENDING
 
 
-async def test_unlock_success_confirms_and_completes() -> None:
+async def test_unlock_success_confirms_and_resumes() -> None:
     store = InMemorySessionDocumentStore()
     _seed(store, _dispatched_record())
     outcome = await _service(store).handle_event("conversation-1", _status_event(status="SUCESSO"))
-    assert outcome.directive is IntegrationDirective.COMPLETE
+    assert outcome.directive is IntegrationDirective.RESUME_CONVERSATION
     assert outcome.message == UNLOCK_COMPLETED_MESSAGE
     assert outcome.operation_state is IntegrationOperationState.SUCCEEDED
     assert _stored(store).external_operation is not None
@@ -504,7 +504,7 @@ async def test_unknown_plus_late_success_reconciles() -> None:
         ),
     )
     outcome = await _service(store).handle_event("conversation-1", _status_event(status="SUCESSO"))
-    assert outcome.directive is IntegrationDirective.COMPLETE
+    assert outcome.directive is IntegrationDirective.RESUME_CONVERSATION
     assert outcome.operation_state is IntegrationOperationState.SUCCEEDED
 
 
@@ -522,7 +522,7 @@ async def test_duplicate_terminal_is_idempotent() -> None:
     )
     writes_before = store.writes
     outcome = await _service(store).handle_event("conversation-1", _status_event(status="SUCESSO"))
-    assert outcome.directive is IntegrationDirective.COMPLETE
+    assert outcome.directive is IntegrationDirective.RESUME_CONVERSATION
     assert outcome.operation_state is IntegrationOperationState.SUCCEEDED
     assert store.writes == writes_before
 
@@ -562,7 +562,7 @@ async def test_late_none_after_terminal_does_not_reopen() -> None:
     )
     writes_before = store.writes
     outcome = await _service(store).handle_event("conversation-1", _status_event(status="NONE"))
-    assert outcome.directive is IntegrationDirective.COMPLETE
+    assert outcome.directive is IntegrationDirective.RESUME_CONVERSATION
     assert outcome.message is None
     assert outcome.operation_state is IntegrationOperationState.SUCCEEDED
     assert store.writes == writes_before

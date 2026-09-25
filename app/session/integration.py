@@ -88,7 +88,7 @@ RESET_CONFIRMATION_MESSAGE = (
     "Gracias. Tu identidad quedó validada. ¿Confirmas que restablezcamos tu contraseña?"
 )
 
-UNLOCK_COMPLETED_MESSAGE = "El desbloqueo fue confirmado correctamente."
+UNLOCK_COMPLETED_MESSAGE = "El desbloqueo fue confirmado correctamente. ¿Necesitas algo más?"
 
 RESET_CONFIRMED_MESSAGE = (
     "El restablecimiento fue confirmado. La entrega de la contraseña todavía no está confirmada."
@@ -355,7 +355,7 @@ class PasswordPresentationResultEvent(BaseModel):
     operation_id: str = Field(min_length=1)
     action: Literal[Action.RESET_PASSWORD]
     goal_revision: int = Field(strict=True, ge=0)
-    voice: Literal[PlaybackVoice.PLAYBACK_RETURNED]
+    voice: PlaybackVoice
     email_requested: int = Field(strict=True, ge=0, le=1)
     email_acceptance: Literal[EmailAcceptance.UNKNOWN]
     email_delivery: Literal[EmailDelivery.UNKNOWN]
@@ -566,7 +566,8 @@ class IntegrationEventService:
         """Apply one identity outcome; a technical failure consumes nothing."""
         identity = record.identity
         if event.outcome is IdentityValidationOutcome.VALID:
-            validated = IdentityState(validated_at=now, caller_failures=identity.caller_failures)
+            # A positive validation resolves the phase and clears the counter.
+            validated = IdentityState(validated_at=now, caller_failures=0)
             # A new validation invalidates any challenge bound to an older one
             # and, when a supported goal is pending, opens the next one bound
             # to the action, revision and identity now in force.
@@ -812,7 +813,11 @@ class IntegrationEventService:
             if operation.status in {OperationStatus.PENDING, OperationStatus.UNKNOWN}:
                 updated = operation.model_copy(update={"status": OperationStatus.CONFIRMED})
                 updated_record = record.model_copy(
-                    update={"external_operation": updated, "updated_at": now}
+                    update={
+                        "external_operation": updated,
+                        "goal": None,
+                        "updated_at": now,
+                    }
                 )
                 return (
                     updated_record,
@@ -951,7 +956,11 @@ class IntegrationEventService:
             if operation.status in {OperationStatus.PENDING, OperationStatus.UNKNOWN}:
                 updated = operation.model_copy(update={"status": OperationStatus.CONFIRMED})
                 updated_record = record.model_copy(
-                    update={"external_operation": updated, "updated_at": now}
+                    update={
+                        "external_operation": updated,
+                        "goal": None,
+                        "updated_at": now,
+                    }
                 )
                 return (
                     updated_record,
@@ -1244,11 +1253,16 @@ class IntegrationEventService:
         return OPERATION_FAILED_MESSAGE
 
     def _terminal_next_step(self, record: SessionRecord, operation: ExternalOperation) -> NextStep:
-        """Terminal projection: unlock completes, a reset needs presentation."""
+        """Terminal projection: an operation never closes the conversation.
+
+        A confirmed reset still owes the caller the spoken password, so it
+        asks for presentation until the presentation plane reports either a
+        returned or a failed playback. Every other terminal (unlock, failure,
+        reset already presented) resumes the conversation with ``LISTEN``:
+        the operation is complete, the conversation is not.
+        """
         if operation.status is OperationStatus.CONFIRMED:
-            if operation.action is Action.UNLOCK_ACCOUNT:
-                return NextStep.COMPLETE
-            if record.password_presentation is None:
+            if operation.action is Action.RESET_PASSWORD and record.password_presentation is None:
                 return NextStep.DELIVER_PASSWORD
             return NextStep.LISTEN
         return NextStep.LISTEN
@@ -1257,19 +1271,11 @@ class IntegrationEventService:
         self, record: SessionRecord, operation: ExternalOperation, *, speak: bool
     ) -> IntegrationOutcome:
         """Terminal directive; ``speak`` is False for already-delivered results."""
-        state = project_operation_state(operation)
-        if operation.status is OperationStatus.CONFIRMED:
-            if operation.action is Action.UNLOCK_ACCOUNT:
-                directive = IntegrationDirective.COMPLETE
-            else:
-                directive = IntegrationDirective.RESUME_CONVERSATION
-        else:
-            directive = IntegrationDirective.RESUME_CONVERSATION
         return IntegrationOutcome(
-            directive=directive,
+            directive=IntegrationDirective.RESUME_CONVERSATION,
             next_step=self._terminal_next_step(record, operation),
             message=self._terminal_message(operation) if speak else None,
-            operation_state=state,
+            operation_state=project_operation_state(operation),
         )
 
 

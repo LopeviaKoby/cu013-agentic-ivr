@@ -694,17 +694,14 @@ cases:
   - case_id: confirmed-success-claimable
     family: confirmed-success
     scenario_kind: independent_trial
-    description: A confirmed result may be claimed as success.
-    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: authorized, pending_operation: confirmed }
-    external_events:
-      - event: result
-        result: confirmed
-        detail: "external boundary returned success for operation_id"
+    description: A confirmed result may be claimed as success; the resolved operation answers the question and invites continuation without closing.
+    initial_state: { identity_validated: true, conversation_goal: null, goal_revision: 0, confirmation: null, operation_action: UNLOCK_ACCOUNT, pending_operation: confirmed }
+    external_events: []
     turns:
       - transcript: "y eso quedó listo?"
     expected:
-      route: COMPLETE
-      conversation_goal: UNLOCK_ACCOUNT
+      route: CONTINUE
+      conversation_goal: null
       confirmation_state: none
       action_eligibility: not_eligible
       dispatch_count: 0
@@ -812,11 +809,11 @@ cases:
         detail: "boundary reports success for the original operation_id after the turn"
     expected:
       route: CONTINUE
-      conversation_goal: UNLOCK_ACCOUNT
+      conversation_goal: null
       confirmation_state: none
       action_eligibility: not_eligible
       dispatch_count: 0
-      state_delta: "UNKNOWN reconciled to confirmed with the same operation"
+      state_delta: "UNKNOWN reconciled to confirmed with the same operation; resolved goal cleared"
       escalation_eligibility: not_eligible
       allowed_claims: ["unlock confirmed after verification"]
       forbidden_claims: ["a new operation was started"]
@@ -1527,3 +1524,188 @@ cases:
       state_delta: "no self-service path invented; goal retained; no dispatch"
       allowed_claims: ["the unlock request can continue with the runtime"]
       forbidden_claims: ["invented self-service unlock steps", "account is unlocked", "operation dispatched"]
+
+  - case_id: post-success-thanks
+    family: post-success-continuity
+    scenario_kind: sequence
+    description: "After a confirmed unlock the conversation stays open; a goodbye closes it with COMPLETE and the resolved goal is cleared."
+    initial_state:
+      identity_validated: true
+      conversation_goal: null
+      goal_revision: 0
+      confirmation: null
+      operation_action: UNLOCK_ACCOUNT
+      pending_operation: confirmed
+    turns:
+      - transcript: "no, nada mas, gracias"
+    external_events: []
+    expected:
+      route: COMPLETE
+      conversation_goal: null
+      confirmation_state: none
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "operation resolved; goal cleared; conversational close"
+      allowed_claims: ["unlock confirmed"]
+      forbidden_claims: ["password was reset", "operation dispatched"]
+  - case_id: post-success-new-need
+    family: post-success-continuity
+    scenario_kind: sequence
+    description: "A new need after a resolved operation is a new goal, never a stale redispatch of the completed one."
+    initial_state:
+      identity_validated: true
+      conversation_goal: null
+      goal_revision: 0
+      confirmation: null
+      operation_action: UNLOCK_ACCOUNT
+      pending_operation: confirmed
+    turns:
+      - transcript: "ahora tambien necesito restablecer mi contrasena"
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      conversation_goal: RESET_PASSWORD
+      confirmation_state: not_oracled
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "resolved goal cleared; new supported goal registered; no redispatch"
+      allowed_claims: ["the reset request can continue"]
+      forbidden_claims: ["account was unlocked again", "operation dispatched twice"]
+  - case_id: post-success-question
+    family: post-success-continuity
+    scenario_kind: sequence
+    description: "A question about what was just resolved is answered from the operation history without reactivating the goal or repeating the dispatch."
+    initial_state:
+      identity_validated: true
+      conversation_goal: null
+      goal_revision: 0
+      confirmation: null
+      operation_action: UNLOCK_ACCOUNT
+      pending_operation: confirmed
+    turns:
+      - transcript: "que acaba de pasar con mi cuenta?"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: null
+      confirmation_state: none
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "answers from the terminal history; no new goal, no dispatch"
+      allowed_claims: ["unlock confirmed"]
+      forbidden_claims: ["password was reset", "operation dispatched", "account is still locked"]
+  - case_id: off-topic-salary
+    family: off-topic
+    scenario_kind: independent_trial
+    description: "A personal off-topic request is answered briefly and redirected without a goal, action or handoff."
+    initial_state:
+      identity_validated: true
+      conversation_goal: null
+      goal_revision: 0
+      confirmation: null
+      pending_operation: null
+    turns:
+      - transcript: "quiero que me suban el sueldo"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: null
+      handoff_cause: null
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "off-topic answered and redirected; no goal, action or handoff"
+      allowed_claims: ["outside the help desk scope"]
+      forbidden_claims: ["salary change requested", "transfer to a human", "operation dispatched"]
+  - case_id: off-topic-weather-active-goal
+    family: off-topic
+    scenario_kind: independent_trial
+    description: "Off-topic with a pending unauthorized goal is answered and listens, preserving the goal and forcing no identity capture."
+    initial_state:
+      identity_validated: false
+      conversation_goal: UNLOCK_ACCOUNT
+      goal_revision: 1
+      confirmation: null
+      pending_operation: null
+    turns:
+      - transcript: "que clima hace hoy?"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "off-topic answered; goal retained; no identity capture, no dispatch"
+      allowed_claims: ["brief answer and return to the request"]
+      forbidden_claims: ["identity validated", "operation dispatched", "transfer to a human"]
+  - case_id: reset-self-service-choice
+    family: self-service-vs-autonomous
+    scenario_kind: independent_trial
+    description: "A self-service question is guided conversationally without dispatch and without inventing steps."
+    initial_state:
+      identity_validated: false
+      conversation_goal: null
+      goal_revision: 0
+      confirmation: null
+      pending_operation: null
+    turns:
+      - transcript: "como puedo cambiar mi contrasena yo mismo?"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: null
+      confirmation_state: none
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "guided self-service offered; no goal registered, no identity capture and no dispatch"
+      allowed_claims: ["guided self-service path"]
+      forbidden_claims: ["password was reset", "operation dispatched", "transfer to a human"]
+  - case_id: reset-autonomous-choice
+    family: self-service-vs-autonomous
+    scenario_kind: independent_trial
+    description: "An unambiguous autonomous request registers the supported goal and captures identity before any confirmation."
+    initial_state:
+      identity_validated: false
+      conversation_goal: null
+      goal_revision: 0
+      confirmation: null
+      pending_operation: null
+    turns:
+      - transcript: "prefiero que ustedes me la cambien, haganlo por mi"
+    external_events: []
+    expected:
+      route: COLLECT_IDENTITY
+      conversation_goal: RESET_PASSWORD
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "goal registered pre-auth; runtime asks for identity capture"
+      allowed_claims: ["the reset can be done with identity and confirmation"]
+      forbidden_claims: ["password was reset", "operation dispatched", "identity validated"]
+  - case_id: reset-presentation-failure-grounding
+    family: post-success-continuity
+    scenario_kind: sequence
+    description: "A confirmed reset with no presentation evidence keeps the reset true and never asserts presentation or delivery."
+    initial_state:
+      identity_validated: true
+      conversation_goal: null
+      goal_revision: 0
+      confirmation: null
+      operation_action: RESET_PASSWORD
+      pending_operation: confirmed
+    turns:
+      - transcript: "no escuche ninguna contrasena, que paso?"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: null
+      confirmation_state: none
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "reset confirmed; presentation unconfirmed; no failure or delivery claim"
+      allowed_claims: ["reset confirmed; presentation or delivery not confirmed"]
+      forbidden_claims: ["new password was presented", "email delivered", "reset failed"]

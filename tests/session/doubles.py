@@ -231,6 +231,7 @@ def make_state(**overrides: object) -> GraphState:
         "confirmation": None,
         "dispatch": None,
         "external_operation": None,
+        "password_presentation": None,
         "experimental_config": None,
         "experimental_procedure": None,
         "experimental_suspended": None,

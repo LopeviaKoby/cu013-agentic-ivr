@@ -191,14 +191,16 @@ async def test_prior_request_turn_keeps_the_goal_and_requires_identity(
 ) -> None:
     """The pre-auth goal is durable and the runtime asks for the capability.
 
-    The owner precedence over the residual CONTINUE proposal: the model message
-    still answers the immediate need, but XCALLY receives COLLECT_IDENTITY
-    because the pending goal has no authorization yet.
+    The closed GOAL_PROGRESS signal overrides the residual CONTINUE proposal:
+    the model message still answers the immediate need, but XCALLY receives
+    COLLECT_IDENTITY because the turn advances the pending goal and it has no
+    authorization yet.
     """
     model.decision = make_decision(
         message="Puedo restablecer contraseñas y desbloquear cuentas. ¿Seguimos?",
         route=Route.CONTINUE,
         goal={"intent": "REQUEST", "action": "UNLOCK_ACCOUNT"},
+        goal_focus="PROGRESS",
     )
     response = await client.post(
         turns_url("conversation-1"), json={"transcript": PRIOR_REQUEST_TRANSCRIPT}
@@ -240,10 +242,12 @@ async def test_every_legal_route_reaches_the_response(client, model) -> None:
     )
     assert first.json()["route"] == "COLLECT_IDENTITY"
 
-    # With a pending pre-auth goal, the residual CONTINUE proposal is projected
-    # onto COLLECT_IDENTITY; the terminal and handoff routes keep their guards.
+    # With a pending pre-auth goal, a turn that advances the goal (PROGRESS) is
+    # projected onto COLLECT_IDENTITY while a side/off-topic turn keeps LISTEN;
+    # the terminal and handoff routes keep their guards.
     for decision, expected_route in (
-        (make_decision(route=Route.CONTINUE), "COLLECT_IDENTITY"),
+        (make_decision(route=Route.CONTINUE, goal_focus="PROGRESS"), "COLLECT_IDENTITY"),
+        (make_decision(route=Route.CONTINUE, goal_focus="SIDE"), "CONTINUE"),
         (make_decision(route=Route.ESCALATE, handoff_cause="CALLER_REQUEST"), "ESCALATE"),
         (make_decision(route=Route.COMPLETE), "COMPLETE"),
     ):

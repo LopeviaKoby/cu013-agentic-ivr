@@ -129,9 +129,16 @@ class PollingState(BaseModel):
 
 
 class PlaybackVoice(StrEnum):
-    """How the password playback ended, as reported by XCALLY."""
+    """How the password playback ended, as reported by XCALLY.
+
+    ``PLAYBACK_RETURNED`` means the playback was returned to the boundary;
+    ``PRESENTATION_FAILED_BEFORE_PLAYBACK`` means the presentation did not
+    reach playback. Both are facts about the voice presentation only and
+    never change the reset result or any email fact.
+    """
 
     PLAYBACK_RETURNED = "PLAYBACK_RETURNED"
+    PRESENTATION_FAILED_BEFORE_PLAYBACK = "PRESENTATION_FAILED_BEFORE_PLAYBACK"
 
 
 class EmailAcceptance(StrEnum):

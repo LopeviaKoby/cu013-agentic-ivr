@@ -498,6 +498,7 @@ def test_decision_contract_shape_unchanged() -> None:
         "message",
         "route",
         "goal",
+        "goal_focus",
         "confirmation_request",
         "confirmation_observation",
         "procedure_observation",

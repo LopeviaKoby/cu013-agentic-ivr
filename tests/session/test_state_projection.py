@@ -25,6 +25,8 @@ from app.session.record import (
     ExternalOperation,
     IdentityState,
     OperationStatus,
+    PasswordPresentation,
+    PlaybackVoice,
 )
 from app.session.state_projection import (
     IdentityStatus,
@@ -51,6 +53,7 @@ ALLOWED_KEYS = {
     "external_success_claim_allowed",
     "external_operation_status",
     "external_delivery_status",
+    "external_presentation_status",
     "procedure_id",
     "procedure_current",
 }
@@ -63,6 +66,7 @@ def empty_projection():  # type: ignore[no-untyped-def]
         confirmation=None,
         dispatch=None,
         operation=None,
+        presentation=None,
         procedure=None,
         now=NOW,
     )
@@ -75,6 +79,7 @@ def active_reset_projection(identity: IdentityState):  # type: ignore[no-untyped
         confirmation=None,
         dispatch=None,
         operation=None,
+        presentation=None,
         procedure=None,
         now=NOW,
     )
@@ -126,6 +131,7 @@ def test_execution_confirmation_requires_identity_and_a_clean_window() -> None:
         confirmation=make_challenge(Action.RESET_PASSWORD, revision=2),
         dispatch=None,
         operation=None,
+        presentation=None,
         procedure=None,
         now=NOW,
     )
@@ -141,36 +147,121 @@ def test_execution_confirmation_requires_identity_and_a_clean_window() -> None:
             action=Action.RESET_PASSWORD,
             status=OperationStatus.PENDING,
         ),
+        presentation=None,
         procedure=None,
         now=NOW,
     )
     assert with_operation.execution_confirmation_allowed is False
 
 
-def test_external_permissions_follow_dispatch_and_operation_truth() -> None:
+def test_a_live_dispatch_authorizes_and_a_terminal_one_is_consumed() -> None:
+    dispatch = AuthorizedDispatch(
+        operation_id="operation-1",
+        action=Action.RESET_PASSWORD,
+        goal_revision=1,
+        challenge_id="challenge-1",
+        authorized_at=NOW,
+    )
+    goal = make_goal(Action.RESET_PASSWORD, revision=1)
+    pending = project_model_state(
+        goal=goal,
+        identity=make_identity(NOW),
+        confirmation=None,
+        dispatch=dispatch,
+        operation=ExternalOperation(
+            operation_id="operation-1",
+            action=Action.RESET_PASSWORD,
+            status=OperationStatus.PENDING,
+        ),
+        presentation=None,
+        procedure=None,
+        now=NOW,
+    )
+    assert pending.external_action_allowed is True
+    assert pending.execution_confirmation_allowed is False
+
+    confirmed = project_model_state(
+        goal=goal,
+        identity=make_identity(NOW),
+        confirmation=None,
+        dispatch=dispatch,
+        operation=ExternalOperation(
+            operation_id="operation-1",
+            action=Action.RESET_PASSWORD,
+            status=OperationStatus.CONFIRMED,
+        ),
+        presentation=None,
+        procedure=None,
+        now=NOW,
+    )
+    # The terminal operation keeps the guard only as correlation metadata:
+    # its execution authorization is consumed and never reused.
+    assert confirmed.external_action_allowed is False
+    assert confirmed.execution_confirmation_allowed is True
+    assert confirmed.external_success_claim_allowed is True
+    assert confirmed.external_operation_status == "confirmed"
+
+
+def test_presentation_status_is_separate_from_reset_truth() -> None:
+    goal = make_goal(Action.RESET_PASSWORD, revision=1)
     operation = ExternalOperation(
         operation_id="operation-1",
         action=Action.RESET_PASSWORD,
         status=OperationStatus.CONFIRMED,
     )
-    projection = project_model_state(
-        goal=make_goal(Action.RESET_PASSWORD, revision=1),
+    assert empty_projection().external_presentation_status == "not_applicable"
+    owed = project_model_state(
+        goal=goal,
         identity=make_identity(NOW),
         confirmation=None,
-        dispatch=AuthorizedDispatch(
-            operation_id="operation-1",
-            action=Action.RESET_PASSWORD,
-            goal_revision=1,
-            challenge_id="challenge-1",
-            authorized_at=NOW,
-        ),
+        dispatch=None,
         operation=operation,
+        presentation=None,
         procedure=None,
         now=NOW,
     )
-    assert projection.external_action_allowed is True
-    assert projection.external_success_claim_allowed is True
-    assert projection.external_operation_status == "confirmed"
+    assert owed.external_presentation_status == "pending"
+    returned = project_model_state(
+        goal=goal,
+        identity=make_identity(NOW),
+        confirmation=None,
+        dispatch=None,
+        operation=operation,
+        presentation=PasswordPresentation(
+            operation_id="operation-1",
+            action=Action.RESET_PASSWORD,
+            goal_revision=1,
+            voice=PlaybackVoice.PLAYBACK_RETURNED,
+            email_requested=1,
+            email_acceptance="UNKNOWN",
+            email_delivery="UNKNOWN",
+            presented_at=NOW,
+        ),
+        procedure=None,
+        now=NOW,
+    )
+    assert returned.external_presentation_status == "returned"
+    failed = project_model_state(
+        goal=goal,
+        identity=make_identity(NOW),
+        confirmation=None,
+        dispatch=None,
+        operation=operation,
+        presentation=PasswordPresentation(
+            operation_id="operation-1",
+            action=Action.RESET_PASSWORD,
+            goal_revision=1,
+            voice=PlaybackVoice.PRESENTATION_FAILED_BEFORE_PLAYBACK,
+            email_requested=0,
+            email_acceptance="UNKNOWN",
+            email_delivery="UNKNOWN",
+            presented_at=NOW,
+        ),
+        procedure=None,
+        now=NOW,
+    )
+    assert failed.external_presentation_status == "failed_before_playback"
+    assert failed.external_operation_status == "confirmed"
 
 
 def test_projection_reflects_the_durable_procedure_step() -> None:
@@ -186,6 +277,7 @@ def test_projection_reflects_the_durable_procedure_step() -> None:
         confirmation=None,
         dispatch=None,
         operation=None,
+        presentation=None,
         procedure=procedure,
         now=NOW,
     )
@@ -242,6 +334,7 @@ def test_cancel_clears_instance_state_and_allows_a_fresh_request() -> None:
         confirmation=cancelled["confirmation"],
         dispatch=cancelled["dispatch"],
         operation=cancelled["external_operation"],
+        presentation=None,
         procedure=cancelled["experimental_procedure"],
         now=NOW,
     )

@@ -22,12 +22,15 @@ from pydantic import BaseModel, ConfigDict
 
 from app.session.memory import ExperimentalProcedureState
 from app.session.record import (
+    Action,
     AuthorizedDispatch,
     ConfirmationChallenge,
     ConversationGoal,
     ExternalOperation,
     IdentityState,
     OperationStatus,
+    PasswordPresentation,
+    PlaybackVoice,
 )
 
 __all__ = [
@@ -40,6 +43,12 @@ __all__ = [
 
 ExternalOperationStatus = Literal["none", "pending", "unknown", "confirmed", "failed"]
 DeliveryStatusLiteral = Literal["none", "pending", "confirmed", "failed"]
+PresentationStatusLiteral = Literal[
+    "not_applicable",
+    "pending",
+    "returned",
+    "failed_before_playback",
+]
 
 
 class IdentityStatus(StrEnum):
@@ -69,6 +78,7 @@ class ModelStateProjection(BaseModel):
     external_success_claim_allowed: bool
     external_operation_status: ExternalOperationStatus
     external_delivery_status: DeliveryStatusLiteral
+    external_presentation_status: PresentationStatusLiteral
     procedure_id: str | None
     procedure_current: str | None
 
@@ -88,6 +98,39 @@ def _operation_is_active(operation: ExternalOperation | None) -> bool:
     return operation is not None and operation.is_active()
 
 
+def _dispatch_is_live(
+    dispatch: AuthorizedDispatch | None,
+    operation: ExternalOperation | None,
+) -> bool:
+    """True while the dispatch still authorizes an execution.
+
+    Once the operation it authorized reached a terminal result the durable
+    guard is kept only as correlation metadata (password presentation and late
+    results), never as a reusable execution authorization.
+    """
+    if dispatch is None:
+        return False
+    return operation is None or operation.is_active()
+
+
+def _presentation_status(
+    operation: ExternalOperation | None,
+    presentation: PasswordPresentation | None,
+) -> PresentationStatusLiteral:
+    """Voice-presentation truth of a confirmed reset, independent of delivery."""
+    if (
+        operation is None
+        or operation.action is not Action.RESET_PASSWORD
+        or operation.status is not OperationStatus.CONFIRMED
+    ):
+        return "not_applicable"
+    if presentation is None:
+        return "pending"
+    if presentation.voice is PlaybackVoice.PLAYBACK_RETURNED:
+        return "returned"
+    return "failed_before_playback"
+
+
 def project_model_state(
     *,
     goal: ConversationGoal | None,
@@ -95,6 +138,7 @@ def project_model_state(
     confirmation: ConfirmationChallenge | None,
     dispatch: AuthorizedDispatch | None,
     operation: ExternalOperation | None,
+    presentation: PasswordPresentation | None,
     procedure: ExperimentalProcedureState | None,
     now: datetime,
 ) -> ModelStateProjection:
@@ -105,7 +149,7 @@ def project_model_state(
         and identity_valid
         and not identity.requires_handoff()
         and confirmation is None
-        and dispatch is None
+        and not _dispatch_is_live(dispatch, operation)
         and not _operation_is_active(operation)
     )
     return ModelStateProjection(
@@ -114,7 +158,7 @@ def project_model_state(
         identity_status=identity_status_for(identity, now),
         confirmation_pending=confirmation is not None,
         execution_confirmation_allowed=confirmation_allowed,
-        external_action_allowed=dispatch is not None,
+        external_action_allowed=_dispatch_is_live(dispatch, operation),
         external_success_claim_allowed=(
             operation is not None and operation.status is OperationStatus.CONFIRMED
         ),
@@ -124,6 +168,7 @@ def project_model_state(
             if operation is not None and operation.delivery is not None
             else "none"
         ),
+        external_presentation_status=_presentation_status(operation, presentation),
         procedure_id=procedure.procedure_id if procedure is not None else None,
         procedure_current=procedure.current_step if procedure is not None else None,
     )
@@ -166,6 +211,7 @@ def projection_from_turn_inputs(
             if external_operation is not None and external_operation.delivery is not None
             else "none"
         ),
+        external_presentation_status="not_applicable",
         procedure_id=None,
         procedure_current=procedure_current,
     )

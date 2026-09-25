@@ -296,7 +296,7 @@ async def test_terminal_after_budget_exhaustion_still_reconciles() -> None:
     for sequence in range(1, 10):
         await service.handle_event("conversation-1", _status(sequence))
     terminal = await service.handle_event("conversation-1", _status(10, status="SUCESSO"))
-    assert terminal.next_step is NextStep.COMPLETE
+    assert terminal.next_step is NextStep.LISTEN
     assert terminal.message == UNLOCK_COMPLETED_MESSAGE
     assert terminal.operation_state is IntegrationOperationState.SUCCEEDED
     assert _stored(store).external_operation is not None
@@ -332,11 +332,21 @@ async def test_reset_success_requests_password_presentation() -> None:
     assert outcome.operation_state is IntegrationOperationState.SUCCEEDED
 
 
-async def test_unlock_success_completes_instead_of_presenting() -> None:
+async def test_unlock_success_keeps_the_conversation_open_and_resolves_the_goal() -> None:
     store = InMemorySessionDocumentStore()
     _seed_dispatched(store)
     outcome = await _service(store).handle_event("conversation-1", _status(1, status="SUCESSO"))
-    assert outcome.next_step is NextStep.COMPLETE
+    assert outcome.next_step is NextStep.LISTEN
+    assert outcome.message == UNLOCK_COMPLETED_MESSAGE
+    assert outcome.operation_state is IntegrationOperationState.SUCCEEDED
+    stored = _stored(store)
+    # The operation is complete, the conversation is not: the goal is resolved
+    # so nothing can be re-dispatched, while the history stays for grounding.
+    assert stored.goal is None
+    assert stored.confirmation is None
+    assert stored.external_operation is not None
+    assert stored.external_operation.status is OperationStatus.CONFIRMED
+    assert stored.external_operation.is_active() is False
 
 
 async def test_presentation_persists_facts_and_a_duplicate_acks() -> None:
@@ -363,6 +373,47 @@ async def test_presentation_persists_facts_and_a_duplicate_acks() -> None:
     assert duplicate.next_step is NextStep.LISTEN
     assert store.writes == writes_before
     assert _stored(store).password_presentation == stored.password_presentation
+
+
+async def test_presentation_failure_keeps_the_reset_confirmed_and_listens() -> None:
+    store = InMemorySessionDocumentStore()
+    _seed_dispatched(store, action=Action.RESET_PASSWORD)
+    service = _service(store)
+    terminal = await service.handle_event(
+        "conversation-1", _status(1, action="RESET_PASSWORD", status="SUCESSO")
+    )
+    assert terminal.next_step is NextStep.DELIVER_PASSWORD
+
+    failed = await service.handle_event(
+        "conversation-1",
+        _presentation(voice="PRESENTATION_FAILED_BEFORE_PLAYBACK", email_requested=0),
+    )
+    # A presentation that never reached playback is its own fact: the reset
+    # stays confirmed, nothing is re-dispatched and the conversation continues.
+    assert failed.next_step is NextStep.LISTEN
+    assert failed.operation_state is IntegrationOperationState.SUCCEEDED
+    stored = _stored(store)
+    assert stored.external_operation is not None
+    assert stored.external_operation.status is OperationStatus.CONFIRMED
+    assert stored.password_presentation is not None
+    assert stored.password_presentation.voice.value == "PRESENTATION_FAILED_BEFORE_PLAYBACK"
+    assert stored.password_presentation.email_delivery.value == "UNKNOWN"
+
+
+async def test_reset_presentation_success_resolves_the_goal_and_listens() -> None:
+    store = InMemorySessionDocumentStore()
+    _seed_dispatched(store, action=Action.RESET_PASSWORD)
+    service = _service(store)
+    await service.handle_event(
+        "conversation-1", _status(1, action="RESET_PASSWORD", status="SUCESSO")
+    )
+    presented = await service.handle_event("conversation-1", _presentation())
+    assert presented.next_step is NextStep.LISTEN
+    assert presented.operation_state is IntegrationOperationState.SUCCEEDED
+    stored = _stored(store)
+    assert stored.goal is None
+    assert stored.external_operation is not None
+    assert stored.external_operation.status is OperationStatus.CONFIRMED
 
 
 async def test_incompatible_presentation_is_rejected() -> None:

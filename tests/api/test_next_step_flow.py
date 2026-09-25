@@ -179,7 +179,7 @@ async def test_v1_polling_uses_the_composer_only_when_due(client, store, clock, 
         headers=NEXT_STEP_HEADERS,
     )
     assert terminal.status_code == 200
-    assert terminal.json()["next_step"] == "COMPLETE"
+    assert terminal.json()["next_step"] == "LISTEN"
     assert terminal.json()["operation_state"] == "SUCCEEDED"
     assert len(composer.calls) == 1
 

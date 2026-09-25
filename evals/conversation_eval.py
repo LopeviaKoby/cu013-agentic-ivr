@@ -226,10 +226,11 @@ def build_initial_record(case: dict[str, Any], now: datetime) -> SessionRecord:
             issued_at=now,
         )
     operation = None
-    if state.get("pending_operation") and goal is not None:
+    operation_action = state.get("operation_action")
+    if state.get("pending_operation") and (goal is not None or operation_action):
         operation = ExternalOperation(
             operation_id=OPERATION_ID,
-            action=goal.action,
+            action=goal.action if goal is not None else Action(operation_action),
             status=OperationStatus(state["pending_operation"]),
         )
     dispatch = None
@@ -1319,6 +1320,7 @@ async def token_composition_breakdown(
         confirmation=None,
         dispatch=None,
         operation=None,
+        presentation=None,
         procedure=None,
         now=now,
     )
@@ -1328,6 +1330,7 @@ async def token_composition_breakdown(
         confirmation=challenge,
         dispatch=None,
         operation=operation,
+        presentation=None,
         procedure=None,
         now=now,
     )
