@@ -160,7 +160,7 @@ Invoke-Checked {
         --cpu-throttling --no-cpu-boost `
         --allow-unauthenticated `
         --update-secrets "CU013_API_KEY=${SecretName}:${Version},${ProtocolMountBase}-reset/protocols=${ResetProtocolSecret}:${ResetVersion},${ProtocolMountBase}-unlock/protocols=${UnlockProtocolSecret}:${UnlockVersion}" `
-        --update-env-vars "CU013_VERTEX_PROJECT=$ProjectId,CU013_PROTOCOL_RESET_FILE=${ProtocolMountBase}-reset/protocols/${ResetProtocolSecret},CU013_PROTOCOL_UNLOCK_FILE=${ProtocolMountBase}-unlock/protocols/${UnlockProtocolSecret}" `
+        --update-env-vars "CU013_VERTEX_PROJECT=$ProjectId,CU013_PROTOCOL_RESET_FILE=${ProtocolMountBase}-reset/protocols,CU013_PROTOCOL_UNLOCK_FILE=${ProtocolMountBase}-unlock/protocols" `
 } "cloud run deploy (min-instances=$MinInstances)"
 
 Write-Host "== effective configuration"
