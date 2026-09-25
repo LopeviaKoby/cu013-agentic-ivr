@@ -50,6 +50,9 @@ GUIDED_STEPS_BY_ACTION: Final[tuple[tuple[Action, tuple[str, ...]], ...]] = (
 )
 # Ablation variants for the static decision examples: F4 is the full set, F0
 # removes the module entirely. The winner is selected by the evaluation.
+# ``few_shot_min.md`` is the evidence-based minimum: the cancellation example
+# was dropped because the re-request property holds without examples.
+FEW_SHOT_MINIMAL_NAME: Final = "few_shot_min.md"
 FEW_SHOT_TEMPLATES: Final[dict[str, str | None]] = {
     "f4": FEW_SHOT_MODULE_NAME,
     "f2": "few_shot_f2.md",
@@ -159,7 +162,7 @@ def protocol_directory(protocol_dir: Path | None = None) -> Path:
 def load_prompt_bundle(
     *,
     protocol_dir: Path | None = None,
-    few_shot_name: str | None = FEW_SHOT_MODULE_NAME,
+    few_shot_name: str | None = FEW_SHOT_MINIMAL_NAME,
     few_shot_drop: int | None = None,
 ) -> PromptBundle:
     """Build the immutable prompt bundle once; any missing piece fails closed.
