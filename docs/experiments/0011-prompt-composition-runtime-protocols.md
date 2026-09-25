@@ -878,3 +878,55 @@ cubiertos por golden/synthetic/held-out/fresh.
 
 Pendiente de ejecución al cierre de esta sección; se registrarán recursos,
 hashes, digest, revisión, DRS, focal/full/robustez EN, latencia y handoff.
+
+### Ejecucion pre-E2E (resultados)
+
+- **Aprovisionamiento TIVIT**: Artifact Registry `cu013-containers-dev`
+  creado; secretos `cu013-api-key-dev` (v2 valida; v1 con salto de linea,
+  deshabilitada), `cu013-protocol-reset-password-dev:1` y
+  `cu013-protocol-unlock-account-dev:1` (hashes verificados byte a byte);
+  `secretAccessor` solo a `cu013-cloud-run-sa`; imagen del SHA `e8f77ac`
+  (`sha256:7f3352ff...`); revisiones `00002-dll` (fallo de arranque por la
+  ruta de montaje, corregida), `00003-4lp` (sana, API key v2) y `00004-zld`
+  (min=1, tag `e2e-en`); URL de tag
+  `https://e2e-en---cu013-runtime-dev-ziubw4l2pq-ue.a.run.app`; trafico
+  estable 100% en la ultima revision; `--allow-unauthenticated` aceptado (sin
+  DRS). Montaje: cada protocolo en su propio arbol (Cloud Run rechaza dos
+  secretos en el mismo directorio) con variables `CU013_PROTOCOL_*_FILE`.
+- **Verificacion**: `verify-dev-benchmark.ps1 -ExpectedMinInstances 0` todo
+  PASS; `/turns` sin API key 401 (fail-closed, sin Gemini); OpenAPI 200; sin
+  warnings en logs.
+- **Focal EN**: 58 repeticiones validas, 0 criticos, cancel/re-request y
+  promesas limpias; fallos de clases preexistentes (vocabulario de
+  confirmation_state, oraculo de ruta afirmativa, escalamiento por fallo).
+- **Full paired EN** (129c793 baseline vs EN congelado): 189 pares validos,
+  0 INFRA, 0 criticos, 0 regresiones objetivo, 3 no objetivo
+  (`long-conversation-memory` turn5), 3 pares incompletos (caso nuevo del
+  corpus ausente en el artefacto baseline, declarado como confounder);
+  `procedure_current` FAIL 18 a 6, `confirmation_state` 10 a 3; latencia
+  modelo p50 -110 ms / p95 -235 ms en la muestra (sin causalidad); tokens de
+  prompt +1469 p50. Veredicto del comparador: NEEDS OWNER DECISION por los
+  pares incompletos y las 3 regresiones del turn5.
+- **Robustez EN**: metamorfica invariance 1.0 (39 casos, 0 divergencias);
+  sintetica dev 39/3/1 de 43; held-out 31/4 de 35 (2 defectos de oraculo del
+  generador + 2 reales); fresh 48/10/1 de 59 (2 defectos de oraculo + 8 reales:
+  6 aperturas prematuras de challenge ante respuesta minima/lateral y 2
+  re-requests con wording debil que no recrean el goal).
+- **Judge EN**: ~10 MEETS / 2 CONCERN / 0 FAIL; salida estable en espanol.
+- **Latencia Cloud Run**: 30/30 peticiones, 0 errores; round-trip p50 1031 ms
+  / p95 1438 ms (total de cliente, incluye red y modelo).
+
+### Veredicto pre-E2E
+
+```text
+INCONCLUSIVE � OWNER DECISION REQUIRED
+```
+
+El entorno TIVIT esta aprovisionado, desplegado, verificado y con tag
+caliente `e2e-en`; EN tiene 0 criticos, 0 regresiones objetivo, sin promesas
+no respaldadas y salida estable en espanol, con `procedure_current` y
+`confirmation_state` mejores que el baseline. No alcanza el gate estricto de
+�25: persisten (a) apertura prematura de challenge ante respuestas minimas o
+laterales y (b) re-request con wording debil que no recrea el goal (casos
+fresh); ambas sin efecto lateral ni critical. El owner decide si ejecuta el
+E2E aceptando estos defectos conocidos o pide una iteracion acotada.
