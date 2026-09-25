@@ -71,6 +71,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="f4",
         help="static decision-example ablation variant",
     )
+    parser.add_argument(
+        "--harness-language",
+        choices=["es", "en"],
+        default="es",
+    )
     parser.add_argument("--repetitions", type=int, default=1)
     return parser.parse_args(argv)
 
@@ -152,7 +157,9 @@ async def run(argv: list[str] | None = None) -> int:
         print("no cases selected", file=sys.stderr)
         return 2
     print(REVIEW_NOTE)
-    prompt_source = resolve_prompt_source(args.prompt_variant, args.few_shot_variant)
+    prompt_source = resolve_prompt_source(
+        args.prompt_variant, args.few_shot_variant, None, args.harness_language
+    )
     baseline = GeminiBaseline.from_env()
     client = Client(
         vertexai=True,

@@ -21,7 +21,10 @@ from app.conversation.prompt_loader import (
     validate_prompt_module,
 )
 from app.conversation.prompt_renderer import hash_prompt_text
-from tests.conversation.prompt_fixtures import write_synthetic_protocols
+from tests.conversation.prompt_fixtures import (
+    SYNTHETIC_RESET_BODY,
+    write_synthetic_protocols,
+)
 
 RESET_FILENAME = PROTOCOL_FILENAMES[0][1]
 UNLOCK_FILENAME = PROTOCOL_FILENAMES[1][1]
@@ -170,6 +173,37 @@ def test_few_shot_content_ablation_drops_exactly_one_example(tmp_path: Path) -> 
     assert len(variants) == text.count("<ejemplo>")
     with pytest.raises(PromptBundleError, match="drop index"):
         drop_example(text, 99)
+
+
+def test_english_harness_templates_load_without_touching_protocols(
+    tmp_path: Path,
+) -> None:
+    from app.conversation.prompt_loader import HARNESS_TEMPLATES
+
+    directory = write_synthetic_protocols(tmp_path)
+    templates = HARNESS_TEMPLATES["en"]
+    bundle = load_prompt_bundle(
+        protocol_dir=directory,
+        core_name=templates["core"] or "core_en.md",
+        catalog_name=templates["catalog"] or "catalog_en.md",
+        few_shot_name=templates["few_shot"],
+    )
+    assert bundle.core.name == "core_en.md"
+    assert bundle.catalog.name == "catalog_en.md"
+    assert bundle.few_shot is not None and bundle.few_shot.name == "few_shot_en.md"
+    base = bundle.system_instructions(None)
+    assert "Always answer in Spanish" in base
+    # Protocols keep their original language and content.
+    reset = bundle.system_instructions(_goal_for("RESET_PASSWORD"))
+    assert SYNTHETIC_RESET_BODY in reset
+    assert "RESET_PASSWORD" in reset
+
+
+def _goal_for(action: str):  # type: ignore[no-untyped-def]
+    from app.session.actions import Action
+    from app.session.record import ConversationGoal
+
+    return ConversationGoal(action=Action(action), revision=1)
 
 
 def test_guided_step_cardinality_mismatch_fails_startup(tmp_path: Path) -> None:

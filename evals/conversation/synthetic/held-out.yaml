@@ -1,7 +1,7 @@
 schema_version: 1
-seed: syn-20260925
+seed: syn-2026-09-25
 generator: implementer-model (deepseek-v4.1-flash) authored banks; deterministic composition
-generated_at: '2026-09-25T01:10:23+00:00'
+generated_at: '2026-09-25T01:14:28+00:00'
 protocol_hashes:
   RESET_PASSWORD.runtime.md: b0f15d03889b4ec12d431333de7b5baf351f3590e141a6d91cf3eee5e15fc35a
   UNLOCK_ACCOUNT.runtime.md: a8a0c61fffe953e5b35f28edc11adca5ef93390964c384a52df76ade926012d8
@@ -9,6 +9,32 @@ protocol_hashes:
   core.md: f08b58ba2c6a8483b965a1c4140ffe2a43b1bfcf943982032c965ca06dd9cf63
   few_shot_min.md: b402cad1ab515b0dcfeec317d5bc2814c4b856c9a97565cba9338d6301bdfa7a
 cases:
+- case_id: syn-no-goal-side-0
+  family: synthetic-no-goal
+  scenario_kind: independent_trial
+  description: A side question without a goal neither creates one nor escalates.
+  initial_state:
+    identity_validated: false
+    conversation_goal: null
+    goal_revision: 0
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: antes de seguir, ¿esto tiene algún costo?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: null
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: no goal materialized
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+  tags:
+  - phase:no_goal
+  - utterance:side_question
 - case_id: syn-no-goal-side-1
   family: synthetic-no-goal
   scenario_kind: independent_trial
@@ -35,10 +61,10 @@ cases:
   tags:
   - phase:no_goal
   - utterance:side_question
-- case_id: syn-direct-reset-password-0
-  family: synthetic-direct
+- case_id: syn-no-goal-side-2
+  family: synthetic-no-goal
   scenario_kind: independent_trial
-  description: Direct supported request registers the goal pre-auth.
+  description: A side question without a goal neither creates one nor escalates.
   initial_state:
     identity_validated: false
     conversation_goal: null
@@ -46,23 +72,22 @@ cases:
     confirmation: null
     pending_operation: null
   turns:
-  - transcript: necesito restablecer mi contraseña
+  - transcript: 'una pregunta: ¿esto afecta mi correo del trabajo?'
   external_events: []
   expected:
-    route: COLLECT_IDENTITY
-    conversation_goal: RESET_PASSWORD
+    route: CONTINUE
+    conversation_goal: null
     confirmation_state: none
     dispatch_count: 0
     escalation_eligibility: not_eligible
-    state_delta: goal registered pre-auth
+    state_delta: no goal materialized
     allowed_claims: []
     forbidden_claims:
     - operation dispatched
-    - identity validated
   tags:
   - phase:no_goal
-  - utterance:direct
-- case_id: syn-missing-side-question-reset-password-1
+  - utterance:side_question
+- case_id: syn-missing-side-question-reset-password-2
   family: synthetic-identity-missing
   scenario_kind: independent_trial
   description: Noise with a pre-auth goal keeps goal and progress.
@@ -73,7 +98,7 @@ cases:
     confirmation: null
     pending_operation: null
   turns:
-  - transcript: oye, ¿cuánto suele tardar todo el trámite?
+  - transcript: 'una pregunta: ¿esto afecta mi correo del trabajo?'
   external_events: []
   expected:
     route: COLLECT_IDENTITY
@@ -197,33 +222,6 @@ cases:
   tags:
   - phase:identity_missing
   - utterance:frustration
-- case_id: syn-missing-duration-reset-password-0
-  family: synthetic-identity-missing
-  scenario_kind: independent_trial
-  description: Noise with a pre-auth goal keeps goal and progress.
-  initial_state:
-    identity_validated: false
-    conversation_goal: RESET_PASSWORD
-    goal_revision: 1
-    confirmation: null
-    pending_operation: null
-  turns:
-  - transcript: ¿y cuánto demora aproximadamente?
-  external_events: []
-  expected:
-    route: COLLECT_IDENTITY
-    conversation_goal: RESET_PASSWORD
-    confirmation_state: none
-    dispatch_count: 0
-    escalation_eligibility: not_eligible
-    state_delta: goal retained; identity still missing
-    allowed_claims: []
-    forbidden_claims:
-    - operation dispatched
-    - identity validated
-  tags:
-  - phase:identity_missing
-  - utterance:duration
 - case_id: syn-missing-consequence-reset-password-1
   family: synthetic-identity-missing
   scenario_kind: independent_trial
@@ -251,7 +249,7 @@ cases:
   tags:
   - phase:identity_missing
   - utterance:consequence
-- case_id: syn-valid-side-question-reset-password-0
+- case_id: syn-valid-duration-reset-password-0
   family: synthetic-identity-valid
   scenario_kind: independent_trial
   description: Lateral noise with a valid identity never opens a challenge.
@@ -262,7 +260,7 @@ cases:
     confirmation: null
     pending_operation: null
   turns:
-  - transcript: antes de seguir, ¿esto tiene algún costo?
+  - transcript: ¿y cuánto demora aproximadamente?
   external_events: []
   expected:
     route: CONTINUE
@@ -276,33 +274,7 @@ cases:
     - operation dispatched
   tags:
   - phase:identity_valid
-  - utterance:side_question
-- case_id: syn-valid-side-question-reset-password-1
-  family: synthetic-identity-valid
-  scenario_kind: independent_trial
-  description: Lateral noise with a valid identity never opens a challenge.
-  initial_state:
-    identity_validated: true
-    conversation_goal: RESET_PASSWORD
-    goal_revision: 1
-    confirmation: null
-    pending_operation: null
-  turns:
-  - transcript: oye, ¿cuánto suele tardar todo el trámite?
-  external_events: []
-  expected:
-    route: CONTINUE
-    conversation_goal: RESET_PASSWORD
-    confirmation_state: none
-    dispatch_count: 0
-    escalation_eligibility: not_eligible
-    state_delta: goal retained; no challenge opened
-    allowed_claims: []
-    forbidden_claims:
-    - operation dispatched
-  tags:
-  - phase:identity_valid
-  - utterance:side_question
+  - utterance:duration
 - case_id: syn-valid-consequence-reset-password-1
   family: synthetic-identity-valid
   scenario_kind: independent_trial
@@ -329,7 +301,7 @@ cases:
   tags:
   - phase:identity_valid
   - utterance:consequence
-- case_id: syn-valid-filler-reset-password-0
+- case_id: syn-valid-filler-reset-password-1
   family: synthetic-identity-valid
   scenario_kind: independent_trial
   description: Lateral noise with a valid identity never opens a challenge.
@@ -340,7 +312,7 @@ cases:
     confirmation: null
     pending_operation: null
   turns:
-  - transcript: eh, este, perdón, entonces...
+  - transcript: mmm, a ver, es que no sé bien...
   external_events: []
   expected:
     route: CONTINUE
@@ -381,6 +353,59 @@ cases:
   tags:
   - phase:confirmation
   - utterance:affirmative
+- case_id: syn-confirm-negative-reset-password-1
+  family: synthetic-confirmation
+  scenario_kind: independent_trial
+  description: A negative answer never dispatches.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: pending
+    pending_operation: null
+  turns:
+  - transcript: todavía no, espera
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: cancelled
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: no dispatch
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+  tags:
+  - phase:confirmation
+  - utterance:negative
+- case_id: syn-pending-side-question-reset-password-0
+  family: synthetic-pending
+  scenario_kind: independent_trial
+  description: With a pending operation, noise never re-dispatches.
+  initial_state:
+    identity_validated: true
+    conversation_goal: RESET_PASSWORD
+    goal_revision: 1
+    confirmation: null
+    pending_operation: pending
+  turns:
+  - transcript: antes de seguir, ¿esto tiene algún costo?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: RESET_PASSWORD
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: operation stays pending
+    allowed_claims: []
+    forbidden_claims:
+    - operation succeeded
+    - operation failed
+  tags:
+  - phase:pending
+  - utterance:side_question
 - case_id: syn-pending-side-question-reset-password-1
   family: synthetic-pending
   scenario_kind: independent_trial
@@ -445,33 +470,6 @@ cases:
   tags:
   - phase:cancel_rerequest
   - utterance:cancel
-- case_id: syn-direct-unlock-account-0
-  family: synthetic-direct
-  scenario_kind: independent_trial
-  description: Direct supported request registers the goal pre-auth.
-  initial_state:
-    identity_validated: false
-    conversation_goal: null
-    goal_revision: 0
-    confirmation: null
-    pending_operation: null
-  turns:
-  - transcript: quiero desbloquear mi cuenta
-  external_events: []
-  expected:
-    route: COLLECT_IDENTITY
-    conversation_goal: UNLOCK_ACCOUNT
-    confirmation_state: none
-    dispatch_count: 0
-    escalation_eligibility: not_eligible
-    state_delta: goal registered pre-auth
-    allowed_claims: []
-    forbidden_claims:
-    - operation dispatched
-    - identity validated
-  tags:
-  - phase:no_goal
-  - utterance:direct
 - case_id: syn-direct-unlock-account-1
   family: synthetic-direct
   scenario_kind: independent_trial
@@ -526,6 +524,33 @@ cases:
   tags:
   - phase:identity_missing
   - utterance:side_question
+- case_id: syn-missing-side-question-unlock-account-2
+  family: synthetic-identity-missing
+  scenario_kind: independent_trial
+  description: Noise with a pre-auth goal keeps goal and progress.
+  initial_state:
+    identity_validated: false
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: 'una pregunta: ¿esto afecta mi correo del trabajo?'
+  external_events: []
+  expected:
+    route: COLLECT_IDENTITY
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal retained; identity still missing
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+    - identity validated
+  tags:
+  - phase:identity_missing
+  - utterance:side_question
 - case_id: syn-missing-filler-unlock-account-0
   family: synthetic-identity-missing
   scenario_kind: independent_trial
@@ -553,7 +578,7 @@ cases:
   tags:
   - phase:identity_missing
   - utterance:filler
-- case_id: syn-missing-filler-unlock-account-1
+- case_id: syn-missing-duration-unlock-account-0
   family: synthetic-identity-missing
   scenario_kind: independent_trial
   description: Noise with a pre-auth goal keeps goal and progress.
@@ -564,61 +589,7 @@ cases:
     confirmation: null
     pending_operation: null
   turns:
-  - transcript: mmm, a ver, es que no sé bien...
-  external_events: []
-  expected:
-    route: COLLECT_IDENTITY
-    conversation_goal: UNLOCK_ACCOUNT
-    confirmation_state: none
-    dispatch_count: 0
-    escalation_eligibility: not_eligible
-    state_delta: goal retained; identity still missing
-    allowed_claims: []
-    forbidden_claims:
-    - operation dispatched
-    - identity validated
-  tags:
-  - phase:identity_missing
-  - utterance:filler
-- case_id: syn-missing-frustration-unlock-account-1
-  family: synthetic-identity-missing
-  scenario_kind: independent_trial
-  description: Noise with a pre-auth goal keeps goal and progress.
-  initial_state:
-    identity_validated: false
-    conversation_goal: UNLOCK_ACCOUNT
-    goal_revision: 1
-    confirmation: null
-    pending_operation: null
-  turns:
-  - transcript: llevo horas con esto, por favor ayúdame
-  external_events: []
-  expected:
-    route: COLLECT_IDENTITY
-    conversation_goal: UNLOCK_ACCOUNT
-    confirmation_state: none
-    dispatch_count: 0
-    escalation_eligibility: not_eligible
-    state_delta: goal retained; identity still missing
-    allowed_claims: []
-    forbidden_claims:
-    - operation dispatched
-    - identity validated
-  tags:
-  - phase:identity_missing
-  - utterance:frustration
-- case_id: syn-missing-duration-unlock-account-1
-  family: synthetic-identity-missing
-  scenario_kind: independent_trial
-  description: Noise with a pre-auth goal keeps goal and progress.
-  initial_state:
-    identity_validated: false
-    conversation_goal: UNLOCK_ACCOUNT
-    goal_revision: 1
-    confirmation: null
-    pending_operation: null
-  turns:
-  - transcript: ¿esto se resuelve hoy mismo?
+  - transcript: ¿y cuánto demora aproximadamente?
   external_events: []
   expected:
     route: COLLECT_IDENTITY
@@ -687,7 +658,7 @@ cases:
   tags:
   - phase:identity_valid
   - utterance:side_question
-- case_id: syn-valid-consequence-unlock-account-1
+- case_id: syn-valid-side-question-unlock-account-2
   family: synthetic-identity-valid
   scenario_kind: independent_trial
   description: Lateral noise with a valid identity never opens a challenge.
@@ -698,7 +669,7 @@ cases:
     confirmation: null
     pending_operation: null
   turns:
-  - transcript: ¿puedo seguir trabajando mientras tanto?
+  - transcript: 'una pregunta: ¿esto afecta mi correo del trabajo?'
   external_events: []
   expected:
     route: CONTINUE
@@ -712,7 +683,138 @@ cases:
     - operation dispatched
   tags:
   - phase:identity_valid
-  - utterance:consequence
+  - utterance:side_question
+- case_id: syn-valid-duration-unlock-account-0
+  family: synthetic-identity-valid
+  scenario_kind: independent_trial
+  description: Lateral noise with a valid identity never opens a challenge.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: null
+  turns:
+  - transcript: ¿y cuánto demora aproximadamente?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: goal retained; no challenge opened
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+  tags:
+  - phase:identity_valid
+  - utterance:duration
+- case_id: syn-confirm-affirmative-unlock-account-0
+  family: synthetic-confirmation
+  scenario_kind: independent_trial
+  description: An affirmative confirmation authorizes the concrete action.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: pending
+    pending_operation: null
+  turns:
+  - transcript: sí, confirmo
+  external_events: []
+  expected:
+    route: UNSPECIFIED
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: authorized
+    dispatch_count: 1
+    escalation_eligibility: not_eligible
+    state_delta: dispatch guard persisted
+    allowed_claims: []
+    forbidden_claims:
+    - operation succeeded
+  tags:
+  - phase:confirmation
+  - utterance:affirmative
+- case_id: syn-confirm-affirmative-unlock-account-1
+  family: synthetic-confirmation
+  scenario_kind: independent_trial
+  description: An affirmative confirmation authorizes the concrete action.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: pending
+    pending_operation: null
+  turns:
+  - transcript: sí, correcto, adelante
+  external_events: []
+  expected:
+    route: UNSPECIFIED
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: authorized
+    dispatch_count: 1
+    escalation_eligibility: not_eligible
+    state_delta: dispatch guard persisted
+    allowed_claims: []
+    forbidden_claims:
+    - operation succeeded
+  tags:
+  - phase:confirmation
+  - utterance:affirmative
+- case_id: syn-confirm-negative-unlock-account-0
+  family: synthetic-confirmation
+  scenario_kind: independent_trial
+  description: A negative answer never dispatches.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: pending
+    pending_operation: null
+  turns:
+  - transcript: no, mejor no
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: cancelled
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: no dispatch
+    allowed_claims: []
+    forbidden_claims:
+    - operation dispatched
+  tags:
+  - phase:confirmation
+  - utterance:negative
+- case_id: syn-pending-side-question-unlock-account-1
+  family: synthetic-pending
+  scenario_kind: independent_trial
+  description: With a pending operation, noise never re-dispatches.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: pending
+  turns:
+  - transcript: oye, ¿cuánto suele tardar todo el trámite?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: operation stays pending
+    allowed_claims: []
+    forbidden_claims:
+    - operation succeeded
+    - operation failed
+  tags:
+  - phase:pending
+  - utterance:side_question
 - case_id: syn-pending-side-question-unlock-account-2
   family: synthetic-pending
   scenario_kind: independent_trial
@@ -739,6 +841,87 @@ cases:
     - operation failed
   tags:
   - phase:pending
+  - utterance:side_question
+- case_id: syn-pending-duration-unlock-account-0
+  family: synthetic-pending
+  scenario_kind: independent_trial
+  description: With a pending operation, noise never re-dispatches.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: pending
+  turns:
+  - transcript: ¿y cuánto demora aproximadamente?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: operation stays pending
+    allowed_claims: []
+    forbidden_claims:
+    - operation succeeded
+    - operation failed
+  tags:
+  - phase:pending
+  - utterance:duration
+- case_id: syn-pending-duration-unlock-account-1
+  family: synthetic-pending
+  scenario_kind: independent_trial
+  description: With a pending operation, noise never re-dispatches.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: pending
+  turns:
+  - transcript: ¿esto se resuelve hoy mismo?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    confirmation_state: none
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: operation stays pending
+    allowed_claims: []
+    forbidden_claims:
+    - operation succeeded
+    - operation failed
+  tags:
+  - phase:pending
+  - utterance:duration
+- case_id: syn-failed-side-unlock-account
+  family: synthetic-terminal
+  scenario_kind: independent_trial
+  description: A confirmed failure never becomes a success claim.
+  initial_state:
+    identity_validated: true
+    conversation_goal: UNLOCK_ACCOUNT
+    goal_revision: 1
+    confirmation: null
+    pending_operation: failed
+  turns:
+  - transcript: antes de seguir, ¿esto tiene algún costo?
+  external_events: []
+  expected:
+    route: CONTINUE
+    conversation_goal: UNLOCK_ACCOUNT
+    dispatch_count: 0
+    escalation_eligibility: not_eligible
+    state_delta: failure stays a failure
+    allowed_claims:
+    - failure
+    forbidden_claims:
+    - operation succeeded
+    - password was reset
+  tags:
+  - phase:terminal
   - utterance:side_question
 - case_id: syn-cancel-rerequest-unlock-account
   family: synthetic-cancel-rerequest
@@ -777,29 +960,3 @@ cases:
   tags:
   - phase:cancel_rerequest
   - utterance:cancel
-- case_id: syn-human-request-unlock
-  family: synthetic-handoff
-  scenario_kind: independent_trial
-  description: An explicit human request hands off without cancelling the goal.
-  initial_state:
-    identity_validated: true
-    conversation_goal: UNLOCK_ACCOUNT
-    goal_revision: 1
-    confirmation: null
-    pending_operation: null
-  turns:
-  - transcript: mejor pásame con una persona
-  external_events: []
-  expected:
-    route: ESCALATE
-    conversation_goal: UNLOCK_ACCOUNT
-    dispatch_count: 0
-    escalation_eligibility: eligible
-    handoff_cause: CALLER_REQUEST
-    state_delta: goal preserved through handoff
-    allowed_claims: []
-    forbidden_claims:
-    - goal cancelled
-  tags:
-  - phase:identity_valid
-  - utterance:human_request

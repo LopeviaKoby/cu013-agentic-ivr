@@ -259,9 +259,14 @@ def compose_instructions_text(
 
 
 def _composition_order(
-    protocol_name: str | None, *, step: str | None, with_few_shot: bool
+    core_name: str,
+    catalog_name: str,
+    protocol_name: str | None,
+    *,
+    step: str | None,
+    with_few_shot: bool,
 ) -> tuple[str, ...]:
-    order = [CORE_MODULE_NAME, CATALOG_MODULE_NAME]
+    order = [core_name, catalog_name]
     if protocol_name is not None:
         order.append(protocol_name)
         if step is not None:
@@ -283,7 +288,9 @@ def build_composed_instructions(
     composed = [
         ComposedInstructions(
             key=BASE_INSTRUCTION_KEY,
-            order=_composition_order(None, step=None, with_few_shot=with_few_shot),
+            order=_composition_order(
+                core.name, catalog.name, None, step=None, with_few_shot=with_few_shot
+            ),
             text=compose_instructions_text(core, catalog, few_shot),
             sha256="",
         )
@@ -293,7 +300,9 @@ def build_composed_instructions(
         composed.append(
             ComposedInstructions(
                 key=action.value,
-                order=_composition_order(protocol.name, step=None, with_few_shot=with_few_shot),
+                order=_composition_order(
+                    core.name, catalog.name, protocol.name, step=None, with_few_shot=with_few_shot
+                ),
                 text=compose_instructions_text(core, catalog, few_shot, action, protocol.text),
                 sha256="",
             )
@@ -310,7 +319,13 @@ def build_composed_instructions(
             composed.append(
                 ComposedInstructions(
                     key=projected_instruction_key(action, step),
-                    order=_composition_order(protocol.name, step=step, with_few_shot=with_few_shot),
+                    order=_composition_order(
+                        core.name,
+                        catalog.name,
+                        protocol.name,
+                        step=step,
+                        with_few_shot=with_few_shot,
+                    ),
                     text=compose_instructions_text(
                         core, catalog, few_shot, action, structure.projected_text(index)
                     ),

@@ -159,24 +159,44 @@ def protocol_directory(protocol_dir: Path | None = None) -> Path:
     return Path(configured) if configured else DEFAULT_PROTOCOL_DIR
 
 
+HARNESS_TEMPLATES: Final[dict[str, dict[str, str | None]]] = {
+    # Spanish is the active product harness; English exists only for the
+    # controlled A/B experiment. Protocols, state values and the schema are
+    # never translated.
+    "es": {
+        "core": CORE_MODULE_NAME,
+        "catalog": CATALOG_MODULE_NAME,
+        "few_shot": FEW_SHOT_MINIMAL_NAME,
+    },
+    "en": {
+        "core": "core_en.md",
+        "catalog": "catalog_en.md",
+        "few_shot": "few_shot_en.md",
+    },
+}
+
+
 def load_prompt_bundle(
     *,
     protocol_dir: Path | None = None,
     few_shot_name: str | None = FEW_SHOT_MINIMAL_NAME,
     few_shot_drop: int | None = None,
+    core_name: str = CORE_MODULE_NAME,
+    catalog_name: str = CATALOG_MODULE_NAME,
 ) -> PromptBundle:
     """Build the immutable prompt bundle once; any missing piece fails closed.
 
     ``few_shot_name=None`` composes the bundle without decision examples (F0);
-    ``few_shot_drop`` removes the Nth example for the content ablation.
+    ``few_shot_drop`` removes the Nth example for the content ablation;
+    ``core_name``/``catalog_name`` select the harness language templates.
     """
     directory = protocol_directory(protocol_dir)
     protocols = tuple(
         (action, read_protocol_module(directory / filename, action))
         for action, filename in PROTOCOL_FILENAMES
     )
-    core = read_template_module(CORE_MODULE_NAME)
-    catalog = read_template_module(CATALOG_MODULE_NAME)
+    core = read_template_module(core_name)
+    catalog = read_template_module(catalog_name)
     few_shot = read_template_module(few_shot_name) if few_shot_name is not None else None
     if few_shot is not None and few_shot_drop is not None:
         dropped_text = drop_example(few_shot.text, few_shot_drop)

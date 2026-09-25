@@ -51,7 +51,7 @@ from evals.conversation_lab import (
     validate_corpus,
 )
 
-SEED = "syn-20260925"
+SEED = "syn-2026-09-25"
 GENERATOR = "implementer-model (deepseek-v4.1-flash) authored banks; deterministic composition"
 SCHEMA_VERSION = 1
 HELD_OUT_PATH = REPO_ROOT / "evals" / "conversation" / "synthetic" / "held-out.yaml"
@@ -385,7 +385,9 @@ def compose_scenarios() -> list[dict[str, Any]]:
                     "route": "CONTINUE",
                     "conversation_goal": action,
                     "dispatch_count": 0,
-                    "escalation_eligibility": "eligible",
+                    # A lateral turn does not escalate by itself; the failure
+                    # only makes escalation available when the caller needs it.
+                    "escalation_eligibility": "not_eligible",
                     "state_delta": "failure stays a failure",
                     "allowed_claims": ["failure"],
                     "forbidden_claims": ["operation succeeded", "password was reset"],
