@@ -150,6 +150,28 @@ def test_few_shot_ablation_variants_load_or_omit_the_module(tmp_path: Path) -> N
     assert bare.few_shot is None
 
 
+def test_few_shot_content_ablation_drops_exactly_one_example(tmp_path: Path) -> None:
+    from app.conversation.prompt_loader import drop_example
+
+    directory = write_synthetic_protocols(tmp_path)
+    base = load_prompt_bundle(protocol_dir=directory, few_shot_name="few_shot.md")
+    assert base.few_shot is not None
+    text = base.few_shot.text
+    assert text.count("<ejemplo>") >= 1
+    variants = set()
+    for index in range(1, text.count("<ejemplo>") + 1):
+        dropped = load_prompt_bundle(
+            protocol_dir=directory, few_shot_name="few_shot.md", few_shot_drop=index
+        )
+        assert dropped.few_shot is not None
+        assert dropped.few_shot.text.count("<ejemplo>") == text.count("<ejemplo>") - 1
+        assert dropped.few_shot.sha256 != base.few_shot.sha256
+        variants.add(dropped.few_shot.sha256)
+    assert len(variants) == text.count("<ejemplo>")
+    with pytest.raises(PromptBundleError, match="drop index"):
+        drop_example(text, 99)
+
+
 def test_guided_step_cardinality_mismatch_fails_startup(tmp_path: Path) -> None:
     """Projection never guesses: a structure mismatch fails closed."""
     write_synthetic_protocols(tmp_path)

@@ -1115,16 +1115,25 @@ def load_snapshot_prompt(path: Path = SNAPSHOT_BASELINE_PATH) -> StaticPrompt:
     return StaticPrompt(text=normalize_prompt_text(snapshot))
 
 
-def resolve_prompt_source(prompt_variant: str, few_shot_variant: str = "f4") -> PromptSource:
+def resolve_prompt_source(
+    prompt_variant: str,
+    few_shot_variant: str = "f4",
+    few_shot_drop: int | None = None,
+) -> PromptSource:
     """The declared experimental variable: modular composition or snapshot."""
     if prompt_variant == PROMPT_VARIANT_SNAPSHOT:
         return load_snapshot_prompt()
     if prompt_variant == PROMPT_VARIANT_PROTOCOLS:
-        return load_prompt_bundle(few_shot_name=few_shot_name_for(few_shot_variant))
+        return load_prompt_bundle(
+            few_shot_name=few_shot_name_for(few_shot_variant),
+            few_shot_drop=few_shot_drop,
+        )
     raise ValueError(f"unknown prompt variant {prompt_variant!r}")
 
 
-def prompt_composition_identity(prompt_source: PromptSource | None) -> dict[str, Any]:
+def prompt_composition_identity(
+    prompt_source: PromptSource | None, *, few_shot_drop: int | None = None
+) -> dict[str, Any]:
     """Fingerprint the exact prompt composition used by this run."""
     renderer_hash = hash_file(REPO_ROOT / PROMPT_RENDERER_FILE)
     loader_hash = hash_file(REPO_ROOT / PROMPT_LOADER_FILE)
@@ -1138,7 +1147,8 @@ def prompt_composition_identity(prompt_source: PromptSource | None) -> dict[str,
             "projected_steps": prompt_source.projected_steps(),
             "few_shot_variant": (
                 prompt_source.few_shot.name if prompt_source.few_shot is not None else "none"
-            ),
+            )
+            + (f"#drop{few_shot_drop}" if few_shot_drop is not None else ""),
             "bundle_fingerprint": prompt_source.fingerprint,
             "renderer_sha256": renderer_hash,
             "loader_sha256": loader_hash,
@@ -1168,6 +1178,7 @@ def build_variant_identity(
     strategy: str = DEFAULT_PROMPT_POLICY,
     prompt_source: PromptSource | None = None,
     cache_mode: str = "none",
+    few_shot_drop: int | None = None,
 ) -> dict[str, Any]:
     root = REPO_ROOT
     source_sha, working_tree = git_identity(root)
@@ -1221,7 +1232,9 @@ def build_variant_identity(
         "model_revision": MODEL_REVISION_UNAVAILABLE,
         "lane": lane,
         "cache_mode": cache_mode,
-        "prompt_composition": prompt_composition_identity(prompt_source),
+        "prompt_composition": prompt_composition_identity(
+            prompt_source, few_shot_drop=few_shot_drop
+        ),
     }
     identity.update(memory_identity)
     return identity
@@ -1779,6 +1792,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "f2 (two examples), f1 (one), f0 (none)",
     )
     parser.add_argument(
+        "--few-shot-drop",
+        type=int,
+        choices=[1, 2, 3, 4],
+        default=None,
+        help="content ablation: drop the Nth decision example from the F4 module",
+    )
+    parser.add_argument(
         "--token-breakdown",
         action="store_true",
         help="after the timed replay, count tokens per composition bucket "
@@ -1861,7 +1881,9 @@ async def run(argv: list[str] | None = None) -> int:
             strategy=args.prompt_strategy,
         )
     try:
-        prompt_source = resolve_prompt_source(args.prompt_variant, args.few_shot_variant)
+        prompt_source = resolve_prompt_source(
+            args.prompt_variant, args.few_shot_variant, args.few_shot_drop
+        )
     except (PromptBundleError, OSError, ValueError) as exc:
         print(f"PROMPT {exc}", file=sys.stderr)
         return 2
@@ -1901,6 +1923,7 @@ async def run(argv: list[str] | None = None) -> int:
         lane=args.lane,
         strategy=args.prompt_strategy,
         prompt_source=prompt_source,
+        few_shot_drop=args.few_shot_drop,
     )
     digest = variant_digest(identity)
     run_id = make_run_id("conversation-eval", at=started_at, digest=digest)

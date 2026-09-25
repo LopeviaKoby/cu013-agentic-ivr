@@ -64,6 +64,23 @@ def few_shot_name_for(variant: str) -> str | None:
     return FEW_SHOT_TEMPLATES[variant]
 
 
+def drop_example(text: str, index: int) -> str:
+    """Remove the Nth ``<ejemplo>`` block (1-based) for the ablation only.
+
+    Deterministic and content-free: it never rewrites the remaining examples
+    and fails closed when the requested index does not exist.
+    """
+    blocks = text.split("<ejemplo>")
+    example_count = len(blocks) - 1
+    if example_count < 1:
+        raise PromptBundleError("few-shot module has no examples to drop")
+    if not 1 <= index <= example_count:
+        raise PromptBundleError(f"few-shot drop index {index} outside 1..{example_count}")
+    remaining = [blocks[0], *blocks[1:index], *blocks[index + 1 :]]
+    rebuilt = remaining[0] + "".join(f"<ejemplo>{block}" for block in remaining[1:])
+    return rebuilt.rstrip() + "\n"
+
+
 class PromptBundleError(RuntimeError):
     """The prompt bundle cannot be built; startup must fail closed."""
 
@@ -143,10 +160,12 @@ def load_prompt_bundle(
     *,
     protocol_dir: Path | None = None,
     few_shot_name: str | None = FEW_SHOT_MODULE_NAME,
+    few_shot_drop: int | None = None,
 ) -> PromptBundle:
     """Build the immutable prompt bundle once; any missing piece fails closed.
 
-    ``few_shot_name=None`` composes the bundle without decision examples (F0).
+    ``few_shot_name=None`` composes the bundle without decision examples (F0);
+    ``few_shot_drop`` removes the Nth example for the content ablation.
     """
     directory = protocol_directory(protocol_dir)
     protocols = tuple(
@@ -156,6 +175,13 @@ def load_prompt_bundle(
     core = read_template_module(CORE_MODULE_NAME)
     catalog = read_template_module(CATALOG_MODULE_NAME)
     few_shot = read_template_module(few_shot_name) if few_shot_name is not None else None
+    if few_shot is not None and few_shot_drop is not None:
+        dropped_text = drop_example(few_shot.text, few_shot_drop)
+        few_shot = PromptModule(
+            name=few_shot.name,
+            text=dropped_text,
+            sha256=hash_prompt_text(dropped_text),
+        )
     return build_prompt_bundle(
         core, catalog, few_shot, protocols, guided_steps=GUIDED_STEPS_BY_ACTION
     )
