@@ -1,14 +1,18 @@
+# Runbook de bootstrap DEV (estado vigente: TIVIT)
+
+> **Estado actual:** el entorno DEV del repositorio apunta a `tivit-cu013-prd` (runtime SA `cu013-cloud-run-sa@tivit-cu013-prd.iam.gserviceaccount.com`, sin impersonation). El script vigente es `ops/gcp/bootstrap-dev.ps1` (minimal e idempotente, dry-run por defecto, sin creación de SAs). El contenido siguiente describe el bootstrap histórico del proyecto anterior y se conserva como referencia.
+
 # GCP DEV/SPIKE Bootstrap Runbook
 
-## Propósito
+## PropÃ³sito
 
-Reproducir y verificar la base GCP mínima de CU013 para DEV y SPIKE mediante `gcloud` y PowerShell, sin Terraform ni claves JSON de service accounts.
+Reproducir y verificar la base GCP mÃ­nima de CU013 para DEV y SPIKE mediante `gcloud` y PowerShell, sin Terraform ni claves JSON de service accounts.
 
 ## Alcance
 
 Incluye APIs, Firestore `(default)`, Artifact Registry, tres service accounts, siete bindings IAM y el camino local de ADC impersonation.
 
-No crea proyecto, billing, Cloud Run, secretos, WIF, runtime, redes ni recursos de producción.
+No crea proyecto, billing, Cloud Run, secretos, WIF, runtime, redes ni recursos de producciÃ³n.
 
 ## Precondiciones
 
@@ -17,8 +21,8 @@ No crea proyecto, billing, Cloud Run, secretos, WIF, runtime, redes ni recursos 
 - `gcloud auth login` completado para una cuenta con permisos suficientes.
 - Proyecto `cu013-xcally-agentic` ya creado bajo `ylopevia-org`.
 - Billing ya asociado.
-- Región acordada `us-east1`.
-- Worktree revisado y sin intención de ejecutar cleanup destructivo.
+- RegiÃ³n acordada `us-east1`.
+- Worktree revisado y sin intenciÃ³n de ejecutar cleanup destructivo.
 
 No colocar credenciales, tokens o claves en comandos, archivos o historial.
 
@@ -40,37 +44,37 @@ BootstrapUser: ylopevia@gmail.com
 ## Orden de bootstrap
 
 ```text
-configuración gcloud
-→ APIs
-→ Firestore
-→ Artifact Registry
-→ service accounts
-→ IAM
-→ ADC impersonation
-→ verificación
+configuraciÃ³n gcloud
+â†’ APIs
+â†’ Firestore
+â†’ Artifact Registry
+â†’ service accounts
+â†’ IAM
+â†’ ADC impersonation
+â†’ verificaciÃ³n
 ```
 
-Desde la raíz del repositorio:
+Desde la raÃ­z del repositorio:
 
 ```powershell
 pwsh -NoProfile -File .\ops\gcp\bootstrap-dev.ps1
 ```
 
-El script no activa ni elimina otras configuraciones. Crea `cu013-xcally-agentic` con `--no-activate` cuando falta y usa `--configuration` explícitamente.
+El script no activa ni elimina otras configuraciones. Crea `cu013-xcally-agentic` con `--no-activate` cuando falta y usa `--configuration` explÃ­citamente.
 
 ## Idempotencia y stop conditions
 
-El script consulta antes de crear o conceder. Una API o binding existente se conserva sin duplicación.
+El script consulta antes de crear o conceder. Una API o binding existente se conserva sin duplicaciÃ³n.
 
 Se detiene si:
 
-- el proyecto, número u organización no coinciden;
-- la configuración dedicada contiene valores incompatibles;
-- Firestore existe con otra región, modo o edición;
-- Artifact Registry existe con otra ubicación, formato o modo;
+- el proyecto, nÃºmero u organizaciÃ³n no coinciden;
+- la configuraciÃ³n dedicada contiene valores incompatibles;
+- Firestore existe con otra regiÃ³n, modo o ediciÃ³n;
+- Artifact Registry existe con otra ubicaciÃ³n, formato o modo;
 - una consulta necesaria falla y no puede distinguirse de un recurso ausente.
 
-Nunca corrige una incompatibilidad recreando recursos o eliminando políticas.
+Nunca corrige una incompatibilidad recreando recursos o eliminando polÃ­ticas.
 
 ## Recursos e IAM esperados
 
@@ -91,21 +95,21 @@ El bootstrap imprime, pero no ejecuta, el paso interactivo:
 gcloud auth application-default login --impersonate-service-account=cu013-spike-firestore@cu013-xcally-agentic.iam.gserviceaccount.com
 ```
 
-Esto crea ADC local con impersonación de credenciales de corta duración. No establecer `GOOGLE_APPLICATION_CREDENTIALS` hacia una key JSON.
+Esto crea ADC local con impersonaciÃ³n de credenciales de corta duraciÃ³n. No establecer `GOOGLE_APPLICATION_CREDENTIALS` hacia una key JSON.
 
-## Verificación
+## VerificaciÃ³n
 
 ```powershell
 pwsh -NoProfile -File .\ops\gcp\verify-dev.ps1
 ```
 
-El verificador es read-only. Exit code 0 significa que no detectó drift crítico; bindings adicionales relacionados aparecen como warnings.
+El verificador es read-only. Exit code 0 significa que no detectÃ³ drift crÃ­tico; bindings adicionales relacionados aparecen como warnings.
 
 ## Cleanup y rollback
 
-Los siguientes son procedimientos manuales y destructivos. **No ejecutarlos como parte del bootstrap ni sin intención explícita y comprobación previa.**
+Los siguientes son procedimientos manuales y destructivos. **No ejecutarlos como parte del bootstrap ni sin intenciÃ³n explÃ­cita y comprobaciÃ³n previa.**
 
-### Configuración local incorrecta
+### ConfiguraciÃ³n local incorrecta
 
 Primero inspeccionar:
 
@@ -113,19 +117,19 @@ Primero inspeccionar:
 gcloud config configurations describe cu013-xcally-agentic --all
 ```
 
-La eliminación de esa configuración afecta sólo estado local, pero debe hacerse manualmente tras confirmar el nombre exacto. Nunca eliminar otras configuraciones por patrón.
+La eliminaciÃ³n de esa configuraciÃ³n afecta sÃ³lo estado local, pero debe hacerse manualmente tras confirmar el nombre exacto. Nunca eliminar otras configuraciones por patrÃ³n.
 
 ### Binding IAM incorrecto
 
-Leer la policy del recurso, identificar exactamente principal, role y condición, y retirar sólo ese binding. Volver a ejecutar `verify-dev.ps1`. No reemplazar policies completas.
+Leer la policy del recurso, identificar exactamente principal, role y condiciÃ³n, y retirar sÃ³lo ese binding. Volver a ejecutar `verify-dev.ps1`. No reemplazar policies completas.
 
 ### Service account accidental
 
-Confirmar que fue creada por error, que no está adjunta a un servicio y que no posee recursos o uso legítimo. La eliminación no es cleanup rutinario.
+Confirmar que fue creada por error, que no estÃ¡ adjunta a un servicio y que no posee recursos o uso legÃ­timo. La eliminaciÃ³n no es cleanup rutinario.
 
 ### Artifact Registry accidental
 
-Inspeccionar ubicación, contenido e IAM. Sólo un repositorio confirmado como accidental y vacío puede considerarse para eliminación manual.
+Inspeccionar ubicaciÃ³n, contenido e IAM. SÃ³lo un repositorio confirmado como accidental y vacÃ­o puede considerarse para eliminaciÃ³n manual.
 
 ### Firestore y recursos con datos
 
@@ -136,26 +140,26 @@ Eliminar el proyecto completo no es un rollback normal.
 ## Seguridad
 
 - No usar service-account keys.
-- No guardar secretos en `config.yaml`, scripts o documentación.
-- Usar la spike SA sólo para colecciones experimentales aisladas.
+- No guardar secretos en `config.yaml`, scripts o documentaciÃ³n.
+- Usar la spike SA sÃ³lo para colecciones experimentales aisladas.
 - No usar AD/TIVIT, XCALLY o correo real durante el spike de persistencia.
 
 ## Costo
 
-La base evita recursos always-on y duplicados. El servicio Cloud Run futuro tendrá inicialmente min 0/max 1. El presupuesto externo es una alerta económica, no un hard cap técnico.
+La base evita recursos always-on y duplicados. El servicio Cloud Run futuro tendrÃ¡ inicialmente min 0/max 1. El presupuesto externo es una alerta econÃ³mica, no un hard cap tÃ©cnico.
 
 ## Troubleshooting
 
-- `PERMISSION_DENIED`: confirmar la cuenta autenticada y el scope del recurso; no ampliar roles automáticamente.
-- Configuración incompatible: inspeccionarla y corregirla de forma explícita; el script se detiene.
+- `PERMISSION_DENIED`: confirmar la cuenta autenticada y el scope del recurso; no ampliar roles automÃ¡ticamente.
+- ConfiguraciÃ³n incompatible: inspeccionarla y corregirla de forma explÃ­cita; el script se detiene.
 - Firestore o repositorio incompatible: STOP & REPORT; no recrear.
 - ADC impersonation falla: confirmar `iamcredentials.googleapis.com` y Token Creator sobre la spike SA.
 - Drift IAM adicional: revisar el warning con el propietario; el verificador no elimina bindings.
 
 ## Fuera de alcance
 
-- servicio o revisión Cloud Run;
-- imágenes Docker;
+- servicio o revisiÃ³n Cloud Run;
+- imÃ¡genes Docker;
 - secretos y bindings de Secret Manager;
 - WIF/GitHub Actions;
 - Terraform;

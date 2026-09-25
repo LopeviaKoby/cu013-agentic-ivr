@@ -130,6 +130,8 @@ those events is still open.
 | goal-cancellation | explicit cancel before dispatch cancels the action |
 | multiple-supported-goals | more than one supported goal handled |
 | ambiguous-request | ambiguity leads to clarification, no dispatch |
+| ambiguous-reset-unlock | expression stays ambiguous between reset and unlock; no goal materialized, one brief clarification |
+| unlock-no-self-service | unlock has no invented guided self-service; goal retained, no dispatch |
 | unsupported-request | unsupported or out-of-scope request declines/redirects without handoff |
 | caller-asks-human | handoff because the caller explicitly requested it; goal preserved unless explicitly cancelled |
 | caller-does-not-ask-human | no handoff without a valid cause |
@@ -217,7 +219,7 @@ size, byte caps, procedure fields and retained text are evaluation
 variants with fingerprints, not Accepted requirements (historic short
 codes for these variants appear only in preserved evidence).
 Real-caller textual memory stays disabled; the trial runs synthetic,
-non-sensitive utterances only. The corpus is 47 cases / 39 families.
+non-sensitive utterances only. The corpus is 49 cases / 41 families.
 
 New sequence families (all synthetic, PII-free):
 
@@ -279,3 +281,41 @@ Paired comparison declares the variable explicitly:
   --candidate evals\results\<recent-conversation-memory-run>.json `
   --variable memory_variant --target-family pronoun-reference
 ```
+
+## Experiment 0011 prompt composition (paired lane)
+
+Experiment
+[0011](../../docs/experiments/0011-prompt-composition-runtime-protocols.md)
+declares one experimental variable: `prompt_composition`.
+
+```powershell
+.\.venv\Scripts\python.exe evals\conversation_eval.py `
+  --prompt-variant single_baseline_snapshot --token-breakdown
+.\.venv\Scripts\python.exe evals\conversation_eval.py `
+  --prompt-variant prompt_composition_protocols --token-breakdown
+.\.venv\Scripts\python.exe evals\conversation_compare.py `
+  --baseline evals\results\<snapshot-run>.json `
+  --candidate evals\results\<composed-run>.json `
+  --variable prompt_composition --variable effective_prompt_hash `
+  --target-family ambiguous-reset-unlock --target-family unlock-no-self-service
+```
+
+- `prompt_composition_protocols` (default) composes `core.md + catalog.md`
+  plus the private runtime protocol of the durable active goal; the protocols
+  are mounted locally for the run and never versioned.
+- `single_baseline_snapshot` replays the frozen `129c793` prompt text from
+  [baselines/129c793-system.md](baselines/129c793-system.md), an evaluation
+  fixture explicitly labeled not-product-documentation; it is not a canonical
+  manifest and carries no private protocol.
+- `--token-breakdown` runs provider `count_tokens` after the timed replay
+  (never during a turn) and stores counts only; module, state, memory and
+  transcript text are never retained.
+- Run identities carry `prompt_composition`: module hashes, composition
+  orders, per-variant system-instruction hashes, bundle fingerprint, renderer
+  and loader hashes. The comparator refuses any undeclared differing
+  dimension.
+- Spoken-quality review is manual and local:
+  `evals/spoken_review_probe.py --prompt-variant ... --families ...` prints
+  the caller turn and assistant message per case ID. Its output is review
+  material only and must never be copied into shared artifacts; message text
+  is never persisted.

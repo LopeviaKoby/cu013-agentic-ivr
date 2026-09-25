@@ -51,6 +51,67 @@ cases:
       allowed_claims: ["reset flow exists", "guided self-service available"]
       forbidden_claims: ["password was reset", "email sent"]
 
+  # --- ambiguous supported actions -----------------------------------------
+  - case_id: ambiguous-reset-unlock
+    family: ambiguous-reset-unlock
+    scenario_kind: independent_trial
+    description: >
+      An expression that stays ambiguous between reset and unlock must not
+      materialize a supported goal: the agent asks one brief clarification
+      with CONTINUE and does not start identity capture, confirmation or any
+      operation. The property is semantic; no keyword rule exists.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "no puedo acceder a mi cuenta, ¿me ayudas?"
+        expect:
+          route: CONTINUE
+          goal: null
+          confirmation: absent
+          identity_valid: false
+          operation: none
+          dispatch_count_unchanged: true
+      - transcript: "tengo problemas para entrar a mi cuenta"
+        expect:
+          route: CONTINUE
+          goal: null
+          confirmation: absent
+          identity_valid: false
+          operation: none
+          dispatch_count_unchanged: true
+      - transcript: "necesito ayuda con el acceso a mi cuenta"
+        expect:
+          route: CONTINUE
+          goal: null
+          confirmation: absent
+          identity_valid: false
+          operation: none
+          dispatch_count_unchanged: true
+      - transcript: "mi cuenta me está dando problemas para ingresar"
+        expect:
+          route: CONTINUE
+          goal: null
+          confirmation: absent
+          identity_valid: false
+          operation: none
+          dispatch_count_unchanged: true
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: null
+      confirmation_state: none
+      action_eligibility: not_eligible
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "no supported goal while the action stays ambiguous"
+      allowed_claims: ["one brief clarification question"]
+      forbidden_claims: ["account is unlocked", "password was reset", "operation dispatched", "identity capture started"]
+    controls:
+      positive:
+        - case_id: unlock-direct-request
+        - case_id: reset-direct-request
+      negative:
+        - case_id: prior-question-only
+
   # --- Experiment 0005 provenance case --------------------------------------
   - case_id: exp0005-prior-request
     family: side-question-before-action
@@ -186,6 +247,50 @@ cases:
       escalation_eligibility: not_eligible
       allowed_claims: ["cancellation acknowledged"]
       forbidden_claims: ["account is unlocked"]
+
+  - case_id: goal-re-request-after-cancel
+    family: goal-re-request
+    scenario_kind: sequence
+    description: >
+      An explicit cancellation is not a permanent prohibition: a later
+      explicit request for the same capability registers a fresh goal
+      instance with normal revision semantics and no reuse of the cancelled
+      challenge.
+    initial_state: { identity_validated: false, conversation_goal: null, goal_revision: 0, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "quiero desbloquear mi cuenta"
+        expect:
+          route: COLLECT_IDENTITY
+          goal: UNLOCK_ACCOUNT
+          goal_transition: created
+          revision_transition: created
+          confirmation: absent
+          dispatch_count_unchanged: true
+      - transcript: "mejor cancelalo, olvidalo por ahora"
+        expect:
+          goal: null
+          goal_transition: cleared
+          confirmation: absent
+          dispatch_count_unchanged: true
+      - transcript: "pensandolo mejor, si quiero desbloquearla"
+        expect:
+          route: COLLECT_IDENTITY
+          goal: UNLOCK_ACCOUNT
+          goal_transition: created
+          revision_transition: created
+          confirmation: absent
+          dispatch_count_unchanged: true
+          operation: none
+    external_events: []
+    expected:
+      route: COLLECT_IDENTITY
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: none
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "cancel then fresh explicit request; goal recreated, no dispatch"
+      allowed_claims: ["the request can continue"]
+      forbidden_claims: ["account is unlocked", "operation dispatched", "the previous cancellation blocks the request"]
 
   # --- multiple supported goals ----------------------------------------------
   - case_id: multiple-goals-sequential
@@ -1388,3 +1493,37 @@ cases:
       escalation_eligibility: not_eligible
       allowed_claims: ["capability exists"]
       forbidden_claims: ["account is unlocked", "operation dispatched"]
+
+  - case_id: unlock-no-self-service
+    family: unlock-no-self-service
+    scenario_kind: sequence
+    description: >
+      UNLOCK_ACCOUNT has no accepted guided self-service. Asking for a
+      portal path must not invent one, must not open a guided procedure and
+      must not dispatch; the spoken review judges that no invented
+      self-service steps are described.
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "¿puedo desbloquear mi cuenta yo mismo desde algún portal?"
+        expect:
+          route: CONTINUE
+          goal: UNLOCK_ACCOUNT
+          goal_transition: retained
+          revision_transition: same
+          procedure_current: null
+          dispatch_count_unchanged: true
+          operation: none
+      - transcript: "entonces, ¿cómo sigo?"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          goal_transition: retained
+          dispatch_count_unchanged: true
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      conversation_goal: UNLOCK_ACCOUNT
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "no self-service path invented; goal retained; no dispatch"
+      allowed_claims: ["the unlock request can continue with the runtime"]
+      forbidden_claims: ["invented self-service unlock steps", "account is unlocked", "operation dispatched"]

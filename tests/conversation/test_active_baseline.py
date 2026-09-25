@@ -21,9 +21,13 @@ from app.conversation.gemini import (
     active_conversation_baseline,
     contents_for,
     response_schema_for,
-    system_instructions_for,
 )
-from app.conversation.prompts import SYSTEM_INSTRUCTIONS
+from app.conversation.prompt_renderer import (
+    PROMPT_COMPOSITION_SINGLE_BASELINE,
+    StaticPrompt,
+    hash_prompt_text,
+)
+from tests.conversation.prompt_fixtures import make_bundle
 
 
 def test_active_baseline_identity_is_single_and_explicit() -> None:
@@ -47,9 +51,16 @@ def test_active_schema_requires_structured_procedure_classification() -> None:
     assert order.index("procedure_observation") < order.index("goal")
 
 
-def test_active_prompt_is_single_baseline_text() -> None:
-    baseline = active_conversation_baseline()
-    assert system_instructions_for(baseline) == SYSTEM_INSTRUCTIONS
+def test_active_prompt_is_composed_by_the_injected_source() -> None:
+    from app.conversation.gemini import GeminiTurnModel
+    from tests.conversation.test_gemini_model import FakeGenaiClient
+
+    bundle = make_bundle()
+    client = FakeGenaiClient()
+    model = GeminiTurnModel(  # type: ignore[arg-type]
+        client, active_conversation_baseline(), prompts=bundle
+    )
+    assert model._config(None).system_instruction == bundle.system_instructions(None)  # type: ignore[attr-defined]
     contents = contents_for(state_block="objetivo: ninguno", transcript="hola")
     assert "objetivo: ninguno" in contents
 
@@ -61,7 +72,9 @@ def test_gemini3_request_sends_level_without_budget() -> None:
     from tests.conversation.test_gemini_model import FakeGenaiClient
 
     client = FakeGenaiClient()
-    config = GeminiTurnModel(client, active_conversation_baseline())._config()  # type: ignore[arg-type]
+    config = GeminiTurnModel(  # type: ignore[arg-type]
+        client, active_conversation_baseline(), prompts=make_bundle()
+    )._config(None)
     assert config.thinking_config is not None
     assert config.thinking_config.thinking_level == ThinkingLevel.MINIMAL
     assert config.thinking_config.thinking_budget is None
@@ -92,15 +105,45 @@ def test_variant_fingerprint_derived_from_effective_sources() -> None:
     from evals.conversation_lab import hash_text
 
     baseline = active_conversation_baseline()
-    identity = build_variant_identity(baseline)
+    static = StaticPrompt(text="synthetic static baseline")
+    identity = build_variant_identity(baseline, prompt_source=static)
     assert identity["provider"] == "vertex_ai"
     assert identity["model_id"] == "gemini-3.5-flash-lite"
     assert identity["model_location"] == "global"
     assert identity["thinking_level"] == "MINIMAL"
     assert identity["thinking_budget"] is None
     assert identity["strict_procedure_observation"] is True
-    assert identity["effective_prompt_hash"] == hash_text(SYSTEM_INSTRUCTIONS)
+    assert identity["effective_prompt_hash"] == hash_text("synthetic static baseline")
     assert identity["memory_n"] == 3
+    assert identity["prompt_composition"]["mode"] == PROMPT_COMPOSITION_SINGLE_BASELINE
+
+
+def test_variant_fingerprint_carries_composition_hashes() -> None:
+    from evals.conversation_eval import build_variant_identity
+
+    bundle = make_bundle()
+    identity = build_variant_identity(active_conversation_baseline(), prompt_source=bundle)
+    composition = identity["prompt_composition"]
+    assert composition["mode"] == "prompt_composition_protocols"
+    assert composition["bundle_fingerprint"] == bundle.fingerprint
+    assert composition["module_hashes"]["core.md"] == bundle.core.sha256
+    assert composition["module_hashes"]["catalog.md"] == bundle.catalog.sha256
+    assert composition["module_hashes"]["few_shot.md"] == bundle.few_shot.sha256
+    assert composition["system_instruction_hashes"] == bundle.instruction_hashes()
+    assert composition["composition_orders"]["base"] == [
+        "core.md",
+        "catalog.md",
+        "few_shot.md",
+    ]
+    assert composition["composition_orders"]["RESET_PASSWORD"] == [
+        "core.md",
+        "catalog.md",
+        "RESET_PASSWORD.runtime.md",
+        "few_shot.md",
+    ]
+    assert composition["protocol_projection_mode"] == ["step_window"]
+    assert composition["projected_steps"]["RESET_PASSWORD"]
+    assert identity["effective_prompt_hash"] == hash_prompt_text(bundle.system_instructions(None))
 
 
 def test_config_model_location_is_global_not_infrastructure() -> None:

@@ -14,6 +14,8 @@ La iteración `next-step-v1` materializó el contrato común de respuesta para l
 
 Las llamadas reales del 23-09-2026 contra la revisión etiquetada (`00028-6rb`) cerraron el diagnóstico: 409 por evento sin turno, 422 por body fuera del contrato, y 200 servido con el envelope **legacy** porque el flujo no seleccionó el header. El hallazgo fue `HEADER_MISMATCH` (el Switch de XCALLY esperaba `next_step` y su rama por defecto transfirió; no fue atención humana) más un gap de observabilidad (los INFO de aplicación no llegaban a Cloud Logging). La corrección vigente: header canónico `X-CU013-Response-Contract` sin alias, `next_step` derivado del estado consolidado (goal pendiente sin autorización exige `COLLECT_IDENTITY`), bootstrap pre-turno v1 con create condicional y contador durable de voice retry, schema v4, rejection reasons tipados, proyección segura de 422 y topología de logging `cu013` con eventos cerrados. La última llamada real completó el camino feliz hasta RD (POST/GET 200/NONE con `CALLERID(name)=${UNIQUEID}` consistente) y el único fallo fue la representación numérica del boundary; se añadió una compatibilidad numérica estrecha (whitelist cerrada, strings decimales canónicas, sólo en el adapter v1) manteniendo el dominio y el carril legacy estrictos. Evaluación económica (deterministas/contrato/replay), sin full paired por no cambiar la semántica de decisión del modelo.
 
+Existe un **experimental candidate** en la rama aislada `exp/prompt-protocols` (último SHA local `1c4b097` + evidencia; sin push en la última iteración): composición modular (`core.md`/`core_en.md` + `catalog` + few-shot mínimo + protocolo runtime privado), proyección determinista del paso guiado, **proyección transitoria del estado durable** (`ModelStateProjection`, no persistida), tombstone semántico derivado para cancelación/re-request, reglas de evidencia de progreso y grounding externo (FAILED/UNKNOWN), ablación de few-shot por contenido (adoptado `few_shot_min.md`) y fix de ambigüedad. La iteración final pre-voz quedó **INCONCLUSIVE — OWNER DECISION REQUIRED** ([Experimento 0011](docs/experiments/0011-prompt-composition-runtime-protocols.md)): full paired 191 pares válidos, 0 críticos, 0 regresiones objetivo, 9 no objetivo, `confirmation_state` FAIL 8→1; metamórfica invariance 1.0; sintética dev y held-out con los dos defectos residuales (challenge prematuro ante pregunta lateral y cancelación ante negativa); A/B ES/EN con ganador reproducible **EN** (no adoptado por el held-out congelado); judge 9 MEETS/2 CONCERN/0 FAIL; frameworks **KEEP CURRENT HARNESS**. El entorno DEV del repositorio apunta a `tivit-cu013-prd` (runtime SA `cu013-cloud-run-sa`, sin impersonation, tiers intactos) con aprovisionamiento preparado y no ejecutado. Memoria sin cambios: **NO MEMORY BLOCKER EVIDENCED**. **NOT merged to dev**; no hubo deploy, secretos nuevos ni E2E XCALLY.
+
 El primer corte de acciones de cuenta es `RESET_PASSWORD` + `UNLOCK_ACCOUNT`, sin prioridad obligatoria entre ambas.
 
 ## Pila y entorno
@@ -22,12 +24,14 @@ El primer corte de acciones de cuenta es `RESET_PASSWORD` + `UNLOCK_ACCOUNT`, si
 - Firestore como único almacén durable aceptado.
 - Cloud Run como cómputo DEV desplegado (`min=0` en reposo; `min=1` sólo en ventanas autorizadas de benchmark o de validación DEV de voz controlada).
 - Docker, GitHub Actions, pytest, Ruff y MyPy.
-- Proyecto GCP: `cu013-xcally-agentic`.
+- Proyecto GCP vigente del entorno DEV: `tivit-cu013-prd` (runtime SA `cu013-cloud-run-sa@tivit-cu013-prd.iam.gserviceaccount.com`, sin impersonation). `cu013-xcally-agentic` queda como historia en experimentos y Git.
 - Región primaria: `us-east1`; ubicación del modelo: `global` (no confundir con infraestructura).
 
 ## Infraestructura actual
 
-Infraestructura GCP aprovisionada y confirmada por el propietario:
+El proyecto DEV vigente es `tivit-cu013-prd` (número 731118338507, organización 974679392812, `us-east1`), con Firestore `(default)` Native vacío, las APIs requeridas habilitadas y la runtime SA `cu013-cloud-run-sa@tivit-cu013-prd.iam.gserviceaccount.com`. El aprovisionamiento TIVIT (Artifact Registry, secreto, IAM y Cloud Run) está **preparado y no ejecutado**; los detalles siguientes describen el entorno anterior y se conservan como historia hasta que ese aprovisionamiento se autorice y ejecute.
+
+Infraestructura GCP aprovisionada y confirmada por el propietario (histórico, proyecto anterior):
 
 - APIs requeridas habilitadas;
 - Firestore `(default)`, Native/Standard, `us-east1`;
@@ -97,6 +101,7 @@ Servicios habilitados y materializados en DEV:
 - [Experimento semántico 0006](docs/experiments/0006-semantic-runtime-evaluation.md)
 - [Experimento laboratorio de evaluación 0007](docs/experiments/0007-agent-evaluation-lab.md)
 - [Experimento contrato de eventos técnicos 0010](docs/experiments/0010-integration-events-contract.md)
+- [Experimento composición de prompts 0011](docs/experiments/0011-prompt-composition-runtime-protocols.md)
 - [Runbook Cloud Run DEV benchmark](docs/runbooks/cloud-run-dev-benchmark.md)
 - [Núcleo Thin Session](app/session/)
 - [Benchmark de latencia DEV](evals/backend_latency.py)
@@ -209,7 +214,7 @@ Pendiente:
 
 ## Control operativo previo al experimento
 
-El propietario confirmó desde el host real la cadena completa `ADC impersonation → google-auth refresh → Firestore read-only` con `cu013-spike-firestore` sobre el proyecto `cu013-xcally-agentic` y la base `(default)`. El control previo al experimento está aprobado.
+Histórico (proyecto anterior): el propietario confirmó desde el host real la cadena completa `ADC impersonation → google-auth refresh → Firestore read-only` con `cu013-spike-firestore` sobre el proyecto `cu013-xcally-agentic` y la base `(default)`. El control previo al experimento está aprobado. Para el entorno DEV vigente, ADC es la cuenta de usuario `pedro.lopez@tivit.com` sin impersonation y el acceso a Vertex en `tivit-cu013-prd` fue verificado read-only (count_tokens OK).
 
 El benchmark real de latencia del 16-09-2026 fue autorizado por el propietario y se ejecutó con ADC impersonando `cu013-runtime-dev`; las corridas locales y la corrida Cloud Run dejaron 97 documentos sintéticos bajo `cu013dev_sessions` que no fueron borrados. El despliegue y la ventana warm las ejecutó el propietario con el tooling versionado; el agente sólo hizo verificación y lecturas read-only. Nunca deshabilitar TLS ni la verificación de certificados para sortear el problema.
 
@@ -239,6 +244,7 @@ SendMail permanece Deferred y fuera del alcance inmediato. Los valores predeterm
 | Experimento 0006 | completed (runtime semántico candidato, sin regresiones críticas; validación de voz DEV pendiente) |
 | Experimento 0007 | completed (laboratorio de evaluación materializado y validado; sin comparación de candidato todavía) |
 | Experimento 0010 | running (contratos backend de integración y `next-step-v1` implementados y probados localmente; revisión E2E etiquetada con 0% de tráfico y `min=1` de revisión; caller tests pendientes) |
+| Experimento 0011 | completed (INCONCLUSIVE — OWNER DECISION REQUIRED; rama `exp/prompt-protocols` aislada, NOT merged to dev; sin deploy ni E2E) |
 | Baseline conversacional activo | Gemini 3.5 Flash-Lite, Vertex `global`, `MINIMAL`, sintético; no voz-validado ni producción |
 | FS-002 | open |
 | CNV-001 | resolved (schema v2 durable pre-auth + continuidad + correcciones/cancelación implementados y verificados; eliminado de `docs/gaps.md`) |

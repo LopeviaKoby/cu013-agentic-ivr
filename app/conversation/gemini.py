@@ -6,6 +6,11 @@ enabled, mandatory structured procedure classification sent early in the
 response schema, and a recent-conversation window of three completed
 caller/assistant turn pairs rendered only for synthetic evaluation turns.
 
+The system instruction is composed by the injected ``PromptSource``: the
+active product path selects the precomposed core + catalog (+ the active
+private runtime protocol of the durable goal) built once at startup, while the
+evaluation baseline lane can replay a frozen static text.
+
 Authentication is ADC only: never a Gemini API key or service-account JSON.
 Exactly one generate_content call per turn, without streaming, tools or
 hidden retries: the single-attempt policy and the explicit deadline keep
@@ -42,13 +47,18 @@ from app.conversation.errors import (
     ModelTimeoutError,
     ModelUnavailableError,
 )
-from app.conversation.prompts import POLLING_FEEDBACK_INSTRUCTIONS, SYSTEM_INSTRUCTIONS
+from app.conversation.prompt_renderer import PromptSource
+from app.conversation.prompts import POLLING_FEEDBACK_INSTRUCTIONS
 from app.session.feedback import PollingFeedbackRequest
 from app.session.metrics import NullTurnMetrics, TurnMetrics
 from app.session.record import (
     ConfirmationChallenge,
     ConversationGoal,
     ExternalOperation,
+)
+from app.session.state_projection import (
+    ModelStateProjection,
+    projection_from_turn_inputs,
 )
 from app.session.turns import ModelTurnDecision
 
@@ -102,7 +112,7 @@ class GeminiBaseline(BaseModel):
         thinking_level = os.environ.get("CU013_VERTEX_THINKING_LEVEL", ACTIVE_THINKING_LEVEL)
         strict_raw = os.environ.get("CU013_VERTEX_STRICT_PROC_OBS", "1")
         return cls(
-            project=os.environ.get("CU013_VERTEX_PROJECT", "cu013-xcally-agentic"),
+            project=os.environ.get("CU013_VERTEX_PROJECT", "tivit-cu013-prd"),
             location=os.environ.get("CU013_VERTEX_LOCATION", ACTIVE_MODEL_LOCATION),
             model=os.environ.get("CU013_VERTEX_MODEL", ACTIVE_CONVERSATION_MODEL),
             api_version=ACTIVE_API_VERSION,
@@ -114,7 +124,7 @@ class GeminiBaseline(BaseModel):
         )
 
 
-def active_conversation_baseline(*, project: str = "cu013-xcally-agentic") -> GeminiBaseline:
+def active_conversation_baseline(*, project: str = "tivit-cu013-prd") -> GeminiBaseline:
     """Explicit active conversational baseline (no hidden historic defaults)."""
     return GeminiBaseline(
         project=project,
@@ -127,11 +137,6 @@ def active_conversation_baseline(*, project: str = "cu013-xcally-agentic") -> Ge
         timeout_ms=ACTIVE_TIMEOUT_MS,
         attempts=ACTIVE_ATTEMPTS,
     )
-
-
-def system_instructions_for(baseline: GeminiBaseline) -> str:
-    """Effective system instructions: the single active baseline text."""
-    return SYSTEM_INSTRUCTIONS
 
 
 def contents_for(
@@ -183,41 +188,18 @@ def response_schema_for(baseline: GeminiBaseline) -> Any:
     return schema
 
 
-def _state_block(
-    goal: ConversationGoal | None,
-    identity_validated: bool,
-    confirmation: ConfirmationChallenge | None,
-    external_operation: ExternalOperation | None,
-) -> str:
-    """Render only the allowed semantic projection of the durable record."""
-    lines = [
-        (
-            f"objetivo: {goal.action.value} (revisión {goal.revision})"
-            if goal is not None
-            else "objetivo: ninguno"
-        ),
-        f"identidad_validada: {'sí' if identity_validated else 'no'}",
-    ]
-    if confirmation is None:
-        lines.append("confirmación_pendiente: ninguna")
-    else:
-        lines.append(
-            f"confirmación_pendiente: {confirmation.action.value} "
-            f"(revisión {confirmation.goal_revision})"
-        )
-    if external_operation is None:
-        lines.append("operación_externa: ninguna")
-    else:
-        delivery = (
-            f" entrega={external_operation.delivery.value}"
-            if external_operation.delivery is not None
-            else ""
-        )
-        lines.append(
-            f"operación_externa: {external_operation.action.value} "
-            f"({external_operation.status.value}){delivery}"
-        )
-    return "\n".join(lines)
+STATE_PROJECTION_OPEN = "<conversation_state>"
+STATE_PROJECTION_CLOSE = "</conversation_state>"
+
+
+def render_state_projection(projection: ModelStateProjection) -> str:
+    """Render the transient projection as one compact, stable JSON block.
+
+    Deterministic key order keeps the block reproducible and hash-friendly;
+    only closed semantic values travel, never caller text.
+    """
+    payload = json.dumps(projection.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    return f"{STATE_PROJECTION_OPEN}\n{payload}\n{STATE_PROJECTION_CLOSE}"
 
 
 def parse_decision(text: str) -> ModelTurnDecision:
@@ -290,10 +272,12 @@ class GeminiTurnModel:
         client: Client,
         baseline: GeminiBaseline,
         *,
+        prompts: PromptSource,
         metrics: TurnMetrics | None = None,
     ) -> None:
         self._client = client
         self._baseline = baseline
+        self._prompts = prompts
         self._metrics: TurnMetrics = metrics or NullTurnMetrics()
 
     async def decide(
@@ -305,19 +289,26 @@ class GeminiTurnModel:
         confirmation: ConfirmationChallenge | None,
         external_operation: ExternalOperation | None,
         memory_context: str | None = None,
+        procedure_current: str | None = None,
+        state_projection: ModelStateProjection | None = None,
     ) -> ModelTurnDecision:
         start = time.monotonic()
         try:
             try:
-                # Synthetic evaluation lane only: the rendered
-                # recent-pair/procedure block is inserted between the
-                # semantic projection and the current transcript. The
-                # default path passes memory_context=None and renders
-                # byte-identical input. Real-caller textual memory stays
-                # disabled until an accepted retention policy exists.
-                state_block = _state_block(
-                    goal, identity_validated, confirmation, external_operation
+                # The runtime-built projection is the authoritative view; the
+                # adapter fallback only mirrors the facts it already received.
+                projection = state_projection or projection_from_turn_inputs(
+                    goal=goal,
+                    identity_validated=identity_validated,
+                    confirmation=confirmation,
+                    external_operation=external_operation,
+                    procedure_current=procedure_current,
                 )
+                # Synthetic evaluation lane only: the rendered
+                # recent-pair/procedure block follows the projection and
+                # precedes the current transcript. Real-caller textual memory
+                # stays disabled until an accepted retention policy exists.
+                state_block = render_state_projection(projection)
                 if memory_context:
                     state_block += "\n" + memory_context
                 response = await self._client.aio.models.generate_content(
@@ -326,7 +317,7 @@ class GeminiTurnModel:
                         state_block=state_block,
                         transcript=transcript,
                     ),
-                    config=self._config(),
+                    config=self._config(goal, procedure_current),
                 )
             except APIError as exc:
                 raise ModelUnavailableError("vertex ai request failed") from exc
@@ -361,7 +352,9 @@ class GeminiTurnModel:
         if isinstance(payload, dict) and "procedure_observation" in payload:
             self._metrics.record_counter("procedure_observation_emitted", 1)
 
-    def _config(self) -> GenerateContentConfig:
+    def _config(
+        self, goal: ConversationGoal | None, procedure_current: str | None = None
+    ) -> GenerateContentConfig:
         baseline = self._baseline
         if baseline.thinking_level is not None:
             # Gemini 3 path: discrete level only; the API rejects combining
@@ -371,7 +364,7 @@ class GeminiTurnModel:
         else:
             thinking = ThinkingConfig(thinking_budget=baseline.thinking_budget)
         return GenerateContentConfig(
-            system_instruction=system_instructions_for(baseline),
+            system_instruction=self._prompts.system_instructions(goal, procedure_current),
             response_mime_type="application/json",
             response_schema=response_schema_for(baseline),
             thinking_config=thinking,
@@ -399,6 +392,11 @@ class GeminiTurnModel:
         thoughts = getattr(usage, "thoughts_token_count", None)
         if thoughts is not None:
             self._metrics.record_counter("reasoning_tokens", thoughts)
+        # Cache hits are counts only: implicit caching is provider-side and
+        # this counter records whatever the effective SDK reports.
+        cached = getattr(usage, "cached_content_token_count", None)
+        if cached is not None:
+            self._metrics.record_counter("cached_tokens", cached)
 
 
 class GeminiPollingFeedbackComposer:

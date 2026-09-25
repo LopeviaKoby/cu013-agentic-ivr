@@ -17,6 +17,7 @@ from google.genai import Client
 from google.genai.types import HttpOptions
 
 from app.conversation.gemini import GeminiBaseline, GeminiTurnModel
+from app.conversation.prompt_loader import load_prompt_bundle
 
 PRIOR_REQUEST_TRANSCRIPT = "quiero desbloquear mi cuenta pero antes explícame qué puedes hacer"
 DIRECT_ACTION_TRANSCRIPT = "quiero desbloquear mi cuenta"
@@ -53,7 +54,7 @@ async def run() -> int:
         location=baseline.location,
         http_options=HttpOptions(api_version=baseline.api_version),
     )
-    model = GeminiTurnModel(client, baseline)
+    model = GeminiTurnModel(client, baseline, prompts=load_prompt_bundle())
     try:
         await probe(model, "PRIOR_REQUEST", PRIOR_REQUEST_TRANSCRIPT, PRIOR_REQUEST_REPETITIONS)
         await probe(model, "DIRECT_ACTION", DIRECT_ACTION_TRANSCRIPT, CONTROL_REPETITIONS)

@@ -30,3 +30,7 @@ skills-lock.json
 evals/results/
 docs/iop/*
 !docs/iop/README.md
+
+# Owner-supplied private runtime protocols: local inputs only, never versioned.
+RESET_PASSWORD.runtime.md
+UNLOCK_ACCOUNT.runtime.md

@@ -22,6 +22,7 @@ from app.session.record import (
     OperationStatus,
     SessionRecord,
 )
+from app.session.state_projection import ModelStateProjection
 from app.session.turns import (
     GraphState,
     ModelTurnDecision,
@@ -112,6 +113,8 @@ class FakeTurnModel:
         confirmation: ConfirmationChallenge | None,
         external_operation: ExternalOperation | None,
         memory_context: str | None = None,
+        procedure_current: str | None = None,
+        state_projection: ModelStateProjection | None = None,
     ) -> ModelTurnDecision:
         self.calls.append(
             {
@@ -121,6 +124,8 @@ class FakeTurnModel:
                 "confirmation": confirmation,
                 "external_operation": external_operation,
                 "memory_context": memory_context,
+                "procedure_current": procedure_current,
+                "state_projection": state_projection,
             }
         )
         if self.error is not None:

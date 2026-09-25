@@ -55,10 +55,26 @@ from app.conversation.gemini import (
     GeminiBaseline,
     GeminiTurnModel,
     response_schema_for,
-    system_instructions_for,
+)
+from app.conversation.prompt_loader import (
+    HARNESS_TEMPLATES,
+    PromptBundleError,
+    load_prompt_bundle,
+    normalize_prompt_text,
+)
+from app.conversation.prompt_renderer import (
+    PROMPT_COMPOSITION_NONE,
+    PROMPT_COMPOSITION_PROTOCOLS,
+    PROMPT_COMPOSITION_SINGLE_BASELINE,
+    PromptBundle,
+    PromptSource,
+    StaticPrompt,
+    hash_prompt_text,
 )
 from app.session.memory import (
     DEFAULT_PROMPT_POLICY,
+    GUIDED_PROCEDURE_ID,
+    GUIDED_STEPS,
     MEMORY_VARIANTS,
     NO_RECENT_MEMORY,
     PROCEDURE_PROGRESS_ONLY,
@@ -66,6 +82,8 @@ from app.session.memory import (
     RECENT_CONVERSATION_MEMORY,
     SESSION_BYTES_GUARD,
     ExperimentalMemoryConfig,
+    ExperimentalProcedureState,
+    ExperimentalTurnPair,
     memory_variant_identity,
     render_memory_block,
     session_document_bytes,
@@ -87,6 +105,7 @@ from app.session.record import (
 )
 from app.session.repository import SessionRepository
 from app.session.service import TurnService, consolidate
+from app.session.state_projection import project_model_state
 from app.session.turns import (
     ConfirmationEvent,
     ConfirmationObservation,
@@ -150,6 +169,17 @@ FIXTURE_IDENTITY_BACKDATE = timedelta(minutes=1)
 WARMUP_INPUT_ID = "warmup"
 WARMUP_TRANSCRIPT = "hola"
 ENVIRONMENT_CLASS_DEFAULT = "local_dev_host_adc"
+PROMPT_VARIANT_PROTOCOLS = PROMPT_COMPOSITION_PROTOCOLS
+PROMPT_VARIANT_SNAPSHOT = PROMPT_COMPOSITION_SINGLE_BASELINE
+SNAPSHOT_BASELINE_PATH = REPO_ROOT / "evals/conversation/baselines/129c793-system.md"
+SNAPSHOT_FIXTURE_MARKER = "EVALUATION FIXTURE — NOT PRODUCT DOCUMENTATION"
+SNAPSHOT_HEADER_TERMINATOR = "-->"
+TOKEN_BREAKDOWN_METHOD = "provider count_tokens after the timed replay; numbers only, never text"
+TOKEN_SAMPLE_TRANSCRIPT = "necesito restablecer mi contrasena"
+TOKEN_SAMPLE_CALLER = "no puedo acceder a mi cuenta"
+TOKEN_SAMPLE_ASSISTANT = "¿Quieres restablecerla o desbloquearla?"
+PROMPT_RENDERER_FILE = Path("app/conversation/prompt_renderer.py")
+PROMPT_LOADER_FILE = Path("app/conversation/prompt_loader.py")
 RUNTIME_SEMANTIC_FILES = (
     Path("app/session/turns.py"),
     Path("app/session/service.py"),
@@ -591,6 +621,7 @@ async def replay_trial(
                         window_n=experimental.window_n,
                         strategy=experimental.strategy,
                     )
+                procedure = record.experimental_procedure
                 model_start = time.monotonic()
                 decision = await model.decide(
                     transcript=turn_input.transcript,
@@ -599,6 +630,7 @@ async def replay_trial(
                     confirmation=record.confirmation,
                     external_operation=record.external_operation,
                     memory_context=memory_context,
+                    procedure_current=(procedure.current_step if procedure is not None else None),
                 )
                 model_latency = (time.monotonic() - model_start) * 1000.0
                 prompt_tokens, completion_tokens, reasoning_tokens, emitted_flag = _drain_usage(
@@ -1062,6 +1094,85 @@ def sequence_series(
     return series
 
 
+def load_snapshot_prompt(path: Path = SNAPSHOT_BASELINE_PATH) -> StaticPrompt:
+    """Load the frozen 129c793 baseline text from its labeled fixture.
+
+    The fixture is evaluation-only and must announce itself as such; the text
+    after the header comment is used byte-for-byte so the baseline identity
+    hash is reproducible.
+    """
+    text = path.read_text(encoding="utf-8")
+    header, terminator, body = text.partition(SNAPSHOT_HEADER_TERMINATOR)
+    if not terminator or SNAPSHOT_FIXTURE_MARKER not in header:
+        raise ValueError(f"{path} is not a labeled evaluation fixture")
+    if not body.startswith("\n"):
+        raise ValueError(f"{path} must separate its header from the prompt text with a newline")
+    snapshot = body[1:]
+    if snapshot.endswith("\n"):
+        snapshot = snapshot[:-1]
+    # Checkout line endings never change the frozen text: normalize to LF.
+    return StaticPrompt(text=normalize_prompt_text(snapshot))
+
+
+def resolve_prompt_source(
+    prompt_variant: str,
+    harness_language: str = "es",
+) -> PromptSource:
+    """The declared evaluation variable: modular composition or snapshot."""
+    if prompt_variant == PROMPT_VARIANT_SNAPSHOT:
+        return load_snapshot_prompt()
+    if prompt_variant == PROMPT_VARIANT_PROTOCOLS:
+        if harness_language == "en":
+            templates = HARNESS_TEMPLATES["en"]
+            return load_prompt_bundle(
+                core_name=templates["core"] or "core_en.md",
+                catalog_name=templates["catalog"] or "catalog_en.md",
+                few_shot_name=templates["few_shot"],
+            )
+        return load_prompt_bundle()
+    raise ValueError(f"unknown prompt variant {prompt_variant!r}")
+
+
+def prompt_composition_identity(
+    prompt_source: PromptSource | None,
+    *,
+    harness_language: str = "es",
+) -> dict[str, Any]:
+    """Fingerprint the exact prompt composition used by this run."""
+    renderer_hash = hash_file(REPO_ROOT / PROMPT_RENDERER_FILE)
+    loader_hash = hash_file(REPO_ROOT / PROMPT_LOADER_FILE)
+    if isinstance(prompt_source, PromptBundle):
+        return {
+            "mode": PROMPT_COMPOSITION_PROTOCOLS,
+            "module_hashes": prompt_source.module_hashes(),
+            "composition_orders": prompt_source.composition_orders(),
+            "system_instruction_hashes": prompt_source.instruction_hashes(),
+            "protocol_projection_mode": list(prompt_source.projection_modes),
+            "projected_steps": prompt_source.projected_steps(),
+            "few_shot_variant": (
+                prompt_source.few_shot.name if prompt_source.few_shot is not None else "none"
+            ),
+            "harness_language": harness_language,
+            "bundle_fingerprint": prompt_source.fingerprint,
+            "renderer_sha256": renderer_hash,
+            "loader_sha256": loader_hash,
+        }
+    if isinstance(prompt_source, StaticPrompt):
+        return {
+            "mode": PROMPT_COMPOSITION_SINGLE_BASELINE,
+            "module_hashes": {},
+            "composition_orders": {"base": []},
+            "system_instruction_hashes": {"base": hash_prompt_text(prompt_source.text)},
+            "protocol_projection_mode": ["full"],
+            "projected_steps": {},
+            "few_shot_variant": "none",
+            "bundle_fingerprint": None,
+            "renderer_sha256": renderer_hash,
+            "loader_sha256": loader_hash,
+        }
+    return {"mode": PROMPT_COMPOSITION_NONE}
+
+
 def build_variant_identity(
     baseline: GeminiBaseline | None,
     *,
@@ -1069,6 +1180,9 @@ def build_variant_identity(
     memory_n: int = 3,
     lane: str = "direct",
     strategy: str = DEFAULT_PROMPT_POLICY,
+    prompt_source: PromptSource | None = None,
+    cache_mode: str = "none",
+    harness_language: str = "es",
 ) -> dict[str, Any]:
     root = REPO_ROOT
     source_sha, working_tree = git_identity(root)
@@ -1082,7 +1196,7 @@ def build_variant_identity(
         "response_schema": sent_schema_json,
     }
     memory_identity = memory_variant_identity(memory_variant, memory_n, strategy)
-    effective_prompt = system_instructions_for(baseline) if baseline is not None else ""
+    effective_prompt = prompt_source.system_instructions(None) if prompt_source is not None else ""
     model_location = baseline.location if baseline else "unknown"
     thinking_level = baseline.thinking_level if baseline else None
     # Gemini 3 sends only thinking_level; reporting budget 0 alongside a
@@ -1111,11 +1225,20 @@ def build_variant_identity(
         "attempts": baseline.attempts if baseline else None,
         "runtime_semantic_hash": hash_files([root / path for path in RUNTIME_SEMANTIC_FILES]),
         "decision_schema_hash": hash_json(decision_schema),
-        "state_projection_hash": hash_text(inspect.getsource(gemini_module._state_block)),
+        "state_projection_hash": hash_json(
+            {
+                "builder": hash_file(root / "app/session/state_projection.py"),
+                "renderer": hash_text(inspect.getsource(gemini_module.render_state_projection)),
+            }
+        ),
         "dependency_lock_hash": hash_file(root / "requirements.lock"),
         "tools": TOOLS_NONE,
         "model_revision": MODEL_REVISION_UNAVAILABLE,
         "lane": lane,
+        "cache_mode": cache_mode,
+        "prompt_composition": prompt_composition_identity(
+            prompt_source, harness_language=harness_language
+        ),
     }
     identity.update(memory_identity)
     return identity
@@ -1132,6 +1255,113 @@ def build_evaluator_identity() -> dict[str, Any]:
         "comparator_sha256": hash_file(root / "evals/conversation_compare.py"),
         "critical_gate": "evals/conversation_lab.py:detect_executed_criticals",
         "schema_version": LAB_SCHEMA_VERSION,
+    }
+
+
+async def _count_tokens(client: Client, model: str, text: str) -> int | None:
+    """Count tokens for one bucket; provider failure stays missing, never 0."""
+    try:
+        response = await client.aio.models.count_tokens(model=model, contents=text)
+    except Exception:
+        return None
+    total = response.total_tokens
+    return int(total) if total is not None else None
+
+
+async def token_composition_breakdown(
+    client: Client, baseline: GeminiBaseline, prompt_source: PromptSource
+) -> dict[str, Any]:
+    """Post-run token composition; never runs inside a timed turn or a call.
+
+    It counts only numbers and stores only numbers: no module, state, memory
+    or transcript text is retained. Dynamic buckets are representative
+    synthetic constructions, not captured caller input.
+    """
+    buckets: dict[str, int] = {}
+    missing: list[str] = []
+
+    async def record(label: str, text: str) -> None:
+        value = await _count_tokens(client, baseline.model, text)
+        if value is None:
+            missing.append(label)
+        else:
+            buckets[label] = value
+
+    if isinstance(prompt_source, PromptBundle):
+        await record("module:core", prompt_source.core.text)
+        await record("module:catalog", prompt_source.catalog.text)
+        if prompt_source.few_shot is not None:
+            await record(f"module:{prompt_source.few_shot.name}", prompt_source.few_shot.text)
+        for protocol in prompt_source.protocols:
+            await record(f"module:{protocol.name}", protocol.text)
+        for instruction in prompt_source.instructions:
+            await record(f"system_instruction:{instruction.key}", instruction.text)
+    elif isinstance(prompt_source, StaticPrompt):
+        await record("system_instruction:base", prompt_source.text)
+
+    now = datetime.now(UTC)
+    reset_goal = ConversationGoal(action=Action.RESET_PASSWORD, revision=1)
+    challenge = ConfirmationChallenge(
+        challenge_id="token-sample",
+        action=Action.RESET_PASSWORD,
+        goal_revision=1,
+        identity_validated_at=now,
+        issued_at=now,
+    )
+    operation = ExternalOperation(
+        operation_id="token-sample",
+        action=Action.RESET_PASSWORD,
+        status=OperationStatus.PENDING,
+    )
+    minimal_projection = project_model_state(
+        goal=None,
+        identity=IdentityState(),
+        confirmation=None,
+        dispatch=None,
+        operation=None,
+        procedure=None,
+        now=now,
+    )
+    active_projection = project_model_state(
+        goal=reset_goal,
+        identity=IdentityState(validated_at=now),
+        confirmation=challenge,
+        dispatch=None,
+        operation=operation,
+        procedure=None,
+        now=now,
+    )
+    await record(
+        "state_projection:minimal", gemini_module.render_state_projection(minimal_projection)
+    )
+    await record(
+        "state_projection:active_reset",
+        gemini_module.render_state_projection(active_projection),
+    )
+    procedure = ExperimentalProcedureState(
+        procedure_id=GUIDED_PROCEDURE_ID,
+        current_step=GUIDED_STEPS[0],
+        last_completed_step=None,
+        goal_revision=1,
+        opened_at=now,
+    )
+    procedure_block, _ = render_memory_block((), procedure, None, window_n=3)
+    await record("procedure_progress_block", procedure_block)
+    memory_pair = ExperimentalTurnPair(
+        caller_text=TOKEN_SAMPLE_CALLER,
+        assistant_text=TOKEN_SAMPLE_ASSISTANT,
+        sequence=1,
+        goal_revision=1,
+    )
+    memory_block, _ = render_memory_block((memory_pair,), None, None, window_n=3)
+    await record("recent_memory_block", memory_block)
+    await record("transcript_sample", TOKEN_SAMPLE_TRANSCRIPT)
+    return {
+        "method": TOKEN_BREAKDOWN_METHOD,
+        "model": baseline.model,
+        "location": baseline.location,
+        "buckets": dict(sorted(buckets.items())),
+        "missing": sorted(missing),
     }
 
 
@@ -1283,6 +1513,7 @@ def build_artifact(
     scope: str,
     focused_reason: str | None,
     rerun_of: str | None,
+    token_composition: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     valid_repetitions = sum(
         1
@@ -1387,6 +1618,7 @@ def build_artifact(
             "completion_tokens": summarize_tokens(completion, missing=missing_usage),
             "reasoning_tokens": summarize_tokens(reasoning, missing=0),
         },
+        "token_composition": token_composition,
         "session": {
             "session_bytes": summarize_values([float(value) for value in session_bytes_values]),
             "session_bytes_over_guard": sum(
@@ -1493,6 +1725,9 @@ def print_report(
         f"strategy={artifact['variant'].get('prompt_strategy')} "
         f"thinking_level={artifact['variant'].get('thinking_level')}"
     )
+    print(f"prompt_composition={artifact['variant'].get('prompt_composition', {}).get('mode')}")
+    if artifact.get("token_composition"):
+        print(f"token_composition={artifact['token_composition']}")
     for sequence in artifact["aggregate"]["sequences"]:
         print(f"sequence {sequence['case_id']}:")
         for point in sequence["series"]:
@@ -1545,6 +1780,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--output-dir", type=Path, default=DEFAULT_RESULTS_DIR, help="local results directory"
     )
     parser.add_argument("--no-write", action="store_true", help="do not write the run artifact")
+    parser.add_argument(
+        "--prompt-variant",
+        choices=[PROMPT_VARIANT_PROTOCOLS, PROMPT_VARIANT_SNAPSHOT],
+        default=PROMPT_VARIANT_PROTOCOLS,
+        help="declared experimental variable: prompt_composition_protocols composes "
+        "core+catalog+active private protocol; single_baseline_snapshot replays the "
+        "frozen 129c793 baseline text for the paired comparison",
+    )
+    parser.add_argument(
+        "--harness-language",
+        choices=["es", "en"],
+        default="es",
+        help="prompt-harness language A/B: es (active) or en (experiment); "
+        "protocols, state values and the schema are never translated",
+    )
+    parser.add_argument(
+        "--token-breakdown",
+        action="store_true",
+        help="after the timed replay, count tokens per composition bucket "
+        "(provider count_tokens; numbers only, never on the turn path)",
+    )
     parser.add_argument(
         "--lane",
         choices=["direct", "repository"],
@@ -1621,6 +1877,14 @@ async def run(argv: list[str] | None = None) -> int:
             window_n=args.memory_n,
             strategy=args.prompt_strategy,
         )
+    try:
+        prompt_source = resolve_prompt_source(
+            args.prompt_variant,
+            args.harness_language,
+        )
+    except (PromptBundleError, OSError, ValueError) as exc:
+        print(f"PROMPT {exc}", file=sys.stderr)
+        return 2
 
     baseline = GeminiBaseline.from_env()
     client = Client(
@@ -1630,9 +1894,10 @@ async def run(argv: list[str] | None = None) -> int:
         http_options=HttpOptions(api_version=baseline.api_version),
     )
     metrics = RecordingTurnMetrics()
-    model = GeminiTurnModel(client, baseline, metrics=metrics)
+    model = GeminiTurnModel(client, baseline, prompts=prompt_source, metrics=metrics)
     now = datetime.now(UTC)
     started_at = utc_now()
+    token_composition: dict[str, Any] | None = None
     try:
         records, warmups = await evaluate(
             model,
@@ -1644,6 +1909,8 @@ async def run(argv: list[str] | None = None) -> int:
             experimental=experimental,
             lane=args.lane,
         )
+        if args.token_breakdown:
+            token_composition = await token_composition_breakdown(client, baseline, prompt_source)
     finally:
         await client.aio.aclose()
     finished_at = utc_now()
@@ -1653,6 +1920,8 @@ async def run(argv: list[str] | None = None) -> int:
         memory_n=args.memory_n,
         lane=args.lane,
         strategy=args.prompt_strategy,
+        prompt_source=prompt_source,
+        harness_language=args.harness_language,
     )
     digest = variant_digest(identity)
     run_id = make_run_id("conversation-eval", at=started_at, digest=digest)
@@ -1674,6 +1943,7 @@ async def run(argv: list[str] | None = None) -> int:
         scope=args.scope,
         focused_reason=args.focused_reason,
         rerun_of=args.rerun_of,
+        token_composition=token_composition,
     )
     output_path: Path | None = None
     if not args.no_write:

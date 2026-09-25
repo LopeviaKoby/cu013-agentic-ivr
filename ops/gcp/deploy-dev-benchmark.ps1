@@ -12,13 +12,21 @@ Remember to run stop-dev-benchmark.ps1 when the window ends (min=0).
 #>
 [CmdletBinding()]
 param(
-    [string]$ProjectId = "cu013-xcally-agentic",
+    [string]$ProjectId = "tivit-cu013-prd",
     [string]$Region = "us-east1",
     [string]$Service = "cu013-runtime-dev",
-    [string]$RuntimeSa = "cu013-runtime-dev@cu013-xcally-agentic.iam.gserviceaccount.com",
-    [string]$DeployerSa = "cu013-deployer-dev@cu013-xcally-agentic.iam.gserviceaccount.com",
+    [string]$RuntimeSa = "cu013-cloud-run-sa@tivit-cu013-prd.iam.gserviceaccount.com",
     [string]$SecretName = "cu013-api-key-dev",
-    [string]$ArtifactRepo = "cu013-containers-dev"
+    [string]$ArtifactRepo = "cu013-containers-dev",
+    # Protocol mounts (numeric versions are resolved below when not pinned).
+    [string]$ResetProtocolSecret = "cu013-protocol-reset-password-dev",
+    [string]$UnlockProtocolSecret = "cu013-protocol-unlock-account-dev",
+    # Cloud Run validates the parent directory of every secret volume, so each
+    # protocol mounts under its own parent tree.
+    [string]$ProtocolMountBase = "/var/run/secrets/cu013",
+    [int]$MinInstances = 0,
+    # Closed allow-list: deployments never accept an arbitrary branch.
+    [string[]]$AllowedBranches = @("dev")
 )
 
 $ErrorActionPreference = "Stop"
@@ -56,23 +64,23 @@ function Get-PublicServiceUrl {
 }
 
 Write-Host "== repository state"
-Invoke-Checked { git fetch origin dev } "fetch"
 $branch = (git branch --show-current).Trim()
-if ($branch -ne "dev") {
-    Write-Error "branch is '$branch', expected 'dev'"
+if ($AllowedBranches -notcontains $branch) {
+    Write-Error "branch is '$branch'; allowed: $($AllowedBranches -join ', ')"
     exit 1
 }
+Invoke-Checked { git fetch origin $branch } "fetch"
 if (git status --porcelain) {
     Write-Error "worktree is not clean; commit or stash before deploying"
     exit 1
 }
 $GitSha = (git rev-parse HEAD).Trim()
-$RemoteSha = (git rev-parse origin/dev).Trim()
+$RemoteSha = (git rev-parse "origin/$branch").Trim()
 if ($GitSha -ne $RemoteSha) {
-    Write-Error "HEAD ($GitSha) != origin/dev ($RemoteSha)"
+    Write-Error "HEAD ($GitSha) != origin/$branch ($RemoteSha)"
     exit 1
 }
-Write-Host "clean HEAD: $GitSha"
+Write-Host "clean HEAD: $GitSha (origin/$branch)"
 
 Invoke-Checked { docker --version } "docker"
 Invoke-Checked { gcloud --version } "gcloud"
@@ -102,12 +110,32 @@ if (-not $numericVersions) {
 $Version = $numericVersions | Sort-Object { [int]$_ } -Descending | Select-Object -First 1
 Write-Host "secret: $SecretName (latest enabled version: $Version; value never printed)"
 
+function Get-LatestEnabledVersion {
+    param([Parameter(Mandatory)][string]$Name)
+    $versions = gcloud secrets versions list $Name --project $ProjectId `
+        --filter="state=ENABLED" --format="value(name)"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "cannot list secret versions for $Name"
+        exit 1
+    }
+    $numeric = $versions | Where-Object { $_ -match '^\d+$' }
+    if (-not $numeric) {
+        Write-Error "no enabled numeric version of secret $Name"
+        exit 1
+    }
+    return ($numeric | Sort-Object { [int]$_ } -Descending | Select-Object -First 1)
+}
+
+$ResetVersion = Get-LatestEnabledVersion $ResetProtocolSecret
+$UnlockVersion = Get-LatestEnabledVersion $UnlockProtocolSecret
+Write-Host "protocol secrets: ${ResetProtocolSecret}:${ResetVersion}, ${UnlockProtocolSecret}:${UnlockVersion} (values never printed)"
+
 Invoke-Checked { docker build -t $Tag . } "docker build"
 
-Write-Host "== docker login (impersonated deployer token; token never printed)"
-$token = gcloud auth print-access-token --impersonate-service-account $DeployerSa
+Write-Host "== docker login (active-account token; never printed)"
+$token = gcloud auth print-access-token
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "cannot impersonate $DeployerSa; grant iam.serviceAccounts.getAccessToken first"
+    Write-Error "cannot obtain an access token for the active account"
     exit 1
 }
 $token | docker login -u oauth2accesstoken --password-stdin us-east1-docker.pkg.dev | Out-Null
@@ -118,23 +146,26 @@ if ($LASTEXITCODE -ne 0) {
 
 Invoke-Checked { docker push $Tag } "docker push"
 
+# DRS risk: if --allow-unauthenticated fails under
+# iam.allowedPolicyMemberDomains, STOP & REPORT — DRS OWNER DECISION REQUIRED
+# (folder/project exception or authenticated OIDC invocation); never improvise
+# a proxy or a different identity.
 Invoke-Checked {
     gcloud run deploy $Service `
         --project $ProjectId --region $Region `
         --image $Tag `
         --service-account $RuntimeSa `
         --cpu 1 --memory 512Mi `
-        --concurrency 1 --max-instances 1 --min-instances 1 `
+        --concurrency 1 --max-instances 1 --min-instances $MinInstances `
         --cpu-throttling --no-cpu-boost `
         --allow-unauthenticated `
-        --set-secrets "CU013_API_KEY=${SecretName}:${Version}" `
-        --impersonate-service-account $DeployerSa
-} "cloud run deploy (min-instances=1 for the benchmark window)"
+        --update-secrets "CU013_API_KEY=${SecretName}:${Version},${ProtocolMountBase}-reset/protocols=${ResetProtocolSecret}:${ResetVersion},${ProtocolMountBase}-unlock/protocols=${UnlockProtocolSecret}:${UnlockVersion}" `
+        --update-env-vars "CU013_VERTEX_PROJECT=$ProjectId,CU013_PROTOCOL_RESET_FILE=${ProtocolMountBase}-reset/protocols,CU013_PROTOCOL_UNLOCK_FILE=${ProtocolMountBase}-unlock/protocols" `
+} "cloud run deploy (min-instances=$MinInstances)"
 
 Write-Host "== effective configuration"
 $serviceOutput = @(& gcloud run services describe $Service `
     --project $ProjectId --region $Region `
-    --impersonate-service-account $DeployerSa `
     --format=json)
 if ($LASTEXITCODE -ne 0) {
     Write-Error "cannot describe deployed service (exit $LASTEXITCODE)"
@@ -155,7 +186,6 @@ if ([string]::IsNullOrWhiteSpace($url) -or [string]::IsNullOrWhiteSpace($revisio
 }
 $revisionOutput = @(& gcloud run revisions describe $revision `
     --project $ProjectId --region $Region `
-    --impersonate-service-account $DeployerSa `
     --format=json)
 if ($LASTEXITCODE -ne 0) {
     Write-Error "cannot describe deployed revision (exit $LASTEXITCODE)"

@@ -21,6 +21,7 @@ from app.conversation.gemini import (
     GeminiPollingFeedbackComposer,
     GeminiTurnModel,
 )
+from app.conversation.prompt_loader import load_prompt_bundle
 from app.observability import configure_logging
 from app.session.integration import IntegrationEventService
 from app.session.metrics import StructuredLogTurnMetrics, TurnMetrics
@@ -36,6 +37,9 @@ def build_app(*, metrics: TurnMetrics | None = None) -> FastAPI:
     """Compose the real DEV application; clients close with the lifespan."""
     configure_logging()
     effective_metrics = metrics if metrics is not None else StructuredLogTurnMetrics()
+    # Prompt bundle first: a missing or invalid private protocol must fail
+    # startup, never a live call. The bundle stays immutable in RAM.
+    prompt_bundle = load_prompt_bundle()
     baseline = GeminiBaseline.from_env()
     genai_client = Client(
         vertexai=True,
@@ -46,7 +50,9 @@ def build_app(*, metrics: TurnMetrics | None = None) -> FastAPI:
     collection = os.environ.get(FIRESTORE_COLLECTION_ENV, DEFAULT_FIRESTORE_COLLECTION)
     firestore_client = FirestoreAsyncClient(project=baseline.project)
     store = FirestoreSessionDocumentStore(firestore_client, collection)
-    model = GeminiTurnModel(genai_client, baseline, metrics=effective_metrics)
+    model = GeminiTurnModel(
+        genai_client, baseline, prompts=prompt_bundle, metrics=effective_metrics
+    )
     repository = SessionRepository(store)
     service = TurnService(
         repository,

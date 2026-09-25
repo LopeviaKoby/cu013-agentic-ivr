@@ -80,6 +80,34 @@ def _presentation_body(**overrides: object) -> dict[str, object]:
     return values
 
 
+async def test_ambiguous_decision_returns_listen_without_a_goal(client, model, store) -> None:
+    """An unresolved ambiguity stays conversational: no goal, no capture.
+
+    The model decides the semantics (it asks the clarification); the boundary
+    must project LISTEN and the durable state must stay free of plan,
+    challenge, dispatch and operation.
+    """
+    from tests.session.doubles import make_decision
+
+    model.decision = make_decision(
+        message="¿Quieres restablecerla o desbloquearla?", route="CONTINUE"
+    )
+    response = await client.post(
+        turns_url("conversation-1"),
+        json={"transcript": SYNTHETIC_TRANSCRIPT},
+        headers=NEXT_STEP_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["next_step"] == "LISTEN"
+    assert body["command"] is None
+    document = store.documents["conversation-1"]
+    assert document["goal"] is None
+    assert document["confirmation"] is None
+    assert document["dispatch"] is None
+    assert document["external_operation"] is None
+
+
 async def test_identity_valid_then_affirmative_dispatches_under_v1(client, model, store) -> None:
     from tests.session.doubles import make_decision
 

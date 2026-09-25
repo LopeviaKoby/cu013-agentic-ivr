@@ -9,13 +9,24 @@ import pytest
 import app.main as main
 from app.api.security import API_KEY_ENV_VAR
 from app.conversation.engine import SessionConversationEngine
+from app.conversation.prompt_loader import PROTOCOL_DIR_ENV
 from app.main import DEFAULT_FIRESTORE_COLLECTION, build_app
 from app.session.integration import IntegrationEventService
 from app.session.metrics import RecordingTurnMetrics
 from tests.api.doubles import SYNTHETIC_API_KEY
+from tests.conversation.prompt_fixtures import write_synthetic_protocols
 
 
-async def test_build_app_wires_the_real_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def protocol_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: object) -> None:
+    """Synthetic private protocols: the product path never ships without them."""
+    directory = write_synthetic_protocols(tmp_path)  # type: ignore[arg-type]
+    monkeypatch.setenv(PROTOCOL_DIR_ENV, str(directory))
+
+
+async def test_build_app_wires_the_real_boundary(
+    monkeypatch: pytest.MonkeyPatch, protocol_dir: None
+) -> None:
     monkeypatch.setenv(API_KEY_ENV_VAR, SYNTHETIC_API_KEY)
     metrics = RecordingTurnMetrics()
     app = build_app(metrics=metrics)
@@ -35,12 +46,14 @@ async def test_build_app_wires_the_real_boundary(monkeypatch: pytest.MonkeyPatch
 
 
 async def test_build_app_uses_one_default_metrics_instance_everywhere(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, protocol_dir: None
 ) -> None:
     captured_model_metrics: list[object | None] = []
 
     class CapturingModel:
-        def __init__(self, *args: object, metrics: object | None = None) -> None:
+        def __init__(
+            self, *args: object, prompts: object | None = None, metrics: object | None = None
+        ) -> None:
             captured_model_metrics.append(metrics)
 
         async def decide(self, **kwargs: object) -> object:

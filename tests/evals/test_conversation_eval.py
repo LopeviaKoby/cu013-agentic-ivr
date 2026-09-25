@@ -7,6 +7,7 @@ import json
 import pytest
 
 from app.conversation.errors import InvalidModelOutputError, ModelUnavailableError
+from app.conversation.gemini import active_conversation_baseline
 from app.session.metrics import RecordingTurnMetrics
 from evals.conversation_eval import finalize_repetition, replay_trial, sequence_series
 from evals.conversation_lab import (
@@ -389,3 +390,113 @@ async def test_event_only_case_replays_without_model_call(event: str) -> None:
     records = await replay_case(case, model)
     assert final_turn(records[0]).event_kind == event
     assert records[0].turns[0].model_called is True
+
+
+# --- prompt composition lane (Experiment 0011) -------------------------------
+
+
+def test_snapshot_prompt_fixture_round_trips_without_its_header(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from evals.conversation_eval import load_snapshot_prompt
+
+    fixture = tmp_path / "fixture.md"
+    fixture.write_text(
+        "<!-- EVALUATION FIXTURE — NOT PRODUCT DOCUMENTATION\n"
+        "SOURCE SHA: synthetic\n"
+        "-->\n"
+        "line one\r\nline two\n",
+        encoding="utf-8",
+        newline="",
+    )
+    prompt = load_snapshot_prompt(fixture)
+    assert prompt.text == "line one\nline two"
+    assert "EVALUATION FIXTURE" not in prompt.text
+
+
+def test_snapshot_prompt_rejects_unlabeled_fixtures(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from evals.conversation_eval import load_snapshot_prompt
+
+    fixture = tmp_path / "fixture.md"
+    fixture.write_text("no label, no terminator", encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_snapshot_prompt(fixture)
+
+
+def test_prompt_composition_identity_retains_only_fingerprints() -> None:
+    from evals.conversation_eval import prompt_composition_identity
+    from tests.conversation.prompt_fixtures import SYNTHETIC_RESET_BODY, make_bundle
+
+    identity = prompt_composition_identity(make_bundle())
+    payload = json.dumps(identity)
+    assert identity["mode"] == "prompt_composition_protocols"
+    assert identity["composition_orders"]["RESET_PASSWORD"] == [
+        "core.md",
+        "catalog.md",
+        "RESET_PASSWORD.runtime.md",
+        "few_shot.md",
+    ]
+    assert identity["protocol_projection_mode"] == ["step_window"]
+    assert identity["few_shot_variant"] == "few_shot.md"
+    assert identity["renderer_sha256"]
+    assert identity["loader_sha256"]
+    assert SYNTHETIC_RESET_BODY not in payload
+
+
+class _CountResponse:
+    def __init__(self, total: int) -> None:
+        self.total_tokens = total
+
+
+class _CountModels:
+    def __init__(self, *, fail: bool) -> None:
+        self.calls: list[str] = []
+        self.fail = fail
+
+    async def count_tokens(self, *, model: str, contents: str) -> _CountResponse:
+        self.calls.append(contents)
+        if self.fail:
+            raise RuntimeError("synthetic provider failure")
+        return _CountResponse(len(contents))
+
+
+class _CountAio:
+    def __init__(self, models: _CountModels) -> None:
+        self.models = models
+
+
+class _CountClient:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.models_double = _CountModels(fail=fail)
+        self.aio = _CountAio(self.models_double)
+
+
+async def test_token_breakdown_counts_numbers_only() -> None:
+    from evals.conversation_eval import token_composition_breakdown
+    from tests.conversation.prompt_fixtures import SYNTHETIC_RESET_BODY, make_bundle
+
+    client = _CountClient()
+    result = await token_composition_breakdown(
+        client,  # type: ignore[arg-type]
+        active_conversation_baseline(),
+        make_bundle(),
+    )
+    buckets = result["buckets"]
+    assert result["missing"] == []
+    assert buckets["system_instruction:RESET_PASSWORD"] > 0
+    assert buckets["transcript_sample"] > 0
+    assert all(isinstance(value, int) for value in buckets.values())
+    assert SYNTHETIC_RESET_BODY not in json.dumps(result)
+    assert len(client.models_double.calls) == len(buckets)
+
+
+async def test_token_breakdown_missing_buckets_never_become_zero() -> None:
+    from evals.conversation_eval import token_composition_breakdown
+    from tests.conversation.prompt_fixtures import make_bundle
+
+    client = _CountClient(fail=True)
+    result = await token_composition_breakdown(
+        client,  # type: ignore[arg-type]
+        active_conversation_baseline(),
+        make_bundle(),
+    )
+    assert result["buckets"] == {}
+    assert result["missing"]

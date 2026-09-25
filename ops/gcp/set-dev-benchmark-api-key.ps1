@@ -11,11 +11,10 @@ The secret remains only in the current shell and must be removed after use.
 #>
 [CmdletBinding()]
 param(
-    [string]$ProjectId = "cu013-xcally-agentic",
+    [string]$ProjectId = "tivit-cu013-prd",
     [string]$SecretName = "cu013-api-key-dev",
     [ValidatePattern("^\d+$")]
-    [string]$SecretVersion = "1",
-    [string]$DeployerSa = "cu013-deployer-dev@cu013-xcally-agentic.iam.gserviceaccount.com"
+    [string]$SecretVersion = "1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,7 +22,6 @@ $ErrorActionPreference = "Stop"
 $encodedLines = @(& gcloud secrets versions access $SecretVersion `
     --secret $SecretName `
     --project $ProjectId `
-    --impersonate-service-account $DeployerSa `
     --format="get(payload.data)")
 if ($LASTEXITCODE -ne 0) {
     throw "cannot access secret version metadata and payload (exit $LASTEXITCODE)"

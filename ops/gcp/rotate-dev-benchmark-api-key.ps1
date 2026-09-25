@@ -11,13 +11,16 @@ the deployer service account updates Cloud Run.
 #>
 [CmdletBinding()]
 param(
-    [string]$ProjectId = "cu013-xcally-agentic",
+    [string]$ProjectId = "tivit-cu013-prd",
     [string]$Region = "us-east1",
     [string]$Service = "cu013-runtime-dev",
     [string]$SecretName = "cu013-api-key-dev",
-    [string]$DeployerSa = "cu013-deployer-dev@cu013-xcally-agentic.iam.gserviceaccount.com",
-    [string]$ExpectedImage = "us-east1-docker.pkg.dev/cu013-xcally-agentic/cu013-containers-dev/cu013-runtime-dev:a17e15545542e438a218538bf6e10745b88a0af8",
-    [string]$ExpectedImageDigest = "us-east1-docker.pkg.dev/cu013-xcally-agentic/cu013-containers-dev/cu013-runtime-dev@sha256:4dffcd59001312396912e4cac1c739e1c11d45ca8ff4a77185b3d046312b902a"
+    # No image exists in tivit-cu013-prd yet: the first authorized deploy must
+    # provide the exact image and digest before any rotation is attempted.
+    [ValidateNotNullOrEmpty()]
+    [string]$ExpectedImage,
+    [ValidateNotNullOrEmpty()]
+    [string]$ExpectedImageDigest
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,8 +50,7 @@ function Get-MinInstanceCount {
 Write-Host "== read-only preflight"
 $serviceDescription = Get-GcloudJson -CommandArguments @(
     "run", "services", "describe", $Service,
-    "--project", $ProjectId, "--region", $Region,
-    "--impersonate-service-account", $DeployerSa
+    "--project", $ProjectId, "--region", $Region
 )
 $containers = @($serviceDescription.spec.template.spec.containers)
 if ($containers.Count -ne 1 -or $containers[0].image -cne $ExpectedImage) {
@@ -68,8 +70,7 @@ if ($revisionMin -ne 0 -or $serviceMin -ne 0) {
 $revisionName = [string]$serviceDescription.status.latestReadyRevisionName
 $currentRevision = Get-GcloudJson -CommandArguments @(
     "run", "revisions", "describe", $revisionName,
-    "--project", $ProjectId, "--region", $Region,
-    "--impersonate-service-account", $DeployerSa
+    "--project", $ProjectId, "--region", $Region
 )
 if ($currentRevision.status.imageDigest -cne $ExpectedImageDigest) {
     throw "Cloud Run image digest differs from the expected benchmark image"
@@ -111,7 +112,6 @@ try {
     $accessArguments = @(
         "secrets", "versions", "access", $newVersion,
         "--secret", $SecretName, "--project", $ProjectId,
-        "--impersonate-service-account", $DeployerSa,
         "--format=get(payload.data)"
     )
     $encodedLines = @(& gcloud @accessArguments)
@@ -144,8 +144,7 @@ $secretBinding = "CU013_API_KEY={0}:{1}" -f $SecretName, $newVersion
 $updateArguments = @(
     "run", "services", "update", $Service,
     "--project", $ProjectId, "--region", $Region,
-    "--update-secrets", $secretBinding, "--min-instances", "1",
-    "--impersonate-service-account", $DeployerSa
+    "--update-secrets", $secretBinding, "--min-instances", "1"
 )
 & gcloud @updateArguments | Out-Null
 if ($LASTEXITCODE -ne 0) {
@@ -153,7 +152,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $verifier = Join-Path $PSScriptRoot "verify-dev-benchmark.ps1"
-& $verifier -ProjectId $ProjectId -Region $Region -Service $Service -DeployerSa $DeployerSa -SecretName $SecretName -ExpectedMinInstances 1 -ExpectedSecretVersion $newVersion -ExpectedImage $ExpectedImage -ExpectedImageDigest $ExpectedImageDigest
+& $verifier -ProjectId $ProjectId -Region $Region -Service $Service -SecretName $SecretName -ExpectedMinInstances 1 -ExpectedSecretVersion $newVersion -ExpectedImage $ExpectedImage -ExpectedImageDigest $ExpectedImageDigest
 if ($LASTEXITCODE -ne 0) {
     throw "post-update verification failed; run stop-dev-benchmark.ps1 before continuing"
 }
