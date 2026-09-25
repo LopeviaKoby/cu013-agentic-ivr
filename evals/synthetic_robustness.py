@@ -51,7 +51,7 @@ from evals.conversation_lab import (
     validate_corpus,
 )
 
-SEED = "20260925"
+SEED = "syn-20260925"
 GENERATOR = "implementer-model (deepseek-v4.1-flash) authored banks; deterministic composition"
 SCHEMA_VERSION = 1
 HELD_OUT_PATH = REPO_ROOT / "evals" / "conversation" / "synthetic" / "held-out.yaml"
