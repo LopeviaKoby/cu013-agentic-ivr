@@ -109,6 +109,15 @@ El agente debe guiar al caller según el IOP vigente de cambio de contraseña, s
 
 Aclaración vigente: la referencia del IOP a "requiera desbloqueo de cuenta" no convierte por sí sola ese caso en handoff humano obligatorio. CU013/XCALLY satisface la atención de Mesa como atención automatizada para `UNLOCK_ACCOUNT`; cuando la operación soportada puede resolverse autónomamente, el flujo continúa con el desbloqueo automático de esta SPEC (identidad + confirmación HITL), y el handoff humano sólo aplica según las causas aceptadas en esta SPEC.
 
+### Modalidad de asistencia (ACCEPTED)
+
+`RESET_PASSWORD` distingue una modalidad durable del goal: `UNDECIDED` (aún no
+eligió; se ofrecen ambas vías sin capturar identidad), `GUIDED` (autoservicio
+guiado; sin challenge ni despacho) y `AUTONOMOUS` (el sistema ejecuta; requiere
+identidad válida y confirmación verbal específica de RESET). Reutilizar la
+identidad de una operación anterior no reutiliza su confirmación, y cambiar de
+modalidad invalida el challenge pendiente. `UNLOCK_ACCOUNT` no tiene modalidad.
+
 ### Acción directa
 
 La acción directa sólo puede solicitarse después de completar la validación positiva de identidad por DTMF y de la confirmación HITL verbal de esa acción concreta. Se ejecuta mediante:

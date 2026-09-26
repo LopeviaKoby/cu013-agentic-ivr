@@ -76,6 +76,13 @@ Un turno normal apunta a una sola solicitud al modelo. Si una interacción lógi
 - **ACCEPTED.** No existe caché de contraseña entre turnos y la primera vocalización no exige un `PasswordPresentation` previo: es elegible con el reset confirmado y la presentación no finalizada. Una sola llamada a Gemini por turno; sin motor de spelling productivo.
 - **ACCEPTED.** Durante la presentación no se registra goal nuevo, no se abre challenge, no se autoriza despacho y no se re-despacha. La memoria reciente no se renderiza ni se anexa en turnos de presentación porque el transcript puede repetir el secreto.
 
+### Modalidad de asistencia del reset
+
+- **ACCEPTED.** `RESET_PASSWORD` tiene una dimensión semántica durable `assistance_mode` (`UNDECIDED | GUIDED | AUTONOMOUS`) que pertenece al goal activo, no es autorización ni efecto externo y se limpia con el goal. `UNLOCK_ACCOUNT` no la usa.
+- **ACCEPTED.** `UNDECIDED` registra el goal y ofrece brevemente GUIDED/AUTONOMOUS sin capturar identidad, sin challenge y sin despacho. `GUIDED` guía el autoservicio y nunca abre challenge ni despacha. `AUTONOMOUS` exige identidad válida y una confirmación verbal específica de RESET antes del despacho.
+- **ACCEPTED.** Reutilizar identidad no reutiliza confirmación: una confirmación de UNLOCK no autoriza RESET. Un cambio de modalidad invalida cualquier challenge pendiente; el runtime — no el prompt — impone que sólo `AUTONOMOUS` abra challenge.
+- **ACCEPTED.** Un resultado externo terminal sólo acredita la acción que ese resultado identifica, y lo que dice el llamante no es verdad de operación.
+
 ### Identidad
 
 - **ACCEPTED.** La identidad validada está limitada a la llamada actual y expira con un TTL absoluto de 30 minutos desde su validación, sea cual sea la actividad de la conversación. Sin identidad vigente no existe autorización de despacho.
