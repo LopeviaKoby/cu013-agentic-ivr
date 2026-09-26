@@ -250,9 +250,10 @@ SendMail permanece Deferred y fuera del alcance inmediato. Los valores predeterm
 | Baseline conversacional activo | Gemini 3.5 Flash-Lite, Vertex `global`, `MINIMAL`, sintético; no voz-validado ni producción |
 | FS-002 | open |
 | CNV-001 | resolved (schema v2 durable pre-auth + continuidad + correcciones/cancelación implementados y verificados; eliminado de `docs/gaps.md`) |
-| Iteración post-E2E (continuidad, `goal_focus`, presentación) | implemented + tests deterministas + evals offline (rama local `feat/post-e2e-continuity`, sin push); validación manual XCALLY y E2E pendientes |
+| Iteración post-E2E (continuidad, `goal_focus`, presentación) | promovida a `feat/post-e2e-continuity` (`7ae23ca`); revisión Cloud Run `00008-pol` con tag `e2e-en` |
+| Corrección post-E2E RESET (modalidad GUIDED/AUTONOMOUS) | `5c99ecd`+`5bcccf0`+`64cf57c` en `feat/post-e2e-continuity`; schema v6; protocolo RESET `:2` con voz y sin correo; revisión Cloud Run `00009-lut` con tag `e2e-en`; E2E del owner pendiente |
 | Laboratorio de evaluación | `conversation_eval.py` + `conversation_compare.py` + `metamorphic_eval.py` + corpus de 58 casos / 45 familias; `scenario_kind`, oráculos nulos/ausentes, evidencia por run/caso/turno, INFRA por repetición, reruns focalizados y CI sin credenciales |
-| Próximo gate | revisión del owner; push/merge si procede; deploy controlado; el owner aplica XCALLY y valida sintéticamente; después caller E2E contra la tag `e2e-en` y análisis con `xcally-call-evidence-analysis` |
+| Próximo gate | E2E del owner contra la tag `e2e-en` (revisión `00009-lut`, protocolo RESET `:2`): UNLOCK → nueva necesidad RESET → GUIDED/AUTONOMOUS → confirmación específica → `EXECUTE_ACTION`; después análisis con `xcally-call-evidence-analysis`. Sin merge a `dev` hasta analizar el E2E |
 | AD/TIVIT | después del baseline de voz XCALLY aislado |
 
 El próximo objetivo de medición es el camino completo de voz, todavía no medido:
