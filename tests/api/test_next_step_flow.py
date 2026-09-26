@@ -328,7 +328,11 @@ async def test_bootstrap_then_turn_continues_the_same_session(client, model, sto
     document = store.documents["conversation-1"]
     assert document["turn_count"] == 1
     assert document["voice_retry_count"] == 0
-    assert document["goal"] == {"action": "UNLOCK_ACCOUNT", "revision": 1}
+    assert document["goal"] == {
+        "action": "UNLOCK_ACCOUNT",
+        "revision": 1,
+        "assistance_mode": None,
+    }
 
 
 async def test_v1_voice_policy_over_http_and_reset_after_a_turn(client, model, store) -> None:

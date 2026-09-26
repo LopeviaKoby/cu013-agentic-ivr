@@ -333,3 +333,12 @@ redespacho, latencia). Nunca imprime ni guarda el secreto ni el mensaje.
 El decodificador evals/password_oracle.py es tooling de evaluación: valida
 orden, case y símbolos de un dictado hablado contra el valor sintético y no se
 usa en runtime.
+
+
+## Sonda de modalidad RESET
+
+evals/reset_assistance_probe.py cubre la corrección post-E2E: RESET vago tras
+UNLOCK (UNDECIDED + opciones), AUTONOMOUS explícito con confirmación específica
+en el mismo turno, selección GUIDED/AUTONOMOUS, cambios de modalidad, pregunta
+lateral que preserva la modalidad y adversariales de falsas afirmaciones
+(reset/entrega) sin respaldo. Sólo reporta hechos cerrados.

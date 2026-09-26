@@ -262,7 +262,7 @@ def test_v4_document_migrates_with_caller_finished_false_and_keeps_legacy_email(
     )
     document["schema_version"] = 4
     migrated = session_record_from_document(document)
-    assert migrated.schema_version == 5
+    assert migrated.schema_version == 6
     assert migrated.password_presentation is not None
     assert migrated.password_presentation.caller_finished is False
     assert migrated.password_presentation.email_requested == 1

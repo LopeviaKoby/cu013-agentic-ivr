@@ -13,6 +13,7 @@ from app.session.feedback import PollingFeedbackRequest
 from app.session.outcome import NextStep
 from app.session.record import (
     Action,
+    AssistanceMode,
     AuthorizedDispatch,
     ConfirmationChallenge,
     ConversationGoal,
@@ -135,8 +136,15 @@ class FakeTurnModel:
         return self.decision
 
 
-def make_goal(action: Action, revision: int = 1) -> ConversationGoal:
-    return ConversationGoal(action=action, revision=revision)
+def make_goal(
+    action: Action,
+    revision: int = 1,
+    assistance_mode: AssistanceMode | None = None,
+) -> ConversationGoal:
+    """Build a goal fixture; a RESET goal always carries a mode like runtime does."""
+    if action is Action.RESET_PASSWORD and assistance_mode is None:
+        assistance_mode = AssistanceMode.UNDECIDED
+    return ConversationGoal(action=action, revision=revision, assistance_mode=assistance_mode)
 
 
 def make_identity(validated_at: datetime | None = None, *, failures: int = 0) -> IdentityState:

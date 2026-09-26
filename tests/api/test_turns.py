@@ -210,7 +210,11 @@ async def test_prior_request_turn_keeps_the_goal_and_requires_identity(
     assert body["route"] == "COLLECT_IDENTITY"
     assert body["message"] == model.decision.message
     document = store.documents["conversation-1"]
-    assert document["goal"] == {"action": "UNLOCK_ACCOUNT", "revision": 1}
+    assert document["goal"] == {
+        "action": "UNLOCK_ACCOUNT",
+        "revision": 1,
+        "assistance_mode": None,
+    }
     assert document["identity"] == {"validated_at": None, "caller_failures": 0}
     assert document["dispatch"] is None
     assert document["external_operation"] is None

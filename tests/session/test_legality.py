@@ -14,6 +14,7 @@ from app.session.outcome import NextStep
 from app.session.record import (
     IDENTITY_TTL,
     Action,
+    AssistanceMode,
     DeliveryStatus,
     OperationStatus,
     PasswordPresentation,
@@ -109,7 +110,13 @@ def test_ambiguous_intention_materializes_no_goal_and_listens() -> None:
     assert delta["outcome"].command is None
 
 
-def test_direct_reset_request_collects_identity() -> None:
+def test_direct_reset_request_offers_the_assistance_options_without_identity() -> None:
+    """A reset with no explicit mode is UNDECIDED: offer, listen, no capture.
+
+    The product contract registers the goal and asks the caller to choose
+    between GUIDED and AUTONOMOUS; it never forces identity capture merely
+    because the goal exists.
+    """
     delta = advance_turn(
         make_state(
             model_decision=make_decision(
@@ -122,10 +129,12 @@ def test_direct_reset_request_collects_identity() -> None:
     assert delta["goal"] is not None
     assert delta["goal"].action is Action.RESET_PASSWORD
     assert delta["goal"].revision == 1
+    assert delta["goal"].assistance_mode is AssistanceMode.UNDECIDED
+    assert delta["identity"].validated_at is None
     assert delta["confirmation"] is None
     assert delta["dispatch"] is None
     assert delta["outcome"] is not None
-    assert delta["outcome"].next_step is NextStep.COLLECT_IDENTITY
+    assert delta["outcome"].next_step is NextStep.LISTEN
 
 
 def test_goal_progress_preserves_the_goal_and_requires_identity() -> None:
@@ -574,7 +583,7 @@ def test_a_previous_affirmation_never_repeats_the_side_effect() -> None:
 def test_confirmation_challenge_is_only_opened_when_the_caller_is_eligible() -> None:
     eligible = advance_turn(
         make_state(
-            goal=make_goal(Action.RESET_PASSWORD),
+            goal=make_goal(Action.RESET_PASSWORD, assistance_mode=AssistanceMode.AUTONOMOUS),
             identity=make_identity(NOW),
             model_decision=make_decision(confirmation_request=True),
         )

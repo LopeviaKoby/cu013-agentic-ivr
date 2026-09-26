@@ -93,6 +93,7 @@ from app.session.metrics import RecordingTurnMetrics
 from app.session.outcome import legacy_route_value
 from app.session.record import (
     Action,
+    AssistanceMode,
     AuthorizedDispatch,
     ConfirmationChallenge,
     ConversationGoal,
@@ -200,8 +201,28 @@ FAIL_LIKE = {
 def build_initial_record(case: dict[str, Any], now: datetime) -> SessionRecord:
     state = case["initial_state"]
     action_value = state.get("conversation_goal")
+    assistance_mode: AssistanceMode | None = None
+    if action_value == Action.RESET_PASSWORD.value:
+        # An explicit fixture mode wins; otherwise fixtures with autonomous
+        # evidence (an authorized confirmation or an existing operation) replay
+        # the autonomous path and the rest stay UNDECIDED, matching the
+        # migration inference.
+        declared = state.get("assistance_mode")
+        if declared is not None:
+            assistance_mode = AssistanceMode(declared)
+        else:
+            assistance_mode = (
+                AssistanceMode.AUTONOMOUS
+                if state.get("confirmation") in {"authorized", "pending"}
+                or state.get("pending_operation")
+                else AssistanceMode.UNDECIDED
+            )
     goal = (
-        ConversationGoal(action=Action(action_value), revision=int(state.get("goal_revision", 0)))
+        ConversationGoal(
+            action=Action(action_value),
+            revision=int(state.get("goal_revision", 0)),
+            assistance_mode=assistance_mode,
+        )
         if action_value
         else None
     )

@@ -436,6 +436,7 @@ async def test_identity_expiry_keeps_procedure_but_blocks_dispatch() -> None:
     model.decision = make_decision(
         route=Route.COLLECT_IDENTITY,
         goal={"intent": "REQUEST", "action": "RESET_PASSWORD"},
+        assistance_mode="AUTONOMOUS",
     )
     service = await _service_with(store, clock, model=model)
     await service.handle_turn(
