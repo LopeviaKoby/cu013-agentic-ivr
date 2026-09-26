@@ -37,6 +37,7 @@ from app.session.memory import (
 )
 from app.session.outcome import NextStep
 from app.session.record import (
+    AssistanceMode,
     AuthorizedDispatch,
     ConfirmationChallenge,
     ConversationGoal,
@@ -185,6 +186,7 @@ class ModelTurnDecision(BaseModel):
     route: Route
     goal: GoalProposal | None = None
     goal_focus: GoalFocus = GoalFocus.NONE
+    assistance_mode: AssistanceMode | None = None
     password_presentation_finished: bool = False
     confirmation_request: bool = False
     confirmation_observation: ConfirmationObservation = ConfirmationObservation.NONE
@@ -487,23 +489,37 @@ def _apply_goal_proposal(
     goal: ConversationGoal | None,
     challenge: ConfirmationChallenge | None,
     proposal: GoalProposal | None,
+    assistance_mode: AssistanceMode | None,
 ) -> tuple[ConversationGoal | None, ConfirmationChallenge | None, str | None]:
-    """Apply the plan delta; any revision change invalidates the challenge."""
-    if proposal is None or proposal.intent is GoalIntent.NONE:
-        return goal, challenge, None
-    if proposal.intent is GoalIntent.CANCEL:
+    """Apply the plan delta; a revision or mode change invalidates the challenge.
+
+    The assistance mode belongs only to an active RESET goal and is a durable
+    product preference, never an authorization. A GUIDED/AUTONOMOUS switch is a
+    semantic plan change, so any pending challenge dies with it: an AUTONOMOUS
+    challenge can never authorize a GUIDED goal.
+    """
+    if proposal is not None and proposal.intent is GoalIntent.CANCEL:
         return None, None, None
-    action = proposal.action
-    if action is None:
-        return goal, challenge, "goal proposal without an action"
-    if goal is not None and goal.action is action:
-        if proposal.intent is GoalIntent.CORRECT:
-            goal = ConversationGoal(action=action, revision=goal.revision + 1)
-    else:
-        goal = ConversationGoal(
-            action=action,
-            revision=(goal.revision + 1) if goal is not None else 1,
-        )
+    if proposal is not None and proposal.intent is not GoalIntent.NONE:
+        action = proposal.action
+        if action is None:
+            return goal, challenge, "goal proposal without an action"
+        if goal is not None and goal.action is action:
+            if proposal.intent is GoalIntent.CORRECT:
+                goal = ConversationGoal(action=action, revision=goal.revision + 1)
+        else:
+            goal = ConversationGoal(
+                action=action,
+                revision=(goal.revision + 1) if goal is not None else 1,
+            )
+    if goal is not None and goal.action is Action.RESET_PASSWORD:
+        if assistance_mode is not None and goal.assistance_mode is not assistance_mode:
+            goal = goal.model_copy(update={"assistance_mode": assistance_mode})
+            challenge = None
+        if goal.assistance_mode is None:
+            # A RESET goal always carries a mode; the neutral default is
+            # UNDECIDED, which never opens a challenge.
+            goal = goal.model_copy(update={"assistance_mode": AssistanceMode.UNDECIDED})
     if challenge is not None and _challenge_is_stale(challenge, goal):
         challenge = None
     return goal, challenge, None
@@ -576,6 +592,10 @@ def _dispatch_binding_error(
         return "dispatch after the identity attempts were exhausted"
     if goal is None:
         return "dispatch without a supported goal"
+    if goal.action is Action.RESET_PASSWORD and (
+        goal.assistance_mode is not AssistanceMode.AUTONOMOUS
+    ):
+        return "dispatch without an autonomous reset goal"
     if challenge.action is not goal.action or challenge.goal_revision != goal.revision:
         return "confirmation does not match the current goal and revision"
     if challenge.identity_validated_at != identity.validated_at:
@@ -595,6 +615,15 @@ def _maybe_open_challenge(
     now: datetime,
 ) -> ConfirmationChallenge | None:
     """Open a challenge only when the caller is legally eligible to confirm."""
+    if (
+        goal is not None
+        and goal.action is Action.RESET_PASSWORD
+        and goal.assistance_mode is not AssistanceMode.AUTONOMOUS
+    ):
+        # The runtime, not the prompt, owns this legality: a GUIDED or
+        # UNDECIDED reset never opens an action challenge, and any stale
+        # challenge dies here.
+        return None
     validated_at = identity.validated_at
     if not decision.confirmation_request:
         return challenge
@@ -726,6 +755,12 @@ def _requires_identity_collection(
         return False
     if goal is None or identity.is_valid_at(now):
         return False
+    if goal.action is Action.RESET_PASSWORD and (
+        goal.assistance_mode is not AssistanceMode.AUTONOMOUS
+    ):
+        # GUIDED self-service and the UNDECIDED option offer never require
+        # identity capture; only an autonomous reset does.
+        return False
     return operation is None or not operation.is_active()
 
 
@@ -766,7 +801,14 @@ def _guard_outcome(
                 claim.kind, identity=identity, dispatch=dispatch, operation=operation, now=now
             ):
                 violations.append(f"unbacked claim {claim.kind.value}")
-        if decision.route is Route.COLLECT_IDENTITY and (goal is None or identity.is_valid_at(now)):
+        if decision.route is Route.COLLECT_IDENTITY and (
+            goal is None
+            or identity.is_valid_at(now)
+            or (
+                goal.action is Action.RESET_PASSWORD
+                and goal.assistance_mode is not AssistanceMode.AUTONOMOUS
+            )
+        ):
             violations.append("COLLECT_IDENTITY is not coherent with the current plan")
         if decision.route is Route.ESCALATE and not identity.requires_handoff():
             if not _handoff_cause_is_backed(decision, identity=identity, operation=operation):
@@ -836,7 +878,9 @@ def advance_turn(state: GraphState) -> TurnDelta:
         # During the password presentation the model owns only language: a
         # repeat or clarification never registers a new goal, opens a
         # challenge or authorizes a dispatch.
-        goal, challenge, proposal_error = _apply_goal_proposal(goal, challenge, decision.goal)
+        goal, challenge, proposal_error = _apply_goal_proposal(
+            goal, challenge, decision.goal, decision.assistance_mode
+        )
 
     dispatch = state["dispatch"]
     operation = state["external_operation"]

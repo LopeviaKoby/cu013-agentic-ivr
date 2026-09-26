@@ -199,6 +199,7 @@ def response_schema_for(baseline: GeminiBaseline) -> Any:
         "procedure_observation",
         "goal",
         "goal_focus",
+        "assistance_mode",
         "password_presentation_finished",
         "confirmation_request",
         "confirmation_observation",

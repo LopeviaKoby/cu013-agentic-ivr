@@ -37,6 +37,7 @@ __all__ = [
     "DEFAULT_OBSERVATION_LIMIT",
     "MAX_FEEDBACK_MESSAGES",
     "Action",
+    "AssistanceMode",
     "AuthorizedDispatch",
     "ConfirmationChallenge",
     "ConversationGoal",
@@ -55,7 +56,7 @@ __all__ = [
     "session_record_to_document",
 ]
 
-SCHEMA_VERSION: Literal[5] = 5
+SCHEMA_VERSION: Literal[6] = 6
 
 IDENTITY_TTL = timedelta(minutes=30)
 
@@ -184,13 +185,38 @@ class PasswordPresentation(BaseModel):
         return self
 
 
+class AssistanceMode(StrEnum):
+    """How the caller wants a supported reset to be assisted.
+
+    It belongs to the active RESET goal only and is a product preference, not
+    an authorization, an operation fact or a tool. ``None`` means the action
+    has no assistance dimension (for example UNLOCK_ACCOUNT).
+    """
+
+    UNDECIDED = "UNDECIDED"
+    GUIDED = "GUIDED"
+    AUTONOMOUS = "AUTONOMOUS"
+
+
 class ConversationGoal(BaseModel):
-    """What the caller wants; independent of any authorization or dispatch."""
+    """What the caller wants; independent of any authorization or dispatch.
+
+    ``assistance_mode`` is durable while a RESET goal is active so side
+    questions, corrections and GUIDED/AUTONOMOUS switches survive across
+    turns; it is ``None`` for every other action and disappears with the goal.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     action: Action
     revision: int = Field(ge=0)
+    assistance_mode: AssistanceMode | None = None
+
+    @model_validator(mode="after")
+    def _assistance_mode_only_applies_to_reset(self) -> Self:
+        if self.action is not Action.RESET_PASSWORD and self.assistance_mode is not None:
+            raise ValueError("assistance mode only applies to RESET_PASSWORD")
+        return self
 
 
 class IdentityState(BaseModel):
@@ -290,7 +316,7 @@ class SessionRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[5] = SCHEMA_VERSION
+    schema_version: Literal[6] = SCHEMA_VERSION
     conversation_id: str = Field(min_length=1)
     turn_count: int = Field(ge=0)
     revision: int = Field(ge=0)
@@ -426,6 +452,8 @@ def _migrate_v1(document: Mapping[str, object]) -> SessionRecord:
         if legacy.requested_action is not None
         else None
     )
+    if goal is not None and goal.action is Action.RESET_PASSWORD:
+        goal = goal.model_copy(update={"assistance_mode": AssistanceMode.UNDECIDED})
     operation = (
         ExternalOperation(
             operation_id=legacy.pending_operation.operation_id,
@@ -460,22 +488,24 @@ def _migrate_v2(document: Mapping[str, object]) -> SessionRecord:
     closed v2 whitelist does not define is rejected instead of migrated.
     """
     legacy = _LegacySessionRecordV2.model_validate(dict(document))
-    return SessionRecord(
-        conversation_id=legacy.conversation_id,
-        turn_count=legacy.turn_count,
-        revision=legacy.revision,
-        goal=legacy.goal,
-        identity=legacy.identity,
-        confirmation=legacy.confirmation,
-        dispatch=legacy.dispatch,
-        external_operation=legacy.external_operation,
-        polling=None,
-        password_presentation=None,
-        experimental_procedure=legacy.experimental_procedure,
-        experimental_suspended=legacy.experimental_suspended,
-        experimental_window=legacy.experimental_window,
-        created_at=legacy.created_at,
-        updated_at=legacy.updated_at,
+    return _with_inferred_assistance_mode(
+        SessionRecord(
+            conversation_id=legacy.conversation_id,
+            turn_count=legacy.turn_count,
+            revision=legacy.revision,
+            goal=legacy.goal,
+            identity=legacy.identity,
+            confirmation=legacy.confirmation,
+            dispatch=legacy.dispatch,
+            external_operation=legacy.external_operation,
+            polling=None,
+            password_presentation=None,
+            experimental_procedure=legacy.experimental_procedure,
+            experimental_suspended=legacy.experimental_suspended,
+            experimental_window=legacy.experimental_window,
+            created_at=legacy.created_at,
+            updated_at=legacy.updated_at,
+        )
     )
 
 
@@ -489,38 +519,87 @@ def _migrate_v3(document: Mapping[str, object]) -> SessionRecord:
     define is rejected instead of migrated.
     """
     legacy = _LegacySessionRecordV3.model_validate(dict(document))
-    return SessionRecord(
-        conversation_id=legacy.conversation_id,
-        turn_count=legacy.turn_count,
-        revision=legacy.revision,
-        goal=legacy.goal,
-        identity=legacy.identity,
-        confirmation=legacy.confirmation,
-        dispatch=legacy.dispatch,
-        external_operation=legacy.external_operation,
-        polling=legacy.polling,
-        password_presentation=legacy.password_presentation,
-        voice_retry_count=0,
-        experimental_procedure=legacy.experimental_procedure,
-        experimental_suspended=legacy.experimental_suspended,
-        experimental_window=legacy.experimental_window,
-        created_at=legacy.created_at,
-        updated_at=legacy.updated_at,
+    return _with_inferred_assistance_mode(
+        SessionRecord(
+            conversation_id=legacy.conversation_id,
+            turn_count=legacy.turn_count,
+            revision=legacy.revision,
+            goal=legacy.goal,
+            identity=legacy.identity,
+            confirmation=legacy.confirmation,
+            dispatch=legacy.dispatch,
+            external_operation=legacy.external_operation,
+            polling=legacy.polling,
+            password_presentation=legacy.password_presentation,
+            voice_retry_count=0,
+            experimental_procedure=legacy.experimental_procedure,
+            experimental_suspended=legacy.experimental_suspended,
+            experimental_window=legacy.experimental_window,
+            created_at=legacy.created_at,
+            updated_at=legacy.updated_at,
+        )
+    )
+
+
+def _infer_assistance_mode(record: SessionRecord) -> AssistanceMode:
+    """Infer the durable RESET assistance mode from v5-or-earlier evidence.
+
+    A stored reset operation, challenge, dispatch or password presentation is
+    durable evidence that the autonomous path was used, so the migrated goal
+    becomes AUTONOMOUS. A reset without that evidence becomes UNDECIDED; GUIDED
+    is never inferred because older contracts did not store it.
+    """
+    if record.external_operation is not None and (
+        record.external_operation.action is Action.RESET_PASSWORD
+    ):
+        return AssistanceMode.AUTONOMOUS
+    if record.password_presentation is not None:
+        return AssistanceMode.AUTONOMOUS
+    if record.confirmation is not None and record.confirmation.action is Action.RESET_PASSWORD:
+        return AssistanceMode.AUTONOMOUS
+    if record.dispatch is not None and record.dispatch.action is Action.RESET_PASSWORD:
+        return AssistanceMode.AUTONOMOUS
+    return AssistanceMode.UNDECIDED
+
+
+def _with_inferred_assistance_mode(record: SessionRecord) -> SessionRecord:
+    """Fill the assistance mode of a migrated RESET goal that predates v6."""
+    goal = record.goal
+    if goal is None or goal.action is not Action.RESET_PASSWORD:
+        return record
+    if goal.assistance_mode is not None:
+        return record
+    return record.model_copy(
+        update={"goal": goal.model_copy(update={"assistance_mode": _infer_assistance_mode(record)})}
     )
 
 
 def _migrate_v4(document: Mapping[str, object]) -> SessionRecord:
-    """Migrate a version 4 document fail-closed into the v5 contract.
+    """Migrate a version 4 document fail-closed into the current contract.
 
-    Every v4 plane exists in v5 unchanged; the only additions are the neutral
-    ``password_presentation.caller_finished`` flag and the optional legacy email
-    fields, so a v4 document is validated against the current closed model with
-    its schema version promoted. No stored fact is reinterpreted and no
-    presentation is invented; extra fields still fail validation.
+    Every v4 plane exists in v6 unchanged; the additions are the neutral
+    ``password_presentation.caller_finished`` flag, the optional legacy email
+    fields and the RESET assistance mode inferred from durable evidence, so a
+    v4 document is validated against the current closed model with its schema
+    version promoted. No stored fact is reinterpreted and no presentation is
+    invented; extra fields still fail validation.
     """
     promoted = dict(document)
     promoted["schema_version"] = SCHEMA_VERSION
-    return SessionRecord.model_validate(promoted)
+    return _with_inferred_assistance_mode(SessionRecord.model_validate(promoted))
+
+
+def _migrate_v5(document: Mapping[str, object]) -> SessionRecord:
+    """Migrate a version 5 document fail-closed into the v6 contract.
+
+    Version 5 stored no assistance mode. The migration derives it from the
+    durable evidence already present: a RESET with an operation, challenge,
+    dispatch or presentation becomes AUTONOMOUS; a RESET without it becomes
+    UNDECIDED; any other action keeps ``None``. GUIDED is never inferred.
+    """
+    promoted = dict(document)
+    promoted["schema_version"] = SCHEMA_VERSION
+    return _with_inferred_assistance_mode(SessionRecord.model_validate(promoted))
 
 
 def session_record_to_document(record: SessionRecord) -> dict[str, object]:
@@ -541,7 +620,15 @@ def session_record_to_document(record: SessionRecord) -> dict[str, object]:
         "turn_count": record.turn_count,
         "revision": record.revision,
         "goal": (
-            {"action": goal.action.value, "revision": goal.revision} if goal is not None else None
+            {
+                "action": goal.action.value,
+                "revision": goal.revision,
+                "assistance_mode": (
+                    goal.assistance_mode.value if goal.assistance_mode is not None else None
+                ),
+            }
+            if goal is not None
+            else None
         ),
         "identity": {
             "validated_at": record.identity.validated_at,
@@ -649,6 +736,8 @@ def session_record_from_document(document: Mapping[str, object]) -> SessionRecor
         return _migrate_v3(document)
     if version == 4:
         return _migrate_v4(document)
+    if version == 5:
+        return _migrate_v5(document)
     if version == SCHEMA_VERSION:
         return SessionRecord.model_validate(dict(document))
     raise ValueError("unsupported durable schema version")
