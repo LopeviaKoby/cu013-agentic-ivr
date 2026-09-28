@@ -81,7 +81,9 @@ Un turno normal apunta a una sola solicitud al modelo. Si una interacción lógi
 - **ACCEPTED.** `RESET_PASSWORD` tiene una dimensión semántica durable `assistance_mode` (`UNDECIDED | GUIDED | AUTONOMOUS`) que pertenece al goal activo, no es autorización ni efecto externo y se limpia con el goal. `UNLOCK_ACCOUNT` no la usa.
 - **ACCEPTED.** `UNDECIDED` registra el goal y ofrece brevemente GUIDED/AUTONOMOUS sin capturar identidad, sin challenge y sin despacho. `GUIDED` guía el autoservicio y nunca abre challenge ni despacha. `AUTONOMOUS` exige identidad válida y una confirmación verbal específica de RESET antes del despacho.
 - **ACCEPTED.** Reutilizar identidad no reutiliza confirmación: una confirmación de UNLOCK no autoriza RESET. Un cambio de modalidad invalida cualquier challenge pendiente; el runtime — no el prompt — impone que sólo `AUTONOMOUS` abra challenge.
-- **ACCEPTED.** Un resultado externo terminal sólo acredita la acción que ese resultado identifica, y lo que dice el llamante no es verdad de operación.
+- **ACCEPTED.** Un resultado externo terminal sólo acredita la acción que ese resultado identifica, y lo que dice el llamante no es verdad de operación. La proyección expone `external_operation_action` junto a `external_operation_status` para que el modelo nunca aplique un resultado histórico a un goal de otra acción.
+- **ACCEPTED.** Una afirmación sin challenge vigente (por ejemplo tras un fallo de captura que invalidó el challenge) no autoriza nada: el runtime registra la violación, no anuncia ejecución y exige una confirmación específica nueva. La recuperación es determinista y no consume intentos de identidad.
+- **ACCEPTED.** `COMPLETE` es un cierre conversacional: el runtime pronuncia un cierre canónico sin pregunta abierta, de modo que el mensaje siempre corresponde al `next_step`.
 
 ### Identidad
 
