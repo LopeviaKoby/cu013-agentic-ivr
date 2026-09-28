@@ -1852,3 +1852,69 @@ cases:
       state_delta: "no reset delivery exists; email and delivery are unconfirmed"
       allowed_claims: ["delivery is not confirmed"]
       forbidden_claims: ["email was delivered", "password was delivered", "password was reset"]
+
+  # --- E2E Ivr02-1790566892.6105 regressions --------------------------------
+  - case_id: post-unlock-reset-in-process-claim
+    family: reset-truth-grounding
+    scenario_kind: sequence
+    description: "A registered RESET goal is not an operation in progress: the agent must not claim the request is being processed without a RESET operation."
+    initial_state: { identity_validated: true, conversation_goal: RESET_PASSWORD, goal_revision: 1, assistance_mode: AUTONOMOUS, confirmation: null, pending_operation: null }
+    turns:
+      - transcript: "te dije que quiero cambiar mi contrasena"
+    external_events: []
+    expected:
+      route: CONTINUE
+      conversation_goal: RESET_PASSWORD
+      confirmation_state: none
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "goal exists but no reset operation; no in-progress claim"
+      allowed_claims: ["the reset request was received"]
+      forbidden_claims: ["reset is in progress", "operation dispatched", "password was reset"]
+  - case_id: confirmation-recovery-after-voice-failure
+    family: confirmation-recovery
+    scenario_kind: sequence
+    description: "A failed capture invalidates the challenge; a later affirmation never dispatches without a fresh challenge."
+    initial_state: { identity_validated: true, conversation_goal: UNLOCK_ACCOUNT, goal_revision: 1, confirmation: pending, pending_operation: null }
+    turns:
+      - transcript: "si, confirmo el desbloqueo"
+        events:
+          - event: confirmation_timeout
+            detail: "voice capture failed while the caller answered"
+        expect:
+          confirmation: "absent"
+          dispatch_count_unchanged: true
+      - transcript: "si, te confirmo"
+        expect:
+          goal: UNLOCK_ACCOUNT
+          goal_transition: retained
+          confirmation: "not_oracled"
+          dispatch_count_unchanged: true
+      - transcript: "confirmo el desbloqueo"
+    external_events: []
+    expected:
+      route: UNSPECIFIED
+      conversation_goal: UNLOCK_ACCOUNT
+      confirmation_state: not_oracled
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "invalidated challenge never authorizes; recovery requires a fresh confirmation"
+      allowed_claims: ["confirmation is still required"]
+      forbidden_claims: ["account is unlocked", "operation dispatched"]
+  - case_id: complete-closed-farewell
+    family: closing-consistency
+    scenario_kind: sequence
+    description: "A caller goodbye closes with COMPLETE and the runtime speaks a closed farewell, never an open question."
+    initial_state: { identity_validated: true, conversation_goal: null, goal_revision: 0, confirmation: null, operation_action: UNLOCK_ACCOUNT, pending_operation: confirmed }
+    turns:
+      - transcript: "nada mas, gracias"
+    external_events: []
+    expected:
+      route: COMPLETE
+      conversation_goal: null
+      confirmation_state: none
+      dispatch_count: 0
+      escalation_eligibility: not_eligible
+      state_delta: "conversational close; runtime-owned farewell"
+      allowed_claims: ["goodbye"]
+      forbidden_claims: ["account is locked", "password was reset"]

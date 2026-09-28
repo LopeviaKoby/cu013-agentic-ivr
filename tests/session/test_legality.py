@@ -680,7 +680,10 @@ def test_dispatch_without_a_challenge_is_blocked() -> None:
     assert delta["dispatch"] is None
     assert delta["external_operation"] is None
     assert delta["outcome"] is not None
-    assert delta["outcome"].violations == ()
+    # An affirmation without an active challenge is not evidence: the runtime
+    # records it and never announces an execution.
+    assert "affirmation without an active challenge" in delta["outcome"].violations
+    assert delta["outcome"].message == SAFE_FALLBACK_MESSAGE
 
 
 def test_dispatch_with_an_active_operation_is_blocked() -> None:

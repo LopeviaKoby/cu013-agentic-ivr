@@ -52,6 +52,7 @@ ALLOWED_KEYS = {
     "external_action_allowed",
     "external_success_claim_allowed",
     "external_operation_status",
+    "external_operation_action",
     "external_delivery_status",
     "external_presentation_status",
     "password_presentation_active",

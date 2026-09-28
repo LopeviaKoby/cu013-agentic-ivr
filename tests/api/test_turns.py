@@ -49,14 +49,14 @@ COLLECT_IDENTITY_WITH_GOAL = make_decision(
 
 
 async def test_structured_model_output_reaches_the_http_contract(client, model, store) -> None:
-    model.decision = make_decision(message=SYNTHETIC_MESSAGE, route=Route.COMPLETE)
+    model.decision = make_decision(message=SYNTHETIC_MESSAGE, route=Route.CONTINUE)
     response = await client.post(
         turns_url("conversation-1"), json={"transcript": SYNTHETIC_TRANSCRIPT}
     )
     assert response.status_code == 200
     body = response.json()
     assert body["message"] == SYNTHETIC_MESSAGE
-    assert body["route"] == "COMPLETE"
+    assert body["route"] == "CONTINUE"
     assert body["turn_id"]
     assert len(model.calls) == 1
     assert (store.reads, store.writes) == (1, 1)
