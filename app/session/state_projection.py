@@ -78,6 +78,7 @@ class ModelStateProjection(BaseModel):
     external_action_allowed: bool
     external_success_claim_allowed: bool
     external_operation_status: ExternalOperationStatus
+    external_operation_action: str | None
     external_delivery_status: DeliveryStatusLiteral
     external_presentation_status: PresentationStatusLiteral
     password_presentation_active: bool
@@ -184,6 +185,7 @@ def project_model_state(
             operation is not None and operation.status is OperationStatus.CONFIRMED
         ),
         external_operation_status=(operation.status.value if operation is not None else "none"),
+        external_operation_action=(operation.action.value if operation is not None else None),
         external_delivery_status=(
             operation.delivery.value
             if operation is not None and operation.delivery is not None
@@ -227,6 +229,9 @@ def projection_from_turn_inputs(
         ),
         external_operation_status=(
             external_operation.status.value if external_operation is not None else "none"
+        ),
+        external_operation_action=(
+            external_operation.action.value if external_operation is not None else None
         ),
         external_delivery_status=(
             external_operation.delivery.value

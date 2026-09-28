@@ -64,6 +64,10 @@ PROCESSING_MESSAGE = "Voy a procesar la solicitud. Puede tardar unos segundos."
 
 PRESENTATION_FINISHED_MESSAGE = "Perfecto. ¿Necesitas algo más?"
 
+# The runtime owns the closing phrase: a COMPLETE step never carries an open
+# question, whatever the model proposed.
+COMPLETE_FAREWELL_MESSAGE = "De acuerdo. Que tengas un buen día."
+
 PRESENTATION_WAITING_MESSAGE = (
     "Sigo aquí con tu contraseña. Cuando quieras que te la repita, dímelo."
 )
@@ -545,7 +549,12 @@ def _apply_confirmation_observation(
     if observation is ConfirmationObservation.NONE:
         return challenge, dispatch, operation, None
     if challenge is None:
-        # Without an active challenge an observation authorizes nothing.
+        # Without an active challenge an observation authorizes nothing. An
+        # affirmative read after a failed capture must not become an execution
+        # announcement: the runtime records the violation and the caller is
+        # asked to confirm again with a fresh challenge.
+        if observation is ConfirmationObservation.AFFIRMATIVE:
+            return None, dispatch, operation, "affirmation without an active challenge"
         return None, dispatch, operation, None
     if observation in {
         ConfirmationObservation.NEGATIVE,
@@ -836,12 +845,13 @@ def _guard_outcome(
             next_step=next_step,
             violations=tuple(violations),
         )
-    return TurnOutcomeState(
-        message=decision.message,
-        next_step=_next_step_for_state(
-            decision, goal=goal, identity=identity, operation=operation, now=now
-        ),
+    next_step = _next_step_for_state(
+        decision, goal=goal, identity=identity, operation=operation, now=now
     )
+    # COMPLETE is a closed step: the runtime speaks the canonical farewell and
+    # never an open question, so the message always matches the next step.
+    message = COMPLETE_FAREWELL_MESSAGE if next_step is NextStep.COMPLETE else decision.message
+    return TurnOutcomeState(message=message, next_step=next_step)
 
 
 def advance_turn(state: GraphState) -> TurnDelta:
