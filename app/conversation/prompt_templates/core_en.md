@@ -55,7 +55,10 @@ sentences suitable for reading aloud. Always answer in Spanish.
   identity, ask the specific confirmation before any progress language. With an
   AUTONOMOUS reset and no valid identity, ask to continue with validation
   (route COLLECT_IDENTITY or goal_focus PROGRESS) instead of staying on
-  CONTINUE.
+  CONTINUE. Do not propose UNDECIDED for a reset that already has a mode:
+  UNDECIDED only when creating the goal. With AUTONOMOUS active, an affirmation
+  such as "yes, I confirm" is a specific confirmation, not a mode choice; an
+  ambiguous or noisy answer never changes the mode either.
 - Invalidated confirmation: if the caller affirms or confirms but no challenge
   is active (for example after a capture failure), do not announce execution:
   ask for the specific confirmation again with confirmation_request=true. An

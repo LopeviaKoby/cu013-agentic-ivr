@@ -518,8 +518,17 @@ def _apply_goal_proposal(
             )
     if goal is not None and goal.action is Action.RESET_PASSWORD:
         if assistance_mode is not None and goal.assistance_mode is not assistance_mode:
-            goal = goal.model_copy(update={"assistance_mode": assistance_mode})
-            challenge = None
+            established = goal.assistance_mode in {
+                AssistanceMode.GUIDED,
+                AssistanceMode.AUTONOMOUS,
+            }
+            # UNDECIDED is only the initial state. Once the caller chose GUIDED
+            # or AUTONOMOUS, a noisy or ambiguous turn that proposes UNDECIDED
+            # never degrades the mode nor clears the pending challenge; only an
+            # explicit GUIDED/AUTONOMOUS switch does.
+            if assistance_mode is not AssistanceMode.UNDECIDED or not established:
+                goal = goal.model_copy(update={"assistance_mode": assistance_mode})
+                challenge = None
         if goal.assistance_mode is None:
             # A RESET goal always carries a mode; the neutral default is
             # UNDECIDED, which never opens a challenge.
@@ -614,6 +623,52 @@ def _dispatch_binding_error(
     return None
 
 
+def _eligible_for_challenge(
+    goal: ConversationGoal | None,
+    identity: IdentityState,
+    operation: ExternalOperation | None,
+    now: datetime,
+) -> bool:
+    """Closed legality: only an authorized action may open a challenge."""
+    if (
+        goal is not None
+        and goal.action is Action.RESET_PASSWORD
+        and goal.assistance_mode is not AssistanceMode.AUTONOMOUS
+    ):
+        # The runtime, not the prompt, owns this legality: a GUIDED or
+        # UNDECIDED reset never opens an action challenge, and any stale
+        # challenge dies here.
+        return False
+    validated_at = identity.validated_at
+    if goal is None or validated_at is None or not identity.is_valid_at(now):
+        return False
+    if identity.requires_handoff():
+        return False
+    return operation is None or not operation.is_active()
+
+
+def _new_challenge(
+    goal: ConversationGoal, identity: IdentityState, now: datetime
+) -> ConfirmationChallenge:
+    """Fresh challenge bound to the current action, revision and identity."""
+    validated_at = identity.validated_at
+    assert validated_at is not None  # guaranteed by _eligible_for_challenge
+    return ConfirmationChallenge(
+        challenge_id=uuid4().hex,
+        action=goal.action,
+        goal_revision=goal.revision,
+        identity_validated_at=validated_at,
+        issued_at=now,
+    )
+
+
+def _reconfirmation_message(action: Action) -> str:
+    """Deterministic recovery phrase after an invalidated challenge."""
+    if action is Action.UNLOCK_ACCOUNT:
+        return "Para continuar necesito tu confirmación: ¿confirmas que desbloqueemos tu cuenta?"
+    return "Para continuar necesito tu confirmación: ¿confirmas que restablezcamos tu contraseña?"
+
+
 def _maybe_open_challenge(
     decision: ModelTurnDecision,
     *,
@@ -624,33 +679,14 @@ def _maybe_open_challenge(
     now: datetime,
 ) -> ConfirmationChallenge | None:
     """Open a challenge only when the caller is legally eligible to confirm."""
-    if (
-        goal is not None
-        and goal.action is Action.RESET_PASSWORD
-        and goal.assistance_mode is not AssistanceMode.AUTONOMOUS
-    ):
-        # The runtime, not the prompt, owns this legality: a GUIDED or
-        # UNDECIDED reset never opens an action challenge, and any stale
-        # challenge dies here.
+    if not _eligible_for_challenge(goal, identity, operation, now):
         return None
-    validated_at = identity.validated_at
     if not decision.confirmation_request:
         return challenge
     if challenge is not None:
         return challenge
-    if goal is None or validated_at is None or not identity.is_valid_at(now):
-        return None
-    if identity.requires_handoff():
-        return None
-    if operation is not None and operation.is_active():
-        return None
-    return ConfirmationChallenge(
-        challenge_id=uuid4().hex,
-        action=goal.action,
-        goal_revision=goal.revision,
-        identity_validated_at=validated_at,
-        issued_at=now,
-    )
+    assert goal is not None
+    return _new_challenge(goal, identity, now)
 
 
 def _apply_external_event(
@@ -896,6 +932,7 @@ def advance_turn(state: GraphState) -> TurnDelta:
     operation = state["external_operation"]
     binding_error: str | None = None
     dispatched_this_turn = False
+    reissued_message: str | None = None
     if decision is not None and not presentation_active:
         if (
             decision.confirmation_observation is ConfirmationObservation.CANCEL
@@ -923,6 +960,19 @@ def advance_turn(state: GraphState) -> TurnDelta:
                 operation=operation,
                 now=now,
             )
+            if (
+                challenge is None
+                and decision.confirmation_observation is ConfirmationObservation.AFFIRMATIVE
+                and _eligible_for_challenge(goal, identity, operation, now)
+            ):
+                # The caller affirmed but no challenge was live (for example
+                # after a failed capture invalidated it). The runtime
+                # re-establishes the specific confirmation and asks again
+                # instead of announcing an execution.
+                assert goal is not None
+                challenge = _new_challenge(goal, identity, now)
+                binding_error = None
+                reissued_message = _reconfirmation_message(goal.action)
     external_event = state["external_event"]
     operation_was_active = operation is not None and operation.is_active()
     operation = _apply_external_event(operation, external_event)
@@ -997,6 +1047,9 @@ def advance_turn(state: GraphState) -> TurnDelta:
                 ),
                 next_step=NextStep.DELIVER_PASSWORD,
             )
+    elif reissued_message is not None:
+        # Recovery: the fresh specific confirmation replaces the model message.
+        outcome = TurnOutcomeState(message=reissued_message, next_step=NextStep.LISTEN)
     elif dispatched_this_turn and dispatch is not None:
         # The durable guard exists: the boundary must deliver its command even
         # if the same model turn proposed something illegal. The runtime

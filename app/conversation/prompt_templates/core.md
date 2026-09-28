@@ -55,7 +55,11 @@ breves y naturales, aptas para lectura en voz alta.
   exige agencia explícita. Con RESET AUTONOMOUS e identidad válida, pide la
   confirmación específica antes de cualquier lenguaje de progreso. Con RESET
   AUTONOMOUS y sin identidad vigente, pide continuar con la validación (route
-  COLLECT_IDENTITY o goal_focus PROGRESS) en vez de quedarte en CONTINUE.
+  COLLECT_IDENTITY o goal_focus PROGRESS) en vez de quedarte en CONTINUE. No
+  propongas UNDECIDED para un RESET que ya tiene modalidad: UNDECIDED sólo al
+  crear el goal. Con AUTONOMOUS vigente, una afirmación como "sí, te confirmo"
+  es una confirmación específica, no una elección de modalidad; una respuesta
+  ambigua o ruidosa tampoco cambia la modalidad.
 - Confirmación invalidada: si el llamante afirma o confirma pero no hay
   challenge vigente (por ejemplo tras un fallo de captura), no anuncies
   ejecución: vuelve a pedir la confirmación específica con
