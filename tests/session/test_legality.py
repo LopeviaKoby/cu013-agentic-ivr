@@ -671,7 +671,7 @@ def test_dispatch_without_a_challenge_is_blocked() -> None:
     delta = advance_turn(
         make_state(
             goal=make_goal(Action.UNLOCK_ACCOUNT),
-            identity=make_identity(NOW),
+            identity=make_identity(),
             model_decision=make_decision(
                 confirmation_observation=ConfirmationObservation.AFFIRMATIVE
             ),
@@ -679,9 +679,10 @@ def test_dispatch_without_a_challenge_is_blocked() -> None:
     )
     assert delta["dispatch"] is None
     assert delta["external_operation"] is None
+    assert delta["confirmation"] is None
     assert delta["outcome"] is not None
-    # An affirmation without an active challenge is not evidence: the runtime
-    # records it and never announces an execution.
+    # Without a valid identity the runtime cannot re-establish the challenge,
+    # so the affirmation is not evidence: it never announces an execution.
     assert "affirmation without an active challenge" in delta["outcome"].violations
     assert delta["outcome"].message == SAFE_FALLBACK_MESSAGE
 

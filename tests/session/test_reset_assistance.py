@@ -219,6 +219,9 @@ def test_a_stale_unlock_confirmation_cannot_authorize_reset() -> None:
             ),
         )
     )
-    assert delta["confirmation"] is None
+    # The stale UNLOCK challenge dies with the goal mismatch and never
+    # authorizes; the runtime re-issues a fresh RESET challenge instead.
     assert delta["dispatch"] is None
     assert delta["external_operation"] is None
+    assert delta["confirmation"] is not None
+    assert delta["confirmation"].action is Action.RESET_PASSWORD

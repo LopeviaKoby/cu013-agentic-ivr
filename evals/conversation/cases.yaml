@@ -1865,7 +1865,7 @@ cases:
     expected:
       route: CONTINUE
       conversation_goal: RESET_PASSWORD
-      confirmation_state: none
+      confirmation_state: not_oracled
       dispatch_count: 0
       escalation_eligibility: not_eligible
       state_delta: "goal exists but no reset operation; no in-progress claim"
@@ -1896,11 +1896,11 @@ cases:
       route: UNSPECIFIED
       conversation_goal: UNLOCK_ACCOUNT
       confirmation_state: not_oracled
-      dispatch_count: 0
+      dispatch_count: 1
       escalation_eligibility: not_eligible
-      state_delta: "invalidated challenge never authorizes; recovery requires a fresh confirmation"
-      allowed_claims: ["confirmation is still required"]
-      forbidden_claims: ["account is unlocked", "operation dispatched"]
+      state_delta: "invalidated challenge never authorizes; recovery opens a fresh confirmation and only its affirmative dispatches"
+      allowed_claims: ["specific confirmation requested", "unlock dispatched after confirmation"]
+      forbidden_claims: ["account is unlocked before the confirmed result"]
   - case_id: complete-closed-farewell
     family: closing-consistency
     scenario_kind: sequence

@@ -29,10 +29,10 @@ from tests.session.doubles import (
 )
 
 
-def test_affirmation_without_an_active_challenge_is_not_an_execution() -> None:
+def test_affirmation_without_a_live_challenge_reissues_the_confirmation() -> None:
     """After a voice failure invalidated the challenge, an affirmation must
-    not become an execution announcement: the runtime replaces the message
-    and records the violation, and never dispatches."""
+    not become an execution announcement: the runtime re-establishes the
+    specific confirmation, asks again and never dispatches."""
     state = make_state(
         goal=make_goal(Action.UNLOCK_ACCOUNT),
         identity=make_identity(NOW),
@@ -49,6 +49,28 @@ def test_affirmation_without_an_active_challenge_is_not_an_execution() -> None:
     assert delta["dispatch"] is None
     assert delta["external_operation"] is None
     assert outcome.next_step is NextStep.LISTEN
+    assert outcome.message != "Perfecto, procedemos con el desbloqueo."
+    assert delta["confirmation"] is not None
+    assert delta["confirmation"].action is Action.UNLOCK_ACCOUNT
+
+
+def test_affirmation_without_identity_falls_back_safely() -> None:
+    delta = advance_turn(
+        make_state(
+            goal=make_goal(Action.UNLOCK_ACCOUNT),
+            identity=make_identity(),
+            confirmation=None,
+            model_decision=make_decision(
+                route=Route.CONTINUE,
+                message="Perfecto, procedemos con el desbloqueo.",
+                confirmation_observation=ConfirmationObservation.AFFIRMATIVE,
+            ),
+        )
+    )
+    outcome = delta["outcome"]
+    assert outcome is not None
+    assert delta["confirmation"] is None
+    assert delta["dispatch"] is None
     assert outcome.message == SAFE_FALLBACK_MESSAGE
     assert outcome.violations
 
