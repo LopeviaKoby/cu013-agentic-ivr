@@ -251,7 +251,8 @@ SendMail permanece Deferred y fuera del alcance inmediato. Los valores predeterm
 | FS-002 | open |
 | CNV-001 | resolved (schema v2 durable pre-auth + continuidad + correcciones/cancelación implementados y verificados; eliminado de `docs/gaps.md`) |
 | Iteración post-E2E (continuidad, `goal_focus`, presentación) | promovida a `feat/post-e2e-continuity` (`7ae23ca`); revisión Cloud Run `00008-pol` con tag `e2e-en` |
-| Corrección post-E2E RESET (modalidad GUIDED/AUTONOMOUS) | `5c99ecd`+`5bcccf0`+`64cf57c` en `feat/post-e2e-continuity`; schema v6; protocolo RESET `:2` con voz y sin correo; revisión Cloud Run `00009-lut` con tag `e2e-en`; E2E del owner pendiente |
+| Corrección post-E2E RESET (modalidad GUIDED/AUTONOMOUS) | `5c99ecd`+`5bcccf0`+`64cf57c`; schema v6; protocolo RESET `:2`; revisión `00009-lut` |
+| Corrección causa raíz E2E `Ivr02-1790566892.6105` | `5b689fb`+`91f2ab8`+`b9e5603`: afirmación sin challenge no autoriza ni anuncia, recuperación de confirmación, `external_operation_action` en la proyección, cierre canónico en `COMPLETE`, política de modalidad afinada; revisión Cloud Run `00010-wux` con tag `e2e-en`; focused 45/45 y paired 228 PASS/0 críticos; E2E del owner pendiente |
 | Laboratorio de evaluación | `conversation_eval.py` + `conversation_compare.py` + `metamorphic_eval.py` + corpus de 58 casos / 45 familias; `scenario_kind`, oráculos nulos/ausentes, evidencia por run/caso/turno, INFRA por repetición, reruns focalizados y CI sin credenciales |
 | Próximo gate | E2E del owner contra la tag `e2e-en` (revisión `00009-lut`, protocolo RESET `:2`): UNLOCK → nueva necesidad RESET → GUIDED/AUTONOMOUS → confirmación específica → `EXECUTE_ACTION`; después análisis con `xcally-call-evidence-analysis`. Sin merge a `dev` hasta analizar el E2E |
 | AD/TIVIT | después del baseline de voz XCALLY aislado |
