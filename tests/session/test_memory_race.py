@@ -76,8 +76,8 @@ async def test_same_session_overlap_loses_one_update_without_dup_dispatch() -> N
     assert final["revision"] == 2
     assert final["turn_count"] == 2
     assert final["goal"] in (
-        {"action": "UNLOCK_ACCOUNT", "revision": 1},
-        {"action": "RESET_PASSWORD", "revision": 1},
+        {"action": "UNLOCK_ACCOUNT", "revision": 1, "assistance_mode": None},
+        {"action": "RESET_PASSWORD", "revision": 1, "assistance_mode": "UNDECIDED"},
     )
     # No duplicate dispatch was produced by the overlap.
     assert result_a.record.dispatch is None

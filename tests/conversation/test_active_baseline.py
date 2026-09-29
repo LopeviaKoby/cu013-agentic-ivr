@@ -2,7 +2,7 @@
 
 No Vertex AI, network or credentials are involved. These tests pin the
 accepted baseline in descriptive language: Gemini 3.5 Flash-Lite on
-Vertex AI, model location global, reasoning level MINIMAL, structured
+Vertex AI, model location us, reasoning level MINIMAL, structured
 procedure classification required, recent memory of three completed
 pairs in the synthetic lane, one model call per transcript turn and zero
 calls on polling without new speech. The baseline is derived from
@@ -34,10 +34,11 @@ def test_active_baseline_identity_is_single_and_explicit() -> None:
     baseline = active_conversation_baseline()
     assert baseline.provider == "vertex_ai"
     assert baseline.model == ACTIVE_CONVERSATION_MODEL == "gemini-3.5-flash-lite"
-    assert baseline.location == ACTIVE_MODEL_LOCATION == "global"
+    assert baseline.location == ACTIVE_MODEL_LOCATION == "us"
     assert baseline.api_version == "v1"
     assert baseline.thinking_level == ACTIVE_THINKING_LEVEL == "MINIMAL"
     assert baseline.strict_procedure_observation is True
+    assert baseline.max_output_tokens == 256
     assert baseline.timeout_ms == ACTIVE_TIMEOUT_MS == 30000
     assert baseline.attempts == ACTIVE_ATTEMPTS == 1
 
@@ -109,7 +110,7 @@ def test_variant_fingerprint_derived_from_effective_sources() -> None:
     identity = build_variant_identity(baseline, prompt_source=static)
     assert identity["provider"] == "vertex_ai"
     assert identity["model_id"] == "gemini-3.5-flash-lite"
-    assert identity["model_location"] == "global"
+    assert identity["model_location"] == "us"
     assert identity["thinking_level"] == "MINIMAL"
     assert identity["thinking_budget"] is None
     assert identity["strict_procedure_observation"] is True
@@ -146,12 +147,12 @@ def test_variant_fingerprint_carries_composition_hashes() -> None:
     assert identity["effective_prompt_hash"] == hash_prompt_text(bundle.system_instructions(None))
 
 
-def test_config_model_location_is_global_not_infrastructure() -> None:
+def test_config_model_location_is_us_not_infrastructure() -> None:
     import yaml
 
     root = Path(__file__).resolve().parents[2]
     config = yaml.safe_load((root / "config.yaml").read_text(encoding="utf-8"))
-    assert config["vertex"]["location"] == "global"
+    assert config["vertex"]["location"] == "us"
     assert config["cloud_run"]["region"] == "us-east1"
     assert config["gcp"]["region"] == "us-east1"
 

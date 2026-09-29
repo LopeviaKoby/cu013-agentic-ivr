@@ -108,6 +108,82 @@ class CriticalClass(StrEnum):
     STALE_CHALLENGE_REUSE = "stale_challenge_reuse"
     ILLEGAL_HANDOFF = "illegal_handoff"
     UNKNOWN_REDISPATCH = "unknown_redispatch"
+    INCOHERENT_CHALLENGE_PRESENTATION = "incoherent_challenge_presentation"
+
+
+class MessageSource(StrEnum):
+    """Provenance of the final caller-facing outcome selected for a turn.
+
+    It describes the selected outcome, never the model candidate alone, and
+    never carries message text: the runner derives it transiently from the
+    in-memory decision/outcome pair and stores only this closed value. The
+    hybrid-confirmation refinements distinguish which deterministic path
+    spoke: the first workflow-owned confirmation, a model-rendered
+    re-request after a side question, or the recovery reissue. They live
+    only in eval evidence, never in Firestore or on the wire.
+    """
+
+    MODEL_RENDERED = "MODEL_RENDERED"
+    RUNTIME_LITERAL = "RUNTIME_LITERAL"
+    MODEL_THEN_OVERRIDDEN = "MODEL_THEN_OVERRIDDEN"
+    NO_SPEECH_OUTPUT = "NO_SPEECH_OUTPUT"
+    INITIAL_DETERMINISTIC_CONFIRMATION = "INITIAL_DETERMINISTIC_CONFIRMATION"
+    MODEL_RENDERED_RECONFIRMATION = "MODEL_RENDERED_RECONFIRMATION"
+    RECOVERY_RECONFIRMATION = "RECOVERY_RECONFIRMATION"
+
+
+class RequiredCommunicativeAct(StrEnum):
+    """Spoken obligation the selected outcome requires, not business workflow.
+
+    Each value is transversal (both actions, every turn) and derivable from
+    the selected outcome plus allowlisted state, without parsing free text:
+    ASK_ACTION_CONFIRMATION covers the challenge-coherence oracle;
+    REQUEST_IDENTITY covers identity capture; REPORT_PENDING covers dispatch;
+    CLOSE covers conversational close; TRANSFER_TO_HUMAN covers handoff;
+    RETRY_UNDERSTANDING covers safe-fallback recovery; OPEN_RESPONSE is the
+    default open continuation; NONE means no speech output. It is not a
+    1:1 rename of next_step: LISTEN splits into ASK / RETRY / OPEN (plus the
+    assistance-mode choice observed via the expected response), while the
+    terminal steps keep the spoken obligation distinct from the transport
+    capability. No per-protocol steps are modeled.
+    """
+
+    ASK_ACTION_CONFIRMATION = "ASK_ACTION_CONFIRMATION"
+    REQUEST_IDENTITY = "REQUEST_IDENTITY"
+    REPORT_PENDING = "REPORT_PENDING"
+    CLOSE = "CLOSE"
+    TRANSFER_TO_HUMAN = "TRANSFER_TO_HUMAN"
+    RETRY_UNDERSTANDING = "RETRY_UNDERSTANDING"
+    OPEN_RESPONSE = "OPEN_RESPONSE"
+    NONE = "NONE"
+
+
+class ExpectedUserResponse(StrEnum):
+    """Closed caller-response metadata derived from the selected outcome.
+
+    Derived and ephemeral: computed per turn from the selected outcome and
+    allowlisted state, never durable, never wire-visible, and never used to
+    authorize, mutate goal/challenge, or decide next_step.
+    """
+
+    ACTION_CONFIRMATION = "ACTION_CONFIRMATION"
+    IDENTITY_INPUT = "IDENTITY_INPUT"
+    ASSISTANCE_MODE_CHOICE = "ASSISTANCE_MODE_CHOICE"
+    OPEN_RESPONSE = "OPEN_RESPONSE"
+    NONE = "NONE"
+
+
+class OverrideReason(StrEnum):
+    """Why the runtime substituted the model candidate message, if it did.
+
+    Stored as a closed code or null; candidate/final text is never stored.
+    """
+
+    VIOLATION_FALLBACK = "VIOLATION_FALLBACK"
+    COMPLETE_FAREWELL = "COMPLETE_FAREWELL"
+    HANDOFF_ESCALATION = "HANDOFF_ESCALATION"
+    DISPATCH_PROCESSING = "DISPATCH_PROCESSING"
+    RECOVERY_RECONFIRMATION = "RECOVERY_RECONFIRMATION"
 
 
 CRITICAL_CLASSES = tuple(item.value for item in CriticalClass)
@@ -125,6 +201,7 @@ CASE_ORACLE_FIELDS: dict[str, OracleKind] = {
     "dispatch_count": OracleKind.MACHINE_ORACLE,
     "escalation_eligibility": OracleKind.MACHINE_ORACLE,
     "handoff_cause": OracleKind.MACHINE_ORACLE,
+    "assistance_mode": OracleKind.MACHINE_ORACLE,
     "state_delta": OracleKind.DESCRIPTIVE_METADATA,
     "allowed_claims": OracleKind.HUMAN_REVIEW_EVIDENCE,
     "forbidden_claims": OracleKind.HUMAN_REVIEW_EVIDENCE,
@@ -140,6 +217,8 @@ TURN_ORACLE_FIELDS: dict[str, OracleKind] = {
     "dispatch_count_unchanged": OracleKind.MACHINE_ORACLE,
     "operation": OracleKind.MACHINE_ORACLE,
     "obsolete_goal_absent": OracleKind.MACHINE_ORACLE,
+    "assistance_mode": OracleKind.MACHINE_ORACLE,
+    "mode_transition": OracleKind.MACHINE_ORACLE,
     # Exp 0009 experimental memory/procedure oracles (synthetic lane only).
     "procedure_current": OracleKind.MACHINE_ORACLE,
     "procedure_last_completed": OracleKind.MACHINE_ORACLE,
@@ -171,6 +250,8 @@ TURN_CONFIRMATION_STATES = {
     NOT_ORACLED,
 }
 GOAL_TRANSITIONS = {"absent", "created", "retained", "changed", "cleared", "not_oracled"}
+MODE_VALUES = {"UNDECIDED", "GUIDED", "AUTONOMOUS"}
+MODE_TRANSITIONS = {"none", "created", "retained", "changed", "cleared", "not_oracled"}
 REVISION_TRANSITIONS = {"created", "same", "incremented", "cleared", "not_oracled"}
 OPERATION_STATES = {"none", "active", "pending", "unknown", "confirmed", "failed", NOT_ORACLED}
 KNOWLEDGE_ELIGIBILITIES = {"eligible", "not_eligible"}
@@ -353,6 +434,9 @@ def _validate_expect(
         if value is not None and value not in allowed:
             problems.append(f"{where}: unknown {name} {value!r}")
     if not turn:
+        mode = expect.get("assistance_mode")
+        if mode is not None and mode not in MODE_VALUES | {NOT_ORACLED}:
+            problems.append(f"{where}: unknown assistance_mode {mode!r}")
         dispatch = expect.get("dispatch_count")
         if dispatch is not None and (not isinstance(dispatch, int) or dispatch not in {0, 1}):
             problems.append(f"{where}: dispatch_count must be 0 or 1")
@@ -370,6 +454,12 @@ def _validate_expect(
         revision = expect.get("revision_transition")
         if revision is not None and revision not in REVISION_TRANSITIONS:
             problems.append(f"{where}: unknown revision_transition {revision!r}")
+        mode = expect.get("assistance_mode")
+        if mode is not None and mode not in MODE_VALUES | {NOT_ORACLED}:
+            problems.append(f"{where}: unknown assistance_mode {mode!r}")
+        mode_shift = expect.get("mode_transition")
+        if mode_shift is not None and mode_shift not in MODE_TRANSITIONS:
+            problems.append(f"{where}: unknown mode_transition {mode_shift!r}")
         operation = expect.get("operation")
         if operation is not None and operation not in OPERATION_STATES:
             problems.append(f"{where}: unknown operation {operation!r}")
@@ -448,6 +538,7 @@ class StateProjection:
 
     goal_action: str | None = None
     goal_revision: int | None = None
+    goal_assistance_mode: str | None = None
     identity_validated: bool = False
     identity_validated_at: str | None = None
     identity_expires_at: str | None = None
@@ -565,6 +656,20 @@ class TurnObservation:
     tools: list[ToolObservation] = field(default_factory=list)
     proposed_procedure_observation: str | None = None
     procedure_observation_emitted: bool | None = None
+    proposed_assistance_mode: str | None = None
+    mode_transition: str = "none"
+    # Caller-facing response plane: closed derivation of the selected
+    # outcome. No message, transcript, or PII is ever stored here.
+    # model_input_obligation is the pre-turn P1 derivation (what the model
+    # was told to expect); required_communicative_act is the post-turn
+    # selected obligation. The two are never mixed retrospectively.
+    model_input_obligation: str = "NONE"
+    message_source: str = "NO_SPEECH_OUTPUT"
+    message_overridden: bool = False
+    override_reason: str | None = None
+    required_communicative_act: str = "NONE"
+    expected_user_response: str = "NONE"
+    challenge_message_coherent: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -658,6 +763,7 @@ def case_property_verdicts(
         observed=_escalation_eligibility(final),
     )
     verdicts["dispatch_count"] = _dispatch_verdict(expected, dispatch_count)
+    verdicts["assistance_mode"] = _mode_verdict(expected, final)
     for name in ORACLE_PROSE_FIELDS:
         verdicts[name] = _prose_verdict(name)
     for name in expected:
@@ -798,6 +904,10 @@ def turn_property_verdicts(expect: Mapping[str, Any], turn: TurnObservation) -> 
         expect, turn, key="revision_transition", observed=turn.revision_transition
     )
     verdicts["confirmation"] = _turn_confirmation_verdict(expect, turn)
+    verdicts["assistance_mode"] = _turn_mode_verdict(expect, turn)
+    verdicts["mode_transition"] = _turn_transition_verdict(
+        expect, turn, key="mode_transition", observed=turn.mode_transition
+    )
     verdicts["identity_valid"] = _turn_identity_verdict(expect, turn)
     verdicts["dispatch_count_unchanged"] = _turn_dispatch_verdict(expect, turn)
     verdicts["operation"] = _turn_operation_verdict(expect, turn)
@@ -846,6 +956,26 @@ def _turn_transition_verdict(
     want = expect[key]
     if want == NOT_ORACLED:
         return PropertyVerdict.NOT_ORACLED.value
+    return PropertyVerdict.PASS.value if observed == want else PropertyVerdict.FAIL.value
+
+
+def _mode_verdict(expected: Mapping[str, Any], final: TurnObservation) -> str:
+    if "assistance_mode" not in expected:
+        return PropertyVerdict.NOT_ORACLED.value
+    want = expected["assistance_mode"]
+    if want == NOT_ORACLED:
+        return PropertyVerdict.NOT_ORACLED.value
+    observed = final.state_after.goal_assistance_mode
+    return PropertyVerdict.PASS.value if observed == want else PropertyVerdict.FAIL.value
+
+
+def _turn_mode_verdict(expect: Mapping[str, Any], turn: TurnObservation) -> str:
+    if "assistance_mode" not in expect:
+        return PropertyVerdict.NOT_ORACLED.value
+    want = expect["assistance_mode"]
+    if want == NOT_ORACLED:
+        return PropertyVerdict.NOT_ORACLED.value
+    observed = turn.state_after.goal_assistance_mode
     return PropertyVerdict.PASS.value if observed == want else PropertyVerdict.FAIL.value
 
 
@@ -1033,6 +1163,196 @@ def detect_executed_criticals(
     if runtime_route == "ESCALATE" and handoff_cause is None:
         findings.append(CriticalClass.ILLEGAL_HANDOFF.value)
     return sorted(set(findings))
+
+
+def derive_message_source(
+    *,
+    decision_exists: bool,
+    outcome_exists: bool,
+    message_overridden: bool,
+    confirmation_state: str | None = None,
+    is_recovery: bool = False,
+    is_canonical_first: bool = False,
+) -> str:
+    """Provenance of the selected outcome from closed booleans only."""
+    if not outcome_exists:
+        return MessageSource.NO_SPEECH_OUTPUT.value
+    if not decision_exists:
+        return MessageSource.RUNTIME_LITERAL.value
+    if message_overridden:
+        if is_recovery:
+            return MessageSource.RECOVERY_RECONFIRMATION.value
+        if is_canonical_first:
+            return MessageSource.INITIAL_DETERMINISTIC_CONFIRMATION.value
+        return MessageSource.MODEL_THEN_OVERRIDDEN.value
+    if confirmation_state == "changed":
+        return MessageSource.MODEL_RENDERED_RECONFIRMATION.value
+    return MessageSource.MODEL_RENDERED.value
+
+
+def derive_required_act(
+    *,
+    outcome_exists: bool,
+    next_step: str | None,
+    has_violations: bool,
+    challenge_present: bool,
+    decision_request: bool | None,
+    is_recovery: bool,
+) -> str:
+    """Spoken obligation required by the selected outcome.
+
+    Pure derivation from the selected step, violation presence, and
+    allowlisted challenge/request facts. Free text is never inspected.
+    """
+    if not outcome_exists:
+        return RequiredCommunicativeAct.NONE.value
+    if next_step == "EXECUTE_ACTION":
+        return RequiredCommunicativeAct.REPORT_PENDING.value
+    if next_step == "COMPLETE":
+        return RequiredCommunicativeAct.CLOSE.value
+    if next_step == "TRANSFER":
+        return RequiredCommunicativeAct.TRANSFER_TO_HUMAN.value
+    if has_violations:
+        return RequiredCommunicativeAct.RETRY_UNDERSTANDING.value
+    if next_step == "COLLECT_IDENTITY":
+        return RequiredCommunicativeAct.REQUEST_IDENTITY.value
+    if next_step == "LISTEN":
+        if challenge_present and (decision_request is True or is_recovery):
+            return RequiredCommunicativeAct.ASK_ACTION_CONFIRMATION.value
+        return RequiredCommunicativeAct.OPEN_RESPONSE.value
+    return RequiredCommunicativeAct.OPEN_RESPONSE.value
+
+
+def derive_expected_response(
+    *,
+    outcome_exists: bool,
+    required_act: str,
+    goal_action: str | None,
+    assistance_mode: str | None,
+) -> str:
+    """Caller-response metadata derived from the selected obligation."""
+    if not outcome_exists:
+        return ExpectedUserResponse.NONE.value
+    if required_act == RequiredCommunicativeAct.ASK_ACTION_CONFIRMATION.value:
+        return ExpectedUserResponse.ACTION_CONFIRMATION.value
+    if required_act == RequiredCommunicativeAct.REQUEST_IDENTITY.value:
+        return ExpectedUserResponse.IDENTITY_INPUT.value
+    if required_act in {
+        RequiredCommunicativeAct.REPORT_PENDING.value,
+        RequiredCommunicativeAct.CLOSE.value,
+        RequiredCommunicativeAct.TRANSFER_TO_HUMAN.value,
+        RequiredCommunicativeAct.NONE.value,
+    }:
+        return ExpectedUserResponse.NONE.value
+    if required_act == RequiredCommunicativeAct.RETRY_UNDERSTANDING.value:
+        return ExpectedUserResponse.OPEN_RESPONSE.value
+    if goal_action == "RESET_PASSWORD" and assistance_mode == "UNDECIDED":
+        return ExpectedUserResponse.ASSISTANCE_MODE_CHOICE.value
+    return ExpectedUserResponse.OPEN_RESPONSE.value
+
+
+def derive_override_reason(
+    *,
+    message_overridden: bool,
+    next_step: str | None,
+    has_violations: bool,
+    is_recovery: bool,
+) -> str | None:
+    """Closed override code, or null when the candidate was rendered."""
+    if not message_overridden:
+        return None
+    if next_step == "EXECUTE_ACTION":
+        return OverrideReason.DISPATCH_PROCESSING.value
+    if next_step == "COMPLETE":
+        return OverrideReason.COMPLETE_FAREWELL.value
+    if next_step == "TRANSFER":
+        return OverrideReason.HANDOFF_ESCALATION.value
+    if has_violations:
+        return OverrideReason.VIOLATION_FALLBACK.value
+    if is_recovery:
+        return OverrideReason.RECOVERY_RECONFIRMATION.value
+    return None
+
+
+def challenge_presentation_coherent(
+    *,
+    challenge_present: bool,
+    confirmation_state: str,
+    required_act: str,
+    challenge_action: str | None,
+    goal_action: str | None,
+    challenge_revision: int | None,
+    goal_revision: int | None,
+) -> bool:
+    """Challenge/outcome coherence without inspecting free wording.
+
+    A live challenge is coherent only when the selected obligation presents
+    its matching confirmation: a newly opened or replaced challenge needs
+    ASK_ACTION_CONFIRMATION with matching action and revision; a preserved
+    challenge additionally tolerates a lateral OPEN_RESPONSE that speaks the
+    model message. Absence is vacuously coherent.
+    """
+    if not challenge_present:
+        return True
+    if challenge_action != goal_action or challenge_revision != goal_revision:
+        return False
+    if confirmation_state in {"opened", "changed"}:
+        return required_act == RequiredCommunicativeAct.ASK_ACTION_CONFIRMATION.value
+    if confirmation_state == "pending":
+        return required_act in {
+            RequiredCommunicativeAct.ASK_ACTION_CONFIRMATION.value,
+            RequiredCommunicativeAct.OPEN_RESPONSE.value,
+        }
+    return required_act == RequiredCommunicativeAct.ASK_ACTION_CONFIRMATION.value
+
+
+def recovery_observation_applies(
+    *,
+    observation: str | None,
+    before_challenge_id: str | None,
+    before_challenge_action: str | None,
+    before_goal_action: str | None,
+    before_challenge_revision: int | None,
+    before_goal_revision: int | None,
+    before_challenge_identity_at: str | None,
+    before_identity_at: str | None,
+    event_kind: str | None,
+    challenge_present: bool,
+    next_step: str | None,
+    has_violations: bool,
+) -> bool:
+    """Whether an AFFIRMATIVE met no live challenge at observation time.
+
+    The durable before-projection may still show a challenge the runtime
+    cleared before observing: a stale goal/revision binding, a superseded
+    identity scope, or a voice-timeout event in the same turn. Those count
+    as absent, mirroring the runtime repair. Anything else authorizes
+    nothing and stays non-recovery.
+    """
+    if observation != "AFFIRMATIVE" or not challenge_present:
+        return False
+    if next_step != "LISTEN" or has_violations:
+        return False
+    if before_challenge_id is None:
+        return True
+    if event_kind == "confirmation_timeout":
+        return True
+    if before_challenge_action != before_goal_action:
+        return True
+    if before_challenge_revision != before_goal_revision:
+        return True
+    if before_challenge_identity_at != before_identity_at:
+        return True
+    return False
+
+
+def incoherent_challenge_critical(*, challenge_present: bool, coherent: bool) -> list[str]:
+    """New critical, distinct from illegal dispatch: a live challenge the
+    selected obligation never presented. Critical even with zero dispatches,
+    because it would authorize a future affirmation against unseen text."""
+    if challenge_present and not coherent:
+        return [CriticalClass.INCOHERENT_CHALLENGE_PRESENTATION.value]
+    return []
 
 
 # ---------------------------------------------------------------------------

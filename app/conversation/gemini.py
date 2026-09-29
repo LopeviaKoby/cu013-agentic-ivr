@@ -1,7 +1,7 @@
 """Active conversational model adapter over Vertex AI (google-genai, ADC).
 
 The active conversational baseline is Gemini 3.5 Flash-Lite on Vertex AI,
-model location ``global``, reasoning level ``MINIMAL``, structured output
+model location ``us``, reasoning level ``MINIMAL``, structured output
 enabled, mandatory structured procedure classification sent early in the
 response schema, and a recent-conversation window of three completed
 caller/assistant turn pairs rendered only for synthetic evaluation turns.
@@ -68,9 +68,14 @@ PROVIDER: Literal["vertex_ai"] = "vertex_ai"
 # Infrastructure regions (Cloud Run, Firestore) stay in us-east1; the model
 # location below is the Vertex AI serving location, not infrastructure.
 ACTIVE_CONVERSATION_MODEL = "gemini-3.5-flash-lite"
-ACTIVE_MODEL_LOCATION = "global"
+ACTIVE_MODEL_LOCATION = "us"
 ACTIVE_API_VERSION = "v1"
 ACTIVE_THINKING_LEVEL = "MINIMAL"
+# Owner-authorized candidate cap for the structured ModelTurnDecision path:
+# 120 truncated normal completions (~141 tokens observed), so 256 carries
+# margin without making output long by obligation. Message-only narrow
+# composers keep their own effective limits.
+ACTIVE_MAX_OUTPUT_TOKENS = 256
 ACTIVE_TIMEOUT_MS = 30000
 ACTIVE_ATTEMPTS = 1
 
@@ -96,6 +101,7 @@ class GeminiBaseline(BaseModel):
     thinking_budget: int
     thinking_level: str | None = None
     strict_procedure_observation: bool = True
+    max_output_tokens: int = ACTIVE_MAX_OUTPUT_TOKENS
     timeout_ms: int
     attempts: int
 
@@ -119,6 +125,9 @@ class GeminiBaseline(BaseModel):
             thinking_budget=0,
             thinking_level=thinking_level or None,
             strict_procedure_observation=strict_raw == "1",
+            max_output_tokens=int(
+                os.environ.get("CU013_VERTEX_MAX_OUTPUT_TOKENS", str(ACTIVE_MAX_OUTPUT_TOKENS))
+            ),
             timeout_ms=int(os.environ.get("CU013_VERTEX_TIMEOUT_MS", str(ACTIVE_TIMEOUT_MS))),
             attempts=ACTIVE_ATTEMPTS,
         )
@@ -134,8 +143,30 @@ def active_conversation_baseline(*, project: str = "tivit-cu013-prd") -> GeminiB
         thinking_budget=0,
         thinking_level=ACTIVE_THINKING_LEVEL,
         strict_procedure_observation=True,
+        max_output_tokens=ACTIVE_MAX_OUTPUT_TOKENS,
         timeout_ms=ACTIVE_TIMEOUT_MS,
         attempts=ACTIVE_ATTEMPTS,
+    )
+
+
+DELIVERY_CONTEXT_OPEN = "<entrega_ephemera>"
+DELIVERY_CONTEXT_CLOSE = "</entrega_ephemera>"
+
+
+def render_delivery_context(secret: str) -> str:
+    """Render the ephemeral delivery block; never persisted, never logged.
+
+    The exact temporary password travels only inside this block of the current
+    model request. The password is never normalized: the model must verbalize
+    exactly what XCALLY supplied.
+    """
+    return (
+        f"{DELIVERY_CONTEXT_OPEN}\n"
+        "presentación de contraseña activa\n"
+        f"contraseña temporal exacta: {secret}\n"
+        "Verbalízala exactamente como se recibió, carácter por carácter cuando "
+        "corresponda; no la corrijas, no la sustituyas y no inventes otra.\n"
+        f"{DELIVERY_CONTEXT_CLOSE}"
     )
 
 
@@ -143,9 +174,15 @@ def contents_for(
     *,
     state_block: str,
     transcript: str,
+    delivery_block: str | None = None,
 ) -> str:
     """Effective model contents: semantic projection plus current transcript."""
-    return "Estado del sistema:\n" + state_block + "\nTurno del llamante:\n" + transcript
+    caller_turn = transcript if transcript else "(primera vocalización, sin transcripción)"
+    parts = ["Estado del sistema:\n" + state_block]
+    if delivery_block is not None:
+        parts.append(delivery_block)
+    parts.append("Turno del llamante:\n" + caller_turn)
+    return "\n".join(parts)
 
 
 def response_schema_for(baseline: GeminiBaseline) -> Any:
@@ -171,6 +208,9 @@ def response_schema_for(baseline: GeminiBaseline) -> Any:
         "route",
         "procedure_observation",
         "goal",
+        "goal_focus",
+        "assistance_mode",
+        "password_presentation_finished",
         "confirmation_request",
         "confirmation_observation",
         "handoff_cause",
@@ -291,6 +331,8 @@ class GeminiTurnModel:
         memory_context: str | None = None,
         procedure_current: str | None = None,
         state_projection: ModelStateProjection | None = None,
+        delivery_secret: str | None = None,
+        semantic_obligation: str | None = None,
     ) -> ModelTurnDecision:
         start = time.monotonic()
         try:
@@ -309,6 +351,11 @@ class GeminiTurnModel:
                 # precedes the current transcript. Real-caller textual memory
                 # stays disabled until an accepted retention policy exists.
                 state_block = render_state_projection(projection)
+                if semantic_obligation:
+                    # P1 derived context: closed obligation block after the
+                    # state projection and before any experimental memory.
+                    # Productive path only; never durable or authoritative.
+                    state_block += "\n" + semantic_obligation
                 if memory_context:
                     state_block += "\n" + memory_context
                 response = await self._client.aio.models.generate_content(
@@ -316,6 +363,11 @@ class GeminiTurnModel:
                     contents=contents_for(
                         state_block=state_block,
                         transcript=transcript,
+                        delivery_block=(
+                            render_delivery_context(delivery_secret)
+                            if delivery_secret is not None
+                            else None
+                        ),
                     ),
                     config=self._config(goal, procedure_current),
                 )
@@ -368,6 +420,7 @@ class GeminiTurnModel:
             response_mime_type="application/json",
             response_schema=response_schema_for(baseline),
             thinking_config=thinking,
+            max_output_tokens=baseline.max_output_tokens,
             http_options=HttpOptions(
                 timeout=baseline.timeout_ms,
                 retry_options=HttpRetryOptions(attempts=baseline.attempts),
@@ -459,6 +512,7 @@ class GeminiPollingFeedbackComposer:
             response_mime_type="application/json",
             response_schema=PollingFeedbackOutput,
             thinking_config=thinking,
+            max_output_tokens=baseline.max_output_tokens,
             http_options=HttpOptions(
                 timeout=baseline.timeout_ms,
                 retry_options=HttpRetryOptions(attempts=baseline.attempts),

@@ -34,7 +34,7 @@ def test_config_points_at_the_tivit_dev_environment() -> None:
 
 def test_model_location_and_tiers_are_unchanged() -> None:
     config = load_config()
-    assert config["vertex"]["location"] == "global"
+    assert config["vertex"]["location"] == "us"
     cloud_run = config["cloud_run"]
     assert cloud_run["cpu"] == 1
     assert cloud_run["memory"] == "512Mi"

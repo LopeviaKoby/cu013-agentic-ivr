@@ -19,9 +19,9 @@ from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
-from app.session.actions import Action
+from app.session.actions import Action, ActionEffect, action_effect
 from app.session.memory import (
     ExperimentalMemoryConfig,
     ExperimentalProcedureState,
@@ -37,6 +37,7 @@ from app.session.memory import (
 )
 from app.session.outcome import NextStep
 from app.session.record import (
+    AssistanceMode,
     AuthorizedDispatch,
     ConfirmationChallenge,
     ConversationGoal,
@@ -44,9 +45,18 @@ from app.session.record import (
     ExternalOperation,
     IdentityState,
     OperationStatus,
+    PasswordPresentation,
     SessionRecord,
 )
-from app.session.state_projection import ModelStateProjection, project_model_state
+from app.session.semantic_obligation import (
+    derive_semantic_obligation,
+    render_semantic_obligation,
+)
+from app.session.state_projection import (
+    ModelStateProjection,
+    presentation_is_active,
+    project_model_state,
+)
 
 SAFE_FALLBACK_MESSAGE = (
     "No puedo confirmar eso en este momento. ¿Quieres que revisemos juntos tu solicitud?"
@@ -55,6 +65,26 @@ SAFE_FALLBACK_MESSAGE = (
 ESCALATION_MESSAGE = "No pudimos completar la validación de identidad. Te comunico con una persona."
 
 PROCESSING_MESSAGE = "Voy a procesar la solicitud. Puede tardar unos segundos."
+
+PRESENTATION_FINISHED_MESSAGE = "Perfecto. ¿Necesitas algo más?"
+
+# The runtime owns the closing phrase: a COMPLETE step never carries an open
+# question, whatever the model proposed.
+COMPLETE_FAREWELL_MESSAGE = "De acuerdo. Que tengas un buen día."
+
+PRESENTATION_WAITING_MESSAGE = (
+    "Sigo aquí. Cuando quieras, dime si quieres que te repita la contraseña."
+)
+
+# Temporary fail-safe (RD correlation unresolved): once one mutating AD
+# action was dispatched in this call, a second UNLOCK/RESET must never
+# produce a new POST, a new mutable operation or a retry request. The
+# runtime transfers with a deterministic safe phrase that preserves goal,
+# identity and history, without claiming the previous action failed.
+AD_MUTATION_LIMIT_MESSAGE = (
+    "Ya gestioné una solicitud de cuenta en esta llamada. "
+    "Por seguridad, te comunico con una persona para continuar."
+)
 
 
 class Route(StrEnum):
@@ -108,6 +138,22 @@ class GoalProposal(BaseModel):
     action: Action | None = None
 
 
+class GoalFocus(StrEnum):
+    """How one turn relates to the supported goal, if any.
+
+    ``PROGRESS`` is the caller requesting, reiterating, correcting or
+    otherwise advancing the supported goal; ``SIDE`` is a lateral, off-topic
+    or explanatory turn that must preserve the goal without advancing it;
+    ``NONE`` means no supported goal is in play. The runtime uses this closed
+    signal to decide whether a pending unauthorized goal still needs identity
+    capture, so an off-topic turn never forces authorization by itself.
+    """
+
+    NONE = "NONE"
+    PROGRESS = "PROGRESS"
+    SIDE = "SIDE"
+
+
 class ConfirmationObservation(StrEnum):
     """How the model read the caller's answer to the active challenge."""
 
@@ -157,6 +203,9 @@ class ModelTurnDecision(BaseModel):
     message: str = Field(min_length=1)
     route: Route
     goal: GoalProposal | None = None
+    goal_focus: GoalFocus = GoalFocus.NONE
+    assistance_mode: AssistanceMode | None = None
+    password_presentation_finished: bool = False
     confirmation_request: bool = False
     confirmation_observation: ConfirmationObservation = ConfirmationObservation.NONE
     procedure_observation: ProcedureObservation = Field(
@@ -211,6 +260,7 @@ class TurnInput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     transcript: str | None = None
+    temporary_password: SecretStr | None = None
     identity_outcome: IdentityOutcome | None = None
     confirmation_event: ConfirmationEvent | None = None
     external_event: ExternalEvent | None = None
@@ -279,6 +329,8 @@ class TurnModel(Protocol):
         memory_context: str | None = None,
         procedure_current: str | None = None,
         state_projection: ModelStateProjection | None = None,
+        delivery_secret: str | None = None,
+        semantic_obligation: str | None = None,
     ) -> ModelTurnDecision: ...
 
 
@@ -291,10 +343,13 @@ class GraphState(TypedDict):
     confirmation: ConfirmationChallenge | None
     dispatch: AuthorizedDispatch | None
     external_operation: ExternalOperation | None
+    password_presentation: PasswordPresentation | None
+    temporary_password: SecretStr | None
     experimental_config: ExperimentalMemoryConfig | None
     experimental_procedure: ExperimentalProcedureState | None
     experimental_suspended: ExperimentalSuspendedProcedure | None
     experimental_window: tuple[ExperimentalTurnPair, ...]
+    include_semantic_obligation: bool
     memory_render_ms: float | None
     memory_decode_ms: float
     memory_encode_ms: float | None
@@ -315,6 +370,7 @@ class TurnDelta(TypedDict):
     confirmation: ConfirmationChallenge | None
     dispatch: AuthorizedDispatch | None
     external_operation: ExternalOperation | None
+    password_presentation: PasswordPresentation | None
     experimental_procedure: ExperimentalProcedureState | None
     experimental_suspended: ExperimentalSuspendedProcedure | None
     experimental_window: tuple[ExperimentalTurnPair, ...]
@@ -328,6 +384,7 @@ def initial_graph_state(
     *,
     now: datetime,
     experimental: ExperimentalMemoryConfig | None = None,
+    include_semantic_obligation: bool = False,
 ) -> GraphState:
     """Build the ephemeral state from durable state plus this turn's input."""
     procedure, suspended, window, decode_ms = decode_experimental(
@@ -342,10 +399,13 @@ def initial_graph_state(
         confirmation=record.confirmation,
         dispatch=record.dispatch,
         external_operation=record.external_operation,
+        password_presentation=record.password_presentation,
+        temporary_password=turn.temporary_password,
         experimental_config=experimental,
         experimental_procedure=procedure,
         experimental_suspended=suspended,
         experimental_window=window,
+        include_semantic_obligation=include_semantic_obligation,
         memory_render_ms=None,
         memory_decode_ms=decode_ms,
         memory_encode_ms=None,
@@ -371,11 +431,19 @@ async def run_model(
     nothing new.
     """
     transcript = state["transcript"]
-    if transcript is None:
+    presentation_active = presentation_is_active(
+        state["external_operation"], state["password_presentation"]
+    )
+    secret = state["temporary_password"] if presentation_active else None
+    if transcript is None and secret is None:
+        # The only transcript-less turn is the first password vocalization: it
+        # exists precisely because the ephemeral secret is present.
         return {"model_decision": None}
     memory_context: str | None = None
     render_ms: float | None = None
-    if state["experimental_config"] is not None:
+    if state["experimental_config"] is not None and not presentation_active:
+        # Presentation turns are potentially sensitive (the caller may repeat
+        # the secret), so recent memory is neither rendered nor appended.
         memory_context, render_ms = render_memory_block(
             state["experimental_window"],
             state["experimental_procedure"],
@@ -390,11 +458,27 @@ async def run_model(
         confirmation=state["confirmation"],
         dispatch=state["dispatch"],
         operation=state["external_operation"],
+        presentation=state["password_presentation"],
         procedure=procedure,
         now=state["now"],
     )
+    if state["include_semantic_obligation"] and not presentation_active:
+        # P1 derived context (candidate): the pending caller response as a
+        # closed block after the state projection. Productive P1 path only;
+        # never the memory channel, never durable, never authoritative.
+        obligation = derive_semantic_obligation(
+            goal=state["goal"],
+            identity=state["identity"],
+            confirmation=state["confirmation"],
+            external_operation=state["external_operation"],
+            password_presentation=state["password_presentation"],
+            now=state["now"],
+        )
+        rendered_obligation = render_semantic_obligation(obligation)
+    else:
+        rendered_obligation = None
     decision = await model.decide(
-        transcript=transcript,
+        transcript=transcript or "",
         goal=state["goal"],
         identity_validated=state["identity"].is_valid_at(state["now"]),
         confirmation=state["confirmation"],
@@ -402,6 +486,8 @@ async def run_model(
         memory_context=memory_context,
         procedure_current=procedure.current_step if procedure is not None else None,
         state_projection=projection,
+        delivery_secret=secret.get_secret_value() if secret is not None else None,
+        semantic_obligation=rendered_obligation,
     )
     return {"model_decision": decision, "memory_render_ms": render_ms}
 
@@ -412,9 +498,13 @@ def _apply_identity_outcome(
     *,
     now: datetime,
 ) -> IdentityState:
-    """Apply one boundary identity result; only caller mistakes count."""
+    """Apply one boundary identity result; only caller mistakes count.
+
+    A positive validation resolves the phase and clears the caller-failure
+    counter, so stale failures never carry over to a later fresh attempt.
+    """
     if outcome is IdentityOutcome.VALIDATED:
-        return IdentityState(validated_at=now, caller_failures=identity.caller_failures)
+        return IdentityState(validated_at=now, caller_failures=0)
     if outcome is IdentityOutcome.CALLER_FAILURE:
         return IdentityState(
             validated_at=identity.validated_at,
@@ -437,23 +527,46 @@ def _apply_goal_proposal(
     goal: ConversationGoal | None,
     challenge: ConfirmationChallenge | None,
     proposal: GoalProposal | None,
+    assistance_mode: AssistanceMode | None,
 ) -> tuple[ConversationGoal | None, ConfirmationChallenge | None, str | None]:
-    """Apply the plan delta; any revision change invalidates the challenge."""
-    if proposal is None or proposal.intent is GoalIntent.NONE:
-        return goal, challenge, None
-    if proposal.intent is GoalIntent.CANCEL:
+    """Apply the plan delta; a revision or mode change invalidates the challenge.
+
+    The assistance mode belongs only to an active RESET goal and is a durable
+    product preference, never an authorization. A GUIDED/AUTONOMOUS switch is a
+    semantic plan change, so any pending challenge dies with it: an AUTONOMOUS
+    challenge can never authorize a GUIDED goal.
+    """
+    if proposal is not None and proposal.intent is GoalIntent.CANCEL:
         return None, None, None
-    action = proposal.action
-    if action is None:
-        return goal, challenge, "goal proposal without an action"
-    if goal is not None and goal.action is action:
-        if proposal.intent is GoalIntent.CORRECT:
-            goal = ConversationGoal(action=action, revision=goal.revision + 1)
-    else:
-        goal = ConversationGoal(
-            action=action,
-            revision=(goal.revision + 1) if goal is not None else 1,
-        )
+    if proposal is not None and proposal.intent is not GoalIntent.NONE:
+        action = proposal.action
+        if action is None:
+            return goal, challenge, "goal proposal without an action"
+        if goal is not None and goal.action is action:
+            if proposal.intent is GoalIntent.CORRECT:
+                goal = ConversationGoal(action=action, revision=goal.revision + 1)
+        else:
+            goal = ConversationGoal(
+                action=action,
+                revision=(goal.revision + 1) if goal is not None else 1,
+            )
+    if goal is not None and goal.action is Action.RESET_PASSWORD:
+        if assistance_mode is not None and goal.assistance_mode is not assistance_mode:
+            established = goal.assistance_mode in {
+                AssistanceMode.GUIDED,
+                AssistanceMode.AUTONOMOUS,
+            }
+            # UNDECIDED is only the initial state. Once the caller chose GUIDED
+            # or AUTONOMOUS, a noisy or ambiguous turn that proposes UNDECIDED
+            # never degrades the mode nor clears the pending challenge; only an
+            # explicit GUIDED/AUTONOMOUS switch does.
+            if assistance_mode is not AssistanceMode.UNDECIDED or not established:
+                goal = goal.model_copy(update={"assistance_mode": assistance_mode})
+                challenge = None
+        if goal.assistance_mode is None:
+            # A RESET goal always carries a mode; the neutral default is
+            # UNDECIDED, which never opens a challenge.
+            goal = goal.model_copy(update={"assistance_mode": AssistanceMode.UNDECIDED})
     if challenge is not None and _challenge_is_stale(challenge, goal):
         challenge = None
     return goal, challenge, None
@@ -477,9 +590,19 @@ def _apply_confirmation_observation(
     """Apply the model's reading of the caller's answer; authorize only if legal."""
     observation = decision.confirmation_observation
     if observation is ConfirmationObservation.NONE:
-        return challenge, dispatch, operation, None
+        # Immediate reply window (owner decision): a live challenge is
+        # consumable only by the immediately expected response. Anything the
+        # model does not read as resolving the confirmation expires it.
+        # Identity, goal and revision are untouched; a future confirmation
+        # needs a fresh challenge opened below when still legal.
+        return None, dispatch, operation, None
     if challenge is None:
-        # Without an active challenge an observation authorizes nothing.
+        # Without an active challenge an observation authorizes nothing. An
+        # affirmative read after a failed capture must not become an execution
+        # announcement: the runtime records the violation and the caller is
+        # asked to confirm again with a fresh challenge.
+        if observation is ConfirmationObservation.AFFIRMATIVE:
+            return None, dispatch, operation, "affirmation without an active challenge"
         return None, dispatch, operation, None
     if observation in {
         ConfirmationObservation.NEGATIVE,
@@ -488,7 +611,7 @@ def _apply_confirmation_observation(
     }:
         return None, dispatch, operation, None
     binding_error = _dispatch_binding_error(
-        challenge, goal=goal, identity=identity, dispatch=dispatch, now=now
+        challenge, goal=goal, identity=identity, dispatch=dispatch, operation=operation, now=now
     )
     if binding_error is not None:
         return None, dispatch, operation, binding_error
@@ -511,12 +634,47 @@ def _apply_confirmation_observation(
     return None, authorized, opened, None
 
 
+def _ad_mutation_budget_consumed(
+    dispatch: AuthorizedDispatch | None,
+    operation: ExternalOperation | None,
+) -> bool:
+    """True once one mutating AD action was dispatched in this call.
+
+    Temporary fail-safe until accredited external correlation exists. Only
+    MUTATES_AD counts: READ_ONLY and GUIDANCE (identity lookup, polling,
+    password repetition, voice recovery, future VPN/VDI guidance, side
+    questions) never consume the budget and may appear before, between or
+    after an account need.
+    """
+    for holder in (dispatch, operation):
+        if holder is not None and action_effect(holder.action) is ActionEffect.MUTATES_AD:
+            return True
+    return False
+
+
+def _goal_is_dispatchable_mutation(goal: ConversationGoal | None) -> bool:
+    """True when a goal could produce a second AD POST if confirmed.
+
+    UNLOCK always dispatches; RESET only when AUTONOMOUS. GUIDED and
+    UNDECIDED are guidance (never open a challenge nor dispatch) and stay
+    allowed after a prior mutation, like future VPN/VDI guidance.
+    """
+    if goal is None:
+        return False
+    if action_effect(goal.action) is not ActionEffect.MUTATES_AD:
+        return False
+    if goal.action is Action.RESET_PASSWORD:
+        return goal.assistance_mode is AssistanceMode.AUTONOMOUS
+    return True
+
+
 def _dispatch_binding_error(
     challenge: ConfirmationChallenge,
     *,
     goal: ConversationGoal | None,
     identity: IdentityState,
     dispatch: AuthorizedDispatch | None,
+    operation: ExternalOperation | None = None,
     now: datetime,
 ) -> str | None:
     """Deterministic checks the dispatch guard requires before it may exist."""
@@ -526,13 +684,91 @@ def _dispatch_binding_error(
         return "dispatch after the identity attempts were exhausted"
     if goal is None:
         return "dispatch without a supported goal"
+    if goal.action is Action.RESET_PASSWORD and (
+        goal.assistance_mode is not AssistanceMode.AUTONOMOUS
+    ):
+        return "dispatch without an autonomous reset goal"
     if challenge.action is not goal.action or challenge.goal_revision != goal.revision:
         return "confirmation does not match the current goal and revision"
     if challenge.identity_validated_at != identity.validated_at:
         return "confirmation does not match the validated identity"
     if dispatch is not None and dispatch.challenge_id == challenge.challenge_id:
         return "duplicate dispatch for the same confirmation challenge"
+    if _ad_mutation_budget_consumed(dispatch, operation):
+        # Same-action retry while its operation is still active stays an
+        # active-operation fallback, not a second-mutation TRANSFER.
+        if (
+            operation is not None
+            and operation.is_active()
+            and goal is not None
+            and goal.action == operation.action
+            and challenge.action == operation.action
+            and (
+                dispatch is None
+                or (dispatch.action == operation.action and goal.revision == dispatch.goal_revision)
+            )
+        ):
+            return None
+        if dispatch is None or challenge.challenge_id != dispatch.challenge_id:
+            return "second AD mutation not allowed in this call"
     return None
+
+
+def _eligible_for_challenge(
+    goal: ConversationGoal | None,
+    identity: IdentityState,
+    operation: ExternalOperation | None,
+    now: datetime,
+    *,
+    dispatch: AuthorizedDispatch | None = None,
+) -> bool:
+    """Closed legality: only an authorized action may open a challenge."""
+    if (
+        goal is not None
+        and goal.action is Action.RESET_PASSWORD
+        and goal.assistance_mode is not AssistanceMode.AUTONOMOUS
+    ):
+        # The runtime, not the prompt, owns this legality: a GUIDED or
+        # UNDECIDED reset never opens an action challenge, and any stale
+        # challenge dies here.
+        return False
+    if (
+        goal is not None
+        and action_effect(goal.action) is ActionEffect.MUTATES_AD
+        and _ad_mutation_budget_consumed(dispatch, operation)
+    ):
+        # Temporary fail-safe: after one AD mutation per call, no second
+        # UNLOCK/RESET opens a new challenge. Guidance and read-only work
+        # never hit this gate.
+        return False
+    validated_at = identity.validated_at
+    if goal is None or validated_at is None or not identity.is_valid_at(now):
+        return False
+    if identity.requires_handoff():
+        return False
+    return operation is None or not operation.is_active()
+
+
+def _new_challenge(
+    goal: ConversationGoal, identity: IdentityState, now: datetime
+) -> ConfirmationChallenge:
+    """Fresh challenge bound to the current action, revision and identity."""
+    validated_at = identity.validated_at
+    assert validated_at is not None  # guaranteed by _eligible_for_challenge
+    return ConfirmationChallenge(
+        challenge_id=uuid4().hex,
+        action=goal.action,
+        goal_revision=goal.revision,
+        identity_validated_at=validated_at,
+        issued_at=now,
+    )
+
+
+def _reconfirmation_message(action: Action) -> str:
+    """Deterministic recovery phrase after an invalidated challenge."""
+    if action is Action.UNLOCK_ACCOUNT:
+        return "Para continuar necesito tu confirmación: ¿confirmas que desbloqueemos tu cuenta?"
+    return "Para continuar necesito tu confirmación: ¿confirmas que restablezcamos tu contraseña?"
 
 
 def _maybe_open_challenge(
@@ -542,27 +778,67 @@ def _maybe_open_challenge(
     identity: IdentityState,
     challenge: ConfirmationChallenge | None,
     operation: ExternalOperation | None,
+    dispatch: AuthorizedDispatch | None = None,
     now: datetime,
 ) -> ConfirmationChallenge | None:
     """Open a challenge only when the caller is legally eligible to confirm."""
-    validated_at = identity.validated_at
+    if not _eligible_for_challenge(goal, identity, operation, now, dispatch=dispatch):
+        return None
     if not decision.confirmation_request:
         return challenge
     if challenge is not None:
         return challenge
-    if goal is None or validated_at is None or not identity.is_valid_at(now):
-        return None
-    if identity.requires_handoff():
-        return None
-    if operation is not None and operation.is_active():
-        return None
-    return ConfirmationChallenge(
-        challenge_id=uuid4().hex,
-        action=goal.action,
-        goal_revision=goal.revision,
-        identity_validated_at=validated_at,
-        issued_at=now,
-    )
+    assert goal is not None
+    return _new_challenge(goal, identity, now)
+
+
+def _challenge_commit_is_coherent(
+    staged: ConfirmationChallenge | None,
+    *,
+    goal: ConversationGoal | None,
+    identity: IdentityState,
+    outcome: TurnOutcomeState | None,
+    decision: ModelTurnDecision | None,
+    was_newly_opened: bool,
+    is_reissue: bool,
+) -> bool:
+    """Atomic outcome gate: a live challenge needs a presenting outcome.
+
+    Under the immediate reply window a challenge survives only when the
+    caller-facing outcome selected for this turn presents its matching
+    action-specific confirmation: the SPEC recovery reissue and the first
+    workflow-owned confirmation through their deterministic message, a
+    model-rendered re-request through the preserved candidate message.
+    Matching covers action, goal revision and the identity authorization
+    scope; nothing here parses message text.
+    """
+    if staged is None:
+        return True
+    if goal is None:
+        return False
+    if staged.action is not goal.action or staged.goal_revision != goal.revision:
+        return False
+    if staged.identity_validated_at != identity.validated_at:
+        return False
+    if outcome is None:
+        return False
+    if is_reissue:
+        return (
+            outcome.next_step is NextStep.LISTEN
+            and not outcome.violations
+            and outcome.message == _reconfirmation_message(goal.action)
+        )
+    if outcome.violations:
+        return False
+    if outcome.next_step is not NextStep.LISTEN:
+        return False
+    if decision is None:
+        return False
+    if outcome.message != decision.message:
+        return False
+    if was_newly_opened and not decision.confirmation_request:
+        return False
+    return True
 
 
 def _apply_external_event(
@@ -615,17 +891,25 @@ def _claim_is_backed(
     return operation is not None and operation.delivery is DeliveryStatus.CONFIRMED
 
 
-def _complete_is_backed(operation: ExternalOperation | None) -> bool:
-    """COMPLETE never proves a side effect and never closes unfinished business."""
+def _complete_is_backed(
+    operation: ExternalOperation | None,
+    presentation: PasswordPresentation | None,
+) -> bool:
+    """COMPLETE never proves a side effect and never closes unfinished business.
+
+    A confirmed reset still owes the caller the spoken password until the
+    presentation plane reports a returned or failed playback; the email
+    delivery fact is independent and never keeps the conversation open. Once
+    the presentation is known, or when the operation is not a confirmed reset,
+    the caller may close the conversation.
+    """
     if operation is None:
         return True
     if operation.is_active():
         return False
-    return not (
-        operation.action is Action.RESET_PASSWORD
-        and operation.status is OperationStatus.CONFIRMED
-        and operation.delivery is not DeliveryStatus.CONFIRMED
-    )
+    if operation.action is Action.RESET_PASSWORD and operation.status is OperationStatus.CONFIRMED:
+        return presentation is not None
+    return True
 
 
 def _handoff_cause_is_backed(
@@ -655,14 +939,24 @@ def _requires_identity_collection(
 ) -> bool:
     """A pending supported goal without authorization needs identity capture.
 
-    This is the runtime precedence over the residual ``CONTINUE`` proposal: the
-    model may answer the immediate conversational need, but XCALLY must receive
-    the capability the state requires. It never fires while an external
-    operation is active or when the identity is already valid.
+    This is the runtime precedence over the residual ``CONTINUE`` proposal, but
+    only when the closed semantic signal says the turn advances the supported
+    goal (``GoalFocus.PROGRESS``): the model may answer the immediate
+    conversational need, and an off-topic or lateral turn (``SIDE``) preserves
+    the goal and listens instead of forcing authorization. It never fires while
+    an external operation is active or when the identity is already valid.
     """
     if decision is None or decision.route is not Route.CONTINUE:
         return False
+    if decision.goal_focus is not GoalFocus.PROGRESS:
+        return False
     if goal is None or identity.is_valid_at(now):
+        return False
+    if goal.action is Action.RESET_PASSWORD and (
+        goal.assistance_mode is not AssistanceMode.AUTONOMOUS
+    ):
+        # GUIDED self-service and the UNDECIDED option offer never require
+        # identity capture; only an autonomous reset does.
         return False
     return operation is None or not operation.is_active()
 
@@ -692,6 +986,7 @@ def _guard_outcome(
     identity: IdentityState,
     dispatch: AuthorizedDispatch | None,
     operation: ExternalOperation | None,
+    presentation: PasswordPresentation | None,
     now: datetime,
     extra_violations: tuple[str, ...] = (),
 ) -> TurnOutcomeState | None:
@@ -703,12 +998,19 @@ def _guard_outcome(
                 claim.kind, identity=identity, dispatch=dispatch, operation=operation, now=now
             ):
                 violations.append(f"unbacked claim {claim.kind.value}")
-        if decision.route is Route.COLLECT_IDENTITY and (goal is None or identity.is_valid_at(now)):
+        if decision.route is Route.COLLECT_IDENTITY and (
+            goal is None
+            or identity.is_valid_at(now)
+            or (
+                goal.action is Action.RESET_PASSWORD
+                and goal.assistance_mode is not AssistanceMode.AUTONOMOUS
+            )
+        ):
             violations.append("COLLECT_IDENTITY is not coherent with the current plan")
         if decision.route is Route.ESCALATE and not identity.requires_handoff():
             if not _handoff_cause_is_backed(decision, identity=identity, operation=operation):
                 violations.append("ESCALATE without a permitted handoff cause")
-        if decision.route is Route.COMPLETE and not _complete_is_backed(operation):
+        if decision.route is Route.COMPLETE and not _complete_is_backed(operation, presentation):
             violations.append("COMPLETE asserted an unbacked business result")
     if identity.requires_handoff():
         return TurnOutcomeState(
@@ -731,12 +1033,13 @@ def _guard_outcome(
             next_step=next_step,
             violations=tuple(violations),
         )
-    return TurnOutcomeState(
-        message=decision.message,
-        next_step=_next_step_for_state(
-            decision, goal=goal, identity=identity, operation=operation, now=now
-        ),
+    next_step = _next_step_for_state(
+        decision, goal=goal, identity=identity, operation=operation, now=now
     )
+    # COMPLETE is a closed step: the runtime speaks the canonical farewell and
+    # never an open question, so the message always matches the next step.
+    message = COMPLETE_FAREWELL_MESSAGE if next_step is NextStep.COMPLETE else decision.message
+    return TurnOutcomeState(message=message, next_step=next_step)
 
 
 def advance_turn(state: GraphState) -> TurnDelta:
@@ -763,16 +1066,70 @@ def advance_turn(state: GraphState) -> TurnDelta:
         challenge = None
 
     decision = state["model_decision"]
+    presentation_active = presentation_is_active(
+        state["external_operation"], state["password_presentation"]
+    )
+    secret = state["temporary_password"] if presentation_active else None
     proposal_error: str | None = None
     goal = state["goal"]
-    if decision is not None:
-        goal, challenge, proposal_error = _apply_goal_proposal(goal, challenge, decision.goal)
+    budget_at_start = _ad_mutation_budget_consumed(state["dispatch"], state["external_operation"])
+    previous_goal = state["goal"]
+    if decision is not None and not presentation_active:
+        # During the password presentation the model owns only language: a
+        # repeat or clarification never registers a new goal, opens a
+        # challenge or authorizes a dispatch.
+        goal, challenge, proposal_error = _apply_goal_proposal(
+            goal, challenge, decision.goal, decision.assistance_mode
+        )
+    second_mutation_requested = False
+    if not presentation_active and budget_at_start and _goal_is_dispatchable_mutation(goal):
+        assert goal is not None
+        active_op = state["external_operation"]
+        same_active_continuation = (
+            active_op is not None
+            and active_op.is_active()
+            and goal.action == active_op.action
+            and (
+                state["dispatch"] is None
+                or (
+                    state["dispatch"].action == active_op.action
+                    and goal.revision == state["dispatch"].goal_revision
+                )
+            )
+        )
+        if same_active_continuation:
+            second_mutation_requested = False
+        elif previous_goal is None:
+            # A fresh dispatchable goal after one AD mutation is always a
+            # second attempt, even when the revision reuses 1 after the
+            # terminal goal was cleared (RESET->RESET is explicitly blocked).
+            second_mutation_requested = True
+        else:
+            prior = state["dispatch"] or state["external_operation"]
+            if prior is None:
+                second_mutation_requested = True
+            elif goal.action is not prior.action:
+                second_mutation_requested = True
+            elif isinstance(prior, AuthorizedDispatch) and goal.revision != prior.goal_revision:
+                second_mutation_requested = True
+            elif prior is state["external_operation"] and not prior.is_active():
+                # Terminal same-action is still a second mutation.
+                second_mutation_requested = True
+    if second_mutation_requested:
+        # Temporary fail-safe: a dispatchable MUTATES_AD goal different from
+        # the one already dispatched never opens a challenge; the turn below
+        # transfers deterministically. GUIDED/UNDECIDED guidance stays allowed.
+        challenge = None
 
     dispatch = state["dispatch"]
     operation = state["external_operation"]
     binding_error: str | None = None
     dispatched_this_turn = False
-    if decision is not None:
+    reissued_message: str | None = None
+    staged_is_reissue = False
+    staged_is_first_confirmation = False
+    challenge_after_observation: ConfirmationChallenge | None = challenge
+    if decision is not None and not presentation_active:
         if (
             decision.confirmation_observation is ConfirmationObservation.CANCEL
             and challenge is not None
@@ -780,6 +1137,7 @@ def advance_turn(state: GraphState) -> TurnDelta:
             # An explicit cancellation before dispatch cancels the challenged
             # action itself, not only the confirmation attempt.
             goal = None
+        challenge_before_observation = challenge
         challenge, dispatch, operation, binding_error = _apply_confirmation_observation(
             decision,
             goal=goal,
@@ -790,16 +1148,80 @@ def advance_turn(state: GraphState) -> TurnDelta:
             now=now,
         )
         dispatched_this_turn = dispatch is not None and dispatch is not state["dispatch"]
+        challenge_after_observation = challenge
         if not dispatched_this_turn:
-            challenge = _maybe_open_challenge(
-                decision,
-                goal=goal,
-                identity=identity,
-                challenge=challenge,
-                operation=operation,
-                now=now,
-            )
-    operation = _apply_external_event(operation, state["external_event"])
+            if (
+                decision.confirmation_observation is ConfirmationObservation.AFFIRMATIVE
+                and challenge_before_observation is None
+            ):
+                # SPEC recovery precedence (contradictory affirmation fix): an
+                # AFFIRMATIVE without a live challenge never opens via
+                # confirmation_request. When the action is still eligible the
+                # runtime re-establishes the specific confirmation with the
+                # deterministic phrase (Form A); otherwise it falls back with
+                # no challenge (Form B).
+                if _eligible_for_challenge(goal, identity, operation, now, dispatch=dispatch):
+                    assert goal is not None
+                    challenge = _new_challenge(goal, identity, now)
+                    binding_error = None
+                    reissued_message = _reconfirmation_message(goal.action)
+                    staged_is_reissue = True
+                else:
+                    challenge = None
+            else:
+                # Staged open: committed only when the final caller-facing
+                # outcome presents its confirmation (see the atomic gate after
+                # outcome selection). This keeps fallback-plus-live and
+                # COMPLETE/TRANSFER/COLLECT overrides from leaving a
+                # consumable challenge the caller never heard.
+                challenge = _maybe_open_challenge(
+                    decision,
+                    goal=goal,
+                    identity=identity,
+                    challenge=challenge,
+                    operation=operation,
+                    dispatch=dispatch,
+                    now=now,
+                )
+                if challenge is not None and challenge_after_observation is None:
+                    if challenge_before_observation is None:
+                        # First entry into the checkpoint: the runtime owns
+                        # the first specific confirmation and speaks the
+                        # canonical action message, never the model draft.
+                        staged_is_first_confirmation = True
+                    # Otherwise this turn expired a live challenge and opens
+                    # a fresh one for the model's re-request: the candidate
+                    # message is preserved and the next caller turn is the
+                    # only one that may consume the new challenge.
+    external_event = state["external_event"]
+    operation_was_active = operation is not None and operation.is_active()
+    operation = _apply_external_event(operation, external_event)
+    if (
+        operation_was_active
+        and operation is not None
+        and operation.status is OperationStatus.CONFIRMED
+        and external_event is not None
+        and external_event.kind in {ExternalEventKind.RESULT, ExternalEventKind.LATE_RESULT}
+    ):
+        # The boundary just confirmed the operation: it is resolved, so no goal
+        # remains to be re-dispatched. The history stays for grounding and a
+        # new need must propose a new goal. Only the terminal transition clears
+        # it; a confirmation observed on an already-terminal operation does not
+        # wipe a new goal proposed in the same turn.
+        goal = None
+
+    presentation = state["password_presentation"]
+    if (
+        presentation_active
+        and secret is not None
+        and decision is not None
+        and decision.password_presentation_finished
+        and presentation is not None
+    ):
+        # Only the caller's semantic decision can finish the lifecycle, and it
+        # is persisted as a non-sensitive boolean. A finish without a playback
+        # plane is not persisted: no presentation fact is invented.
+        presentation = presentation.model_copy(update={"caller_finished": True})
 
     experimental = state["experimental_config"]
     procedure = state["experimental_procedure"]
@@ -824,8 +1246,85 @@ def advance_turn(state: GraphState) -> TurnDelta:
     extra_violations = tuple(
         error for error in (proposal_error, binding_error) if error is not None
     )
+    second_mutation_blocked = second_mutation_requested or (
+        binding_error == "second AD mutation not allowed in this call"
+    )
     outcome: TurnOutcomeState | None
-    if dispatched_this_turn and dispatch is not None:
+    if second_mutation_blocked:
+        # Temporary fail-safe: 0 new POST, 0 new mutable operation. Preserve
+        # goal, identity and history for the handoff explanation; clear the
+        # challenge so nothing stays consumable. Never claim the previous
+        # action failed, never ask for retry or re-execution.
+        challenge = None
+        outcome = TurnOutcomeState(
+            message=AD_MUTATION_LIMIT_MESSAGE,
+            next_step=NextStep.TRANSFER,
+            violations=tuple(error for error in (proposal_error,) if error is not None),
+        )
+    elif presentation_active:
+        if secret is None:
+            # Nothing to dictate this turn: keep the lifecycle open without
+            # inventing or echoing any secret.
+            outcome = TurnOutcomeState(
+                message=PRESENTATION_WAITING_MESSAGE,
+                next_step=NextStep.LISTEN,
+            )
+        elif (
+            decision is not None
+            and decision.password_presentation_finished
+            and decision.route is Route.COMPLETE
+            and _complete_is_backed(operation, presentation)
+        ):
+            # Explicit close during presentation: the runtime owns COMPLETE
+            # legality and the canonical farewell; no open question is added.
+            outcome = TurnOutcomeState(
+                message=COMPLETE_FAREWELL_MESSAGE,
+                next_step=NextStep.COMPLETE,
+            )
+        elif decision is not None and decision.password_presentation_finished:
+            outcome = TurnOutcomeState(
+                message=PRESENTATION_FINISHED_MESSAGE,
+                next_step=NextStep.LISTEN,
+            )
+        else:
+            outcome = TurnOutcomeState(
+                message=(
+                    decision.message if decision is not None else PRESENTATION_WAITING_MESSAGE
+                ),
+                next_step=NextStep.DELIVER_PASSWORD,
+            )
+    elif reissued_message is not None:
+        # Recovery: the fresh specific confirmation replaces the model message.
+        outcome = TurnOutcomeState(message=reissued_message, next_step=NextStep.LISTEN)
+    elif (
+        staged_is_first_confirmation
+        and challenge is not None
+        and goal is not None
+        and challenge.action is goal.action
+        and challenge.goal_revision == goal.revision
+        and challenge.identity_validated_at == identity.validated_at
+        and proposal_error is None
+        and decision is not None
+        and decision.route is Route.CONTINUE
+        and all(
+            _claim_is_backed(
+                claim.kind,
+                identity=identity,
+                dispatch=dispatch,
+                operation=operation,
+                now=now,
+            )
+            for claim in decision.claims
+        )
+    ):
+        # First checkpoint entry on an otherwise lawful turn: the runtime
+        # owns the first specific confirmation and speaks the canonical
+        # action message. Anything unbacked or off-route keeps the guard
+        # path below, which records the violation and leaves no challenge.
+        outcome = TurnOutcomeState(
+            message=_reconfirmation_message(goal.action), next_step=NextStep.LISTEN
+        )
+    elif dispatched_this_turn and dispatch is not None:
         # The durable guard exists: the boundary must deliver its command even
         # if the same model turn proposed something illegal. The runtime
         # message replaces the model message, so no unbacked claim is spoken;
@@ -847,13 +1346,39 @@ def advance_turn(state: GraphState) -> TurnDelta:
             identity=identity,
             dispatch=dispatch,
             operation=operation,
+            presentation=state["password_presentation"],
             now=now,
             extra_violations=extra_violations,
         )
 
     if (
+        decision is not None
+        and not presentation_active
+        and not dispatched_this_turn
+        and challenge is not None
+    ):
+        # Atomic outcome override gate: a staged challenge survives only
+        # when the selected caller-facing outcome presents its matching
+        # confirmation. The deterministic reissue and the first
+        # workflow-owned confirmation present through their canonical
+        # message; a model-rendered re-request presents through the
+        # preserved candidate message.
+        was_newly_opened = challenge_after_observation is None
+        if not _challenge_commit_is_coherent(
+            challenge,
+            goal=goal,
+            identity=identity,
+            outcome=outcome,
+            decision=decision,
+            was_newly_opened=was_newly_opened,
+            is_reissue=staged_is_reissue or staged_is_first_confirmation,
+        ):
+            challenge = None
+
+    if (
         experimental is not None
         and experimental.with_window
+        and not presentation_active
         and state["transcript"] is not None
         and decision is not None
         and outcome is not None
@@ -877,6 +1402,7 @@ def advance_turn(state: GraphState) -> TurnDelta:
         confirmation=challenge,
         dispatch=dispatch,
         external_operation=operation,
+        password_presentation=presentation,
         experimental_procedure=procedure,
         experimental_suspended=suspended,
         experimental_window=window,

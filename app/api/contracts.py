@@ -16,7 +16,7 @@ contract and are rejected by the closed request models.
 from enum import StrEnum
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 from app.session.integration import (
     IntegrationDirective,
@@ -37,13 +37,27 @@ def legacy_route_for(next_step: NextStep) -> BoundaryRoute:
 
 
 class TranscriptTurn(BaseModel):
-    """ASR transcript turn; only the transcript itself is required."""
+    """ASR transcript turn plus the ephemeral password-vocalization input.
+
+    ``transcript`` may be null only for the first password vocalization, when
+    the ephemeral ``temporary_password`` is present and the runtime already
+    owes the delivery; every other turn still requires a transcript. The
+    secret is optional, next-step-v1 only, never durable and never logged; the
+    legacy lane rejects it.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    transcript: str = Field(min_length=1)
+    transcript: str | None = Field(default=None, min_length=1)
+    temporary_password: SecretStr | None = None
     asr_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     channel: Literal["voice"] = "voice"
+
+    @model_validator(mode="after")
+    def _transcript_or_temporary_password(self) -> Self:
+        if self.transcript is None and self.temporary_password is None:
+            raise ValueError("a turn requires a transcript or a temporary password")
+        return self
 
 
 class TurnResponse(BaseModel):

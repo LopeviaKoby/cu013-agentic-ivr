@@ -144,7 +144,7 @@ def test_few_shot_module_is_the_selected_minimum_and_can_be_omitted(
     bundle = load_prompt_bundle(protocol_dir=directory)
     assert bundle.few_shot is not None
     assert bundle.few_shot.name == FEW_SHOT_MINIMAL_NAME == "few_shot_min.md"
-    assert bundle.few_shot.text.count("<ejemplo>") == 3
+    assert bundle.few_shot.text.count("<ejemplo>") == 6
     bare = load_prompt_bundle(protocol_dir=directory, few_shot_name=None)
     assert bare.few_shot is None
 

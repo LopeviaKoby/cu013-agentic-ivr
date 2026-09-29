@@ -310,7 +310,7 @@ async def test_status_none_polls_and_then_completes_on_success(client, model, st
         integration_events_url("conversation-1"), json=_status_body(status="SUCESSO")
     )
     assert success.status_code == 200
-    assert success.json()["directive"] == "COMPLETE"
+    assert success.json()["directive"] == "RESUME_CONVERSATION"
     assert success.json()["operation_state"] == "SUCCEEDED"
     assert success.json()["message"] == UNLOCK_COMPLETED_MESSAGE
     assert store.documents["conversation-1"]["external_operation"]["status"] == "confirmed"
@@ -487,7 +487,7 @@ async def test_progress_feedback_cadence_over_http(client, store, clock) -> None
     terminal = await client.post(
         integration_events_url("conversation-1"), json=_status_body(status="SUCESSO")
     )
-    assert terminal.json()["directive"] == "COMPLETE"
+    assert terminal.json()["directive"] == "RESUME_CONVERSATION"
     assert terminal.json()["message"] == UNLOCK_COMPLETED_MESSAGE
     prohibited = (
         "Ya casi termina",

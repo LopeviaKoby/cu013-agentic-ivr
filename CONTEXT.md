@@ -2,7 +2,7 @@
 
 ## Propósito y alcance actual
 
-CU013 reconstruye el backend conversacional de Mesa de Ayuda para XCALLY Motion y Cally Square. El repositorio contiene autoridad documental, estándares de ingeniería, configuración no sensible, herramientas operativas reproducibles para DEV y experimentación, y el núcleo productivo mínimo del Thin Session Repository integrado y committeado en `app/session`. El repositorio integra en `app/api` un baseline DEV provisional del boundary HTTP para Cally Square, en `app/conversation` el motor activo Gemini 3.5 Flash-Lite detrás del seam (Vertex AI `global`, `MINIMAL`, clasificación procedimental obligatoria, memoria reciente de tres pares en carril sintético) con su prompt versionado en `app/conversation/prompts.py`, en `evals/` el benchmark de latencia, el laboratorio de evaluación conversacional (runner real-model, comparador pareado puro, corpus versionado de 47 casos / 39 familias, fingerprint calculado en runtime) y en `ops/gcp/` el tooling de Cloud Run. El servicio Cloud Run DEV ya existe desplegado; todavía no existe integración XCALLY/Cally Square real ni AD/TIVIT. El primer turno de voz XCALLY real fue diagnosticado read-only ([Experimento 0005](docs/experiments/0005-xcally-voice-turn-diagnosis.md)) y su corrección acotada de política conversacional está implementada, probada y committeada, pendiente de deploy y revalidación de voz.
+CU013 reconstruye el backend conversacional de Mesa de Ayuda para XCALLY Motion y Cally Square. El repositorio contiene autoridad documental, estándares de ingeniería, configuración no sensible, herramientas operativas reproducibles para DEV y experimentación, y el núcleo productivo mínimo del Thin Session Repository integrado y committeado en `app/session`. El repositorio integra en `app/api` un baseline DEV provisional del boundary HTTP para Cally Square, en `app/conversation` el motor activo Gemini 3.5 Flash-Lite detrás del seam (Vertex AI `us`, `MINIMAL`, `256` tokens, `1` intento, `30000 ms`, P1 semantic_obligation, ventana inmediata de challenge, next-step-v1, password efímera) con prompts versionados en `app/conversation/prompt_templates/`, en `evals/` el benchmark de latencia, el laboratorio de evaluación conversacional (runner real-model, comparador pareado puro, corpus versionado de 70 casos, fingerprint calculado en runtime) y en `ops/gcp/` el tooling de Cloud Run. El servicio Cloud Run DEV ya existe desplegado; todavía no existe integración XCALLY/Cally Square real ni AD/TIVIT. El primer turno de voz XCALLY real fue diagnosticado read-only ([Experimento 0005](docs/experiments/0005-xcally-voice-turn-diagnosis.md)) y su corrección acotada de política conversacional está implementada, probada y committeada, pendiente de deploy y revalidación de voz.
 
 La iteración anterior materializó como autoridad de producto las decisiones consolidadas aprobadas por el owner: invariantes transversales en [system.md](docs/specs/system.md), comportamiento del primer slice en [account-actions.md](docs/specs/account-actions.md) (incluida la excepción owner a IOP-MDA-012), [ADR-0010](docs/decisions/0010-durable-semantic-plan-separate-from-authorization.md) con la separación plan/autorización/confirmación/verdad, la metodología eval-driven en [testing.md](docs/engineering/testing.md), el corpus versionado `evals/conversation/` con su runner, y las skills `conversation-evaluation` y `xcally-call-evidence-analysis`.
 
@@ -16,6 +16,8 @@ Las llamadas reales del 23-09-2026 contra la revisión etiquetada (`00028-6rb`) 
 
 El candidato experimental vivió en la rama aislada `exp/prompt-protocols` (último SHA `5df05b7`) y fue **promovido a `dev`** en el commit `b156470`, ya pusheado a `origin/dev`; la rama experimental se conserva como historia. Contenido promovido: composición modular (`core.md`/`core_en.md` + `catalog` + few-shot mínimo + protocolo runtime privado), proyección determinista del paso guiado, **proyección transitoria del estado durable** (`ModelStateProjection`, no persistida), tombstone semántico derivado para cancelación/re-request, evidencia de progreso y grounding externo (FAILED/UNKNOWN), ablación de few-shot por contenido (adoptado `few_shot_min.md`) y fix de ambigüedad. Evidencia en el [Experimento 0011](docs/experiments/0011-prompt-composition-runtime-protocols.md): full paired 189 pares válidos, 0 críticos, 0 regresiones objetivo; metamórfica invariance 1.0; validación EN (0 críticos, sin promesas no respaldadas, español estable) con los dos defectos residuales conocidos (challenge prematuro ante respuestas mínimas/laterales y re-request con wording débil); A/B ES/EN con ganador reproducible EN; judge ~10 MEETS/2 CONCERN/0 FAIL; frameworks **KEEP CURRENT HARNESS**. DEV quedó desplegado en `tivit-cu013-prd` (runtime SA `cu013-cloud-run-sa`, sin impersonation) con `min=0` en reposo y la tag `e2e-en` conservada como referencia; el E2E manual por XCALLY queda pendiente del owner. Memoria sin cambios: **NO MEMORY BLOCKER EVIDENCED**.
 
+Iteración post-E2E del 25-09-2026 (rama local `feat/post-e2e-continuity`, sin push): materializa las decisiones del owner. (1) Una operación terminal no cierra la conversación: `UNLOCK` confirmado y `RESET` tras la presentación quedan en `LISTEN`, el goal se resuelve y se limpia, la autorización de despacho se consume (`external_action_allowed=false`, guard conservado sólo para correlación) y `COMPLETE` se reserva al cierre explícito. (2) `PASSWORD_PRESENTATION_RESULT` distingue `PLAYBACK_RETURNED` de `PRESENTATION_FAILED_BEFORE_PLAYBACK`, separado del resultado del reset y de la entrega del correo. (3) El contrato del modelo añade `goal_focus` (`PROGRESS | SIDE | NONE`): un off-topic o pregunta lateral preserva el goal y escucha sin forzar identidad, mientras un turno que avanza el goal conserva el guard determinista de captura de identidad. (4) El contador de fallos de identidad sólo cuenta `IDENTITY_VALIDATION_RESULT/INVALID` y se limpia tras `VALID`; tercer fallo → `TRANSFER`. Evals offline: 58 casos, 0 críticos; `exp0005-prior-request` mejoró frente al baseline (FAIL 3/3 → mayormente PASS) y quedan fallos no objetivo preexistentes del baseline (`confirmation-affirmative`, `confirmation-negation`) y sensibilidad metamórfica del límite `SIDE`/`PROGRESS` en peticiones directas con contexto irrelevante (invariance 0.9149, sin críticos ni dispatch ilegal). El handoff manual de XCALLY (guard de contraseña, evento pre-playback y limpieza) vive en [runbooks/xcally-dev-manual-validation.md](docs/runbooks/xcally-dev-manual-validation.md), NO APPLIED y NOT E2E VALIDATED.
+
 El primer corte de acciones de cuenta es `RESET_PASSWORD` + `UNLOCK_ACCOUNT`, sin prioridad obligatoria entre ambas.
 
 ## Pila y entorno
@@ -25,7 +27,22 @@ El primer corte de acciones de cuenta es `RESET_PASSWORD` + `UNLOCK_ACCOUNT`, si
 - Cloud Run como cómputo DEV desplegado (`min=0` en reposo; `min=1` sólo en ventanas autorizadas de benchmark o de validación DEV de voz controlada).
 - Docker, GitHub Actions, pytest, Ruff y MyPy.
 - Proyecto GCP vigente del entorno DEV: `tivit-cu013-prd` (runtime SA `cu013-cloud-run-sa@tivit-cu013-prd.iam.gserviceaccount.com`, sin impersonation). `cu013-xcally-agentic` queda como historia en experimentos y Git.
-- Región primaria: `us-east1`; ubicación del modelo: `global` (no confundir con infraestructura).
+- Región primaria: `us-east1`; ubicación del modelo: `us` (no confundir con infraestructura).
+
+## Consolidación RESET/UNLOCK 2026-09-29 (baseline limpia)
+
+Consolidación desde `dev` en `consolidation/cu013-reset-unlock`: P1
+semantic_obligation productiva, `us`/`MINIMAL`/`256`, challenge/outcome
+coherence, presentación efímera y polling acotado conservados; laboratorio
+reducido a harness reusable y traza mínima en
+[Experimento 0012](docs/experiments/0012-consolidation-reset-unlock-baseline.md).
+Fail-safe temporal `ONE MUTATING AD ACTION PER CALL` ([ADR-0013](docs/decisions/0013-one-mutating-ad-action-per-call.md)):
+segunda mutación AD → `TRANSFER` determinista, guidance fuera del
+presupuesto. UX: mensajes `NO_SPEECH`/`LOW_CONFIDENCE`/`TIMEOUT` distintos,
+modalidad `AUTONOMOUS` preservada tras fallo de voz, cierre explícito con
+farewell canónico y waiting veraz sin inventar generación. Gaps abiertos:
+correlación RD secuencial, `VOICE-ID-001`, `PASSWORD-SPEECH-001`,
+`TTS-SSML-001` y `CTX-CACHE-001`. Siguientes slices: VPN luego VDI.
 
 ## Infraestructura actual
 
@@ -248,8 +265,11 @@ SendMail permanece Deferred y fuera del alcance inmediato. Los valores predeterm
 | Baseline conversacional activo | Gemini 3.5 Flash-Lite, Vertex `global`, `MINIMAL`, sintético; no voz-validado ni producción |
 | FS-002 | open |
 | CNV-001 | resolved (schema v2 durable pre-auth + continuidad + correcciones/cancelación implementados y verificados; eliminado de `docs/gaps.md`) |
-| Laboratorio de evaluación | `conversation_eval.py` + `conversation_compare.py` + `metamorphic_eval.py` + corpus de 50 casos / 41 familias; `scenario_kind`, oráculos nulos/ausentes, evidencia por run/caso/turno, INFRA por repetición, reruns focalizados y CI sin credenciales |
-| Próximo gate | actualización manual de XCALLY por el owner y caller tests E2E contra la tag `e2e-en`; análisis con `xcally-call-evidence-analysis` (la ventana warm ya está cerrada en `min=0`) |
+| Iteración post-E2E (continuidad, `goal_focus`, presentación) | promovida a `feat/post-e2e-continuity` (`7ae23ca`); revisión Cloud Run `00008-pol` con tag `e2e-en` |
+| Corrección post-E2E RESET (modalidad GUIDED/AUTONOMOUS) | `5c99ecd`+`5bcccf0`+`64cf57c`; schema v6; protocolo RESET `:2`; revisión `00009-lut` |
+| Corrección causa raíz E2E `Ivr02-1790566892.6105` | `5b689fb`+`91f2ab8`+`b9e5603`: afirmación sin challenge no autoriza ni anuncia, recuperación de confirmación, `external_operation_action` en la proyección, cierre canónico en `COMPLETE`, política de modalidad afinada; revisión Cloud Run `00010-wux` con tag `e2e-en`; focused 45/45 y paired 228 PASS/0 críticos; E2E del owner pendiente |
+| Laboratorio de evaluación | `conversation_eval.py` + `conversation_compare.py` + `metamorphic_eval.py` + corpus de 58 casos / 45 familias; `scenario_kind`, oráculos nulos/ausentes, evidencia por run/caso/turno, INFRA por repetición, reruns focalizados y CI sin credenciales |
+| Próximo gate | E2E del owner contra la tag `e2e-en` (revisión `00009-lut`, protocolo RESET `:2`): UNLOCK → nueva necesidad RESET → GUIDED/AUTONOMOUS → confirmación específica → `EXECUTE_ACTION`; después análisis con `xcally-call-evidence-analysis`. Sin merge a `dev` hasta analizar el E2E |
 | AD/TIVIT | después del baseline de voz XCALLY aislado |
 
 El próximo objetivo de medición es el camino completo de voz, todavía no medido:

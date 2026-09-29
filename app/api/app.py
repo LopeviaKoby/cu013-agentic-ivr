@@ -84,7 +84,7 @@ _CANONICAL_DECIMAL = re.compile(r"0|[1-9][0-9]*")
 _NEXT_STEP_NUMERIC_FIELDS: dict[str, tuple[str, ...]] = {
     "ACCOUNT_ACTION_STATUS": ("goal_revision", "poll_sequence"),
     "ACCOUNT_ACTION_ERROR": ("goal_revision", "poll_sequence"),
-    "PASSWORD_PRESENTATION_RESULT": ("goal_revision", "email_requested"),
+    "PASSWORD_PRESENTATION_RESULT": ("goal_revision",),
 }
 
 
@@ -188,6 +188,9 @@ async def handle_turn(
 ) -> Response:
     """Run one Cally Square turn after authentication, selection and validation."""
     contract = _selected_contract(request)
+    if turn.temporary_password is not None and contract is not ResponseContract.NEXT_STEP_V1:
+        # The ephemeral voice secret belongs only to the next-step-v1 lane.
+        raise PayloadValidationError(facts=(("temporary_password", "unsupported_contract"),))
     metrics: TurnMetrics | None = getattr(request.app.state, "turn_metrics", None)
     start = time.monotonic()
     try:
@@ -345,6 +348,7 @@ async def _converse(request: Request, conversation_id: str, turn: TranscriptTurn
             ConversationTurn(
                 conversation_id=conversation_id,
                 transcript=turn.transcript,
+                temporary_password=turn.temporary_password,
                 asr_confidence=turn.asr_confidence,
             )
         )

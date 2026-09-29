@@ -61,6 +61,31 @@ Un turno normal apunta a una sola solicitud al modelo. Si una interacción lógi
   6. resultado externo confirmado (`confirmed external result`).
 - **ACCEPTED.** Toda afirmación (`claim`) comunicada al caller debe estar respaldada por el estado runtime observable. El modelo no crea verdad; la verdad del sistema proviene del estado durable y de resultados externos confirmados.
 
+### Continuidad tras una operación resuelta
+
+- **ACCEPTED.** Una operación terminal (`confirmed`/`failed`) no cierra la conversación: el resultado se comunica con la verdad observada, se invita a continuar y el runtime escucha (`LISTEN`). `COMPLETE` se reserva al cierre conversacional explícito del caller.
+- **ACCEPTED.** Al confirmarse un resultado terminal, el goal queda resuelto: se marca y se limpia para impedir un redespacho obsoleto. El resultado se conserva en `external_operation` para grounding. Una necesidad nueva crea un goal nuevo; una pregunta sobre lo recién resuelto se responde desde el historial de la operación sin reactivar el goal ni repetir el despacho.
+- **ACCEPTED.** La autorización de despacho se consume al alcanzar el resultado terminal: `external_action_allowed=false`. El guard durable se conserva sólo como metadata de correlación (late results y presentación de contraseña) y nunca se reutiliza para un nuevo despacho; toda acción futura crea autorización/dispatch nuevos.
+- **ACCEPTED.** Un turno lateral u off-topic no implica handoff, identidad ni acción: se responde brevemente y se redirige si corresponde, preservando el goal vigente para retomarlo cuando el caller lo avance de nuevo. El contrato del modelo distingue esa relación con el goal (`SIDE`) sin heurísticas ni una segunda llamada.
+
+### Presentación de la contraseña temporal (RESET_PASSWORD)
+
+- **ACCEPTED.** La entrega de la contraseña temporal es por **voz efímera**: XCALLY la mantiene en su ámbito call-local y la reenvía en cada turno de presentación; el backend la usa sólo durante ese request. SMS queda **DEFERRED** y email/SendMail queda **superseded** como vía de entrega ([ADR-0012](../decisions/0012-use-ephemeral-voice-for-temporary-password.md)).
+- **ACCEPTED.** El resultado del reset, el playback de la presentación, el fin indicado por el llamante (`caller_finished`) y el ciclo conversacional son hechos separados y ninguno implica a otro. El boundary reporta el playback como `PLAYBACK_RETURNED` o `PRESENTATION_FAILED_BEFORE_PLAYBACK`; un fallo antes del playback no cambia el reset, no re-despacha y mantiene la presentación activa.
+- **ACCEPTED.** El secreto es efímero: nunca entra a Firestore, `SessionRecord`, memoria durable o reciente, logs, métricas, artefactos de evaluación, fixtures, documentos, Git ni payloads de error. Puede transitar por el request `/turns`, los objetos transitorios, el `GraphState`, la entrada/salida de Gemini y el mensaje HTTP de ese turno.
+- **ACCEPTED.** No existe caché de contraseña entre turnos y la primera vocalización no exige un `PasswordPresentation` previo: es elegible con el reset confirmado y la presentación no finalizada. Una sola llamada a Gemini por turno; sin motor de spelling productivo.
+- **ACCEPTED.** Durante la presentación no se registra goal nuevo, no se abre challenge, no se autoriza despacho y no se re-despacha. La memoria reciente no se renderiza ni se anexa en turnos de presentación porque el transcript puede repetir el secreto.
+
+### Modalidad de asistencia del reset
+
+- **ACCEPTED.** `RESET_PASSWORD` tiene una dimensión semántica durable `assistance_mode` (`UNDECIDED | GUIDED | AUTONOMOUS`) que pertenece al goal activo, no es autorización ni efecto externo y se limpia con el goal. `UNLOCK_ACCOUNT` no la usa.
+- **ACCEPTED.** `UNDECIDED` registra el goal y ofrece brevemente GUIDED/AUTONOMOUS sin capturar identidad, sin challenge y sin despacho. `GUIDED` guía el autoservicio y nunca abre challenge ni despacha. `AUTONOMOUS` exige identidad válida y una confirmación verbal específica de RESET antes del despacho.
+- **ACCEPTED.** Reutilizar identidad no reutiliza confirmación: una confirmación de UNLOCK no autoriza RESET. Un cambio de modalidad invalida cualquier challenge pendiente; el runtime — no el prompt — impone que sólo `AUTONOMOUS` abra challenge.
+- **ACCEPTED.** Un resultado externo terminal sólo acredita la acción que ese resultado identifica, y lo que dice el llamante no es verdad de operación. La proyección expone `external_operation_action` junto a `external_operation_status` para que el modelo nunca aplique un resultado histórico a un goal de otra acción.
+- **ACCEPTED.** Una afirmación sin challenge vigente (por ejemplo tras un fallo de captura que invalidó el challenge) no autoriza nada: si la acción sigue siendo elegible, el runtime **re-establece** un challenge nuevo ligado a la acción y la identidad vigentes y vuelve a pedir la confirmación específica con una frase determinista; si no es elegible, registra la violación y responde con el fallback seguro. Nunca anuncia ejecución y no consume intentos de identidad.
+- **ACCEPTED.** La modalidad de un RESET establecida por el llamante es persistente: `UNDECIDED` sólo existe al crear el goal, y una propuesta `UNDECIDED` sobre un goal `GUIDED`/`AUTONOMOUS` se ignora (no degrada la modalidad ni invalida el challenge). Sólo un cambio explícito `GUIDED`/`AUTONOMOUS` la modifica.
+- **ACCEPTED.** `COMPLETE` es un cierre conversacional: el runtime pronuncia un cierre canónico sin pregunta abierta, de modo que el mensaje siempre corresponde al `next_step`.
+
 ### Identidad
 
 - **ACCEPTED.** La identidad validada está limitada a la llamada actual y expira con un TTL absoluto de 30 minutos desde su validación, sea cual sea la actividad de la conversación. Sin identidad vigente no existe autorización de despacho.
@@ -81,6 +106,26 @@ Un turno normal apunta a una sola solicitud al modelo. Si una interacción lógi
 
 - **ACCEPTED.** Los side effects externos sólo se ejecutan después de un guard durable persistido en Firestore y de una autorización válida (identidad vigente + confirmación verbal vigente + operación soportada). Existe como máximo una sola operación externa activa por conversación.
 - **ACCEPTED.** La incertidumbre tras un despacho externo se representa como un estado desconocido (`UNKNOWN`) que se reconcilia con el resultado real cuando llega; nunca se declara éxito ni fracaso sin confirmación, y un resultado tardío se reconcilia con la operación existente sin crear una operación nueva ni repetir el side effect.
+- **ACCEPTED (temporary fail-safe).** Hasta que exista correlación externa acreditada rige `ONE MUTATING AD ACTION PER CALL`: una vez despachada una acción mutable de AD (`UNLOCK_ACCOUNT`, `RESET_PASSWORD`), cualquier intento posterior de despachar otra mutación AD produce 0 nuevo POST, 0 nueva operación mutable y `TRANSFER` con mensaje determinista seguro. El detalle vive en [Account Actions](account-actions.md). No es "una sola acción por llamada": guidance conversacional (VPN/VDI futura, side questions) queda fuera del presupuesto.
+
+### Restricciones reales del media path
+
+- **ACCEPTED.** CU013 no usa ni asume Dialogflow, barge-in, full-duplex, streaming de tokens, WebSocket de audio ni interrupción del TTS controlada por backend. El camino real es caller → XCALLY/Cally Square → Google ASR → transcript final → CU013 REST → Gemini/runtime → message completo → Google TTS desde XCALLY → caller (cascada half-duplex).
+- **ACCEPTED.** Queda prohibido declarar como capability actual que el caller puede interrumpir al agente mientras habla, que el modelo adapta una respuesta durante la reproducción o que la síntesis empieza antes de terminar la generación.
+
+### Simplicidad arquitectónica
+
+- **ACCEPTED.** Antes de añadir estado durable, FSM, modelo, segunda inferencia, router, motor fonético, reglas por frase o framework, preguntar si una estructura semántica pequeña, una función pura, un renderer estrecho o una instrucción de modelo existente resuelve el problema. Preferir el mecanismo mínimo que preserve verdad, seguridad, naturalidad, latencia y testabilidad. Más determinista no equivale a más limpio.
+
+### Voz: brevedad, foco y confirmación
+
+- **ACCEPTED.** Toda respuesta audible expresa primero contexto mínimo y deja para el final la información principal o pregunta que exige respuesta; evita preámbulos, repeticiones y más de una pregunta principal (END_FOCUS, BREVITY, ONE_PRIMARY_QUESTION).
+- **ACCEPTED.** Confirmación implícita por defecto para hechos ordinarios (el agente incorpora y avanza; el caller corrige naturalmente). Explícita sólo cuando la invariante lo exige: `RESET_PASSWORD` y `UNLOCK_ACCOUNT` mutables mantienen confirmación HITL verbal explícita y específica.
+- **ACCEPTED.** Sin barge-in, la tolerancia a interrupción es aceptar correcciones y cambios de tema en el siguiente turno ASR, conservar contexto y no penalizar ni obligar a reiniciar. `NO_SPEECH`, `LOW_CONFIDENCE` y `TIMEOUT` conservan su semántica propia; el silencio nunca es negación, cancelación ni fallo de identidad.
+- **ACCEPTED.** Gemini puede modular brevedad, directitud, empatía y ritmo textual ante señales explícitas (urgencia, frustración, petición de ritmo pausado) sin clasificación emocional durable ni subsistema de emotion detection. La adaptación nunca cambia legalidad, next_step, autorización, challenge, verdad ni side effects.
+- **ACCEPTED.** Flattening: apertura y recuperación favorecen preguntas abiertas ("¿En qué te puedo ayudar?"), sin menús jerárquicos. Una elección binaria contextual es válida cuando es decisión semántica del goal (RESET GUIDED vs AUTONOMOUS).
+- **ACCEPTED.** Graceful degradation: preservar lo comprendido, pedir sólo lo faltante y reducir el espacio de respuesta si la ambigüedad persiste. No inventar estado, no revivir challenges inválidos, no repetir fases resueltas.
+- **ACCEPTED.** Todo mensaje de espera/transición comunica sólo hechos demostrables. Con reset confirmado y `temporary_password` presente se comienza la presentación sin mensaje intermedio; con secreto ausente no se afirma causa ni estado de generación no observado.
 
 ## Persistencia de sesión
 
@@ -96,7 +141,7 @@ Ante un crash a mitad del turno, el siguiente request reinicia desde la última 
 
 **PROVISIONAL — implemented DEV baseline.** CU013 materializa un boundary HTTP mínimo para DEV. El contrato implementado, sus restricciones y su evolución basada en evidencia viven en [Boundary HTTP XCALLY ↔ CU013](xcally-boundary.md); no constituye todavía el contrato integrado final con Cally Square ni define órdenes/resultados AD/TIVIT.
 
-**PROVISIONAL — two temporary serializers.** Un único dominio de transición alimenta el envelope legacy y el envelope común `next-step-v1` seleccionado por el header canónico `X-CU013-Response-Contract`. El runtime decide `next_step` a partir del estado consolidado; el modelo no puede decidirlo. Con un goal soportado pendiente y sin autorización, el runtime exige la captura de identidad aunque el modelo haya propuesto `CONTINUE`. La rotación fija de frases de progreso sobrevive sólo en el carril legacy y el feedback contextual v1 puede delegar una única redacción estrecha sin cambiar estado empresarial.
+**PROVISIONAL — two temporary serializers.** Un único dominio de transición alimenta el envelope legacy y el envelope común `next-step-v1` seleccionado por el header canónico `X-CU013-Response-Contract`. El runtime decide `next_step` a partir del estado consolidado; el modelo no puede decidirlo. El contrato del modelo expone una señal semántica cerrada de relación con el goal (`goal_focus`: `PROGRESS | SIDE | NONE`): con un goal soportado pendiente, sin autorización y un turno que lo avanza (`PROGRESS`), el runtime exige la captura de identidad aunque el modelo haya propuesto `CONTINUE`; un turno lateral u off-topic (`SIDE`) responde y escucha preservando el goal, sin forzar identidad, acción ni handoff. La rotación fija de frases de progreso sobrevive sólo en el carril legacy y el feedback contextual v1 puede delegar una única redacción estrecha sin cambiar estado empresarial.
 
 ## Entorno GCP actual
 
@@ -115,7 +160,7 @@ Recursos actuales:
 - Artifact Registry `cu013-containers-dev`, formato Docker, `us-east1`.
 - Cloud Run `cu013-runtime-dev` desplegado en `us-east1` como entorno DEV PROVISIONAL; estado de reposo `min instances = 0` y `min = 1` sólo durante ventanas autorizadas de benchmark o de validación DEV de voz controlada.
 - Vertex AI habilitado; el motor real ejecuta el baseline conversacional
-  activo (ubicación de modelo `global`; infraestructura en `us-east1`) y la
+  activo (ubicación de modelo `us`; infraestructura en `us-east1`) y la
   selección productiva sigue pendiente de validación de voz.
 - Secret Manager contiene el secreto DEV `cu013-api-key-dev`; Cloud Run lo consume por referencia con versión numérica, nunca por valor en el repositorio.
 
@@ -195,13 +240,14 @@ Reconsiderar Terraform cuando ocurra al menos uno de estos triggers:
 
 ## Modelo
 
-El baseline conversacional activo es Gemini 3.5 Flash-Lite sobre Vertex AI,
-ubicación de modelo `global`, nivel de razonamiento `MINIMAL`, salida
-estructurada habilitada, clasificación procedimental estructurada
-obligatoria y memoria conversacional reciente de tres pares de turnos
-completados en el carril sintético de evaluación. La infraestructura
-(Cloud Run, Firestore) sigue en `us-east1`: no confundir la ubicación del
-modelo con la región de infraestructura.
+El baseline conversacional activo es Gemini 3.5 Flash-Lite sobre Vertex AI
+(Vertex AI, location `us`, thinking `MINIMAL`, attempts `1`, timeout
+`30000 ms`, `ModelTurnDecision` max_output_tokens `256`), P1
+semantic_obligation, confirmación HITL runtime-owned, ventana inmediata de
+challenge, Thin Firestore session repository, una llamada de modelo por
+transcript normal, next-step-v1 y password efímera por voz. La
+infraestructura (Cloud Run, Firestore) sigue en `us-east1`: no confundir la
+ubicación del modelo con la región de infraestructura.
 
 **IMPLEMENTED (baseline sintético, no validado en voz ni producción).**
 El motor real está integrado detrás del seam conversacional sobre Vertex AI

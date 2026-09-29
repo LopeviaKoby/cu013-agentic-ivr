@@ -12,6 +12,8 @@ Las tres capas responden preguntas distintas y ninguna sustituye a otra:
 | 2. Gate pareado de evaluación conversacional | ¿Cómo se comporta el agente y mejoró frente al baseline aceptado? | `conversation-evaluation`: `evals/conversation_eval.py` + `evals/conversation_compare.py` sobre `evals/conversation/cases.yaml` | No (modelo real, ADC, manual) |
 | 3. Evidencia de llamada XCALLY real | ¿Qué cambia al introducir el canal de voz real (ASR/TTS/XCALLY)? | `xcally-call-evidence-analysis` sobre una llamada ya ejecutada por el owner | No (evidencia del owner) |
 
+El harness separa siempre `SEMANTIC CORRECTNESS`, `RUNTIME LEGALITY/TRUTH` y `SPOKEN UX`. Spoken UX revisa `BREVITY`, `END_FOCUS`, `ONE_PRIMARY_QUESTION`, `CONTEXT_PRESERVATION`, `GRACEFUL_RECOVERY`, `TRUTHFULNESS`, `TONE_FIT` y `NO_REDUNDANT_CONFIRMATION` sin autorizar acciones y sin regex de wording para semántica. No hay LLM judge productivo; la naturalidad acústica exige revisión humana focalizada. Antes de añadir estado, FSM, modelo, segunda inferencia o framework, preferir estructura semántica pequeña, función pura, renderer estrecho o instrucción existente.
+
 - La capa 1 responde si el código obedece reglas; no dice nada sobre calidad conversacional.
 - La capa 2 responde cómo se comporta el agente y si mejoró; no sustituye ASR/TTS ni una llamada real y no acepta wording exacto como oráculo.
 - La capa 3 responde qué cambia con el canal de voz real; requiere que el owner ya haya ejecutado la llamada y aportado su evidencia. No coloca llamadas, no escucha en segundo plano ni captura logs automáticamente.

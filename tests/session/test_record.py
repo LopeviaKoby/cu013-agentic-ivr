@@ -119,11 +119,15 @@ def test_document_round_trip_preserves_the_record() -> None:
 def test_semantic_planes_persist_as_values() -> None:
     document = session_record_to_document(
         make_record(
-            goal={"action": "RESET_PASSWORD", "revision": 4},
+            goal={"action": "RESET_PASSWORD", "revision": 4, "assistance_mode": "UNDECIDED"},
             identity={"validated_at": NOW, "caller_failures": 1},
         )
     )
-    assert document["goal"] == {"action": "RESET_PASSWORD", "revision": 4}
+    assert document["goal"] == {
+        "action": "RESET_PASSWORD",
+        "revision": 4,
+        "assistance_mode": "UNDECIDED",
+    }
     assert document["identity"] == {"validated_at": NOW, "caller_failures": 1}
     assert document["confirmation"] is None
     assert document["dispatch"] is None

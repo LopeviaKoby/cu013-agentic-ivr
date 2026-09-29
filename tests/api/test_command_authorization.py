@@ -96,7 +96,9 @@ async def test_legal_dispatch_returns_one_stable_order(client, model, store) -> 
 
 async def test_dispatch_without_identity_never_emits_a_command(client, model, store) -> None:
     await _start_goal(client, model)
-    model.decision = make_decision(route="CONTINUE", confirmation_observation="AFFIRMATIVE")
+    model.decision = make_decision(
+        route="CONTINUE", confirmation_observation="AFFIRMATIVE", goal_focus="PROGRESS"
+    )
     response = await client.post(
         turns_url("conversation-1"), json={"transcript": CONFIRMATION_TRANSCRIPT}
     )

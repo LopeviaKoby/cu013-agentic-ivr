@@ -45,7 +45,7 @@ La semántica local de CU013/XCALLY es un dominio distinto que no se atribuye a 
 - lookup `FOUND` y fecha de ingreso correcta → `VALID`;
 - timeout, HTTP error o respuesta inesperada → `TECHNICAL_FAILURE`.
 
-El contador de intentos pertenece al runtime CU013: `INVALID` consume un intento imputable al caller, `TECHNICAL_FAILURE` no consume intento y `VALID` tampoco. RD/TIVIT no conoce ni devuelve ese contador.
+El contador de intentos pertenece al runtime CU013: sólo `INVALID` consume un intento imputable al caller; `TECHNICAL_FAILURE`, `IDENTITY_INPUT_FAILURE` y `VOICE_INPUT_FAILURE` no consumen intento, y `VALID` resuelve la fase y limpia el contador. RD/TIVIT no conoce ni devuelve ese contador.
 
 **PROVISIONAL (evidence).** La consulta por documento está acreditada; falta demostrar E2E el recorrido completo `FOUND → captura DDMMYYYY → comparación con resposta2 → evento VALID/INVALID → backend` (ID-001).
 
@@ -66,7 +66,7 @@ Los valores crudos de documento y fecha de ingreso:
 
 ## Intentos de validación de identidad
 
-**ACCEPTED.** Se permiten hasta tres fallos de identidad imputables al caller por llamada (documento o fecha incorrectos). Al tercer fallo el agente ejecuta handoff.
+**ACCEPTED.** Se permiten hasta tres fallos de identidad imputables al caller por llamada (documento o fecha incorrectos). Al tercer fallo el agente ejecuta handoff. El runtime cuenta únicamente el evento `IDENTITY_VALIDATION_RESULT` con outcome `INVALID`: los fallos técnicos, de captura de identidad, de captura de voz, de HTTP y una confirmación de acción negativa no incrementan el contador.
 
 **ACCEPTED.** Los fallos técnicos de validación (indisponibilidad o timeout del boundary externo) no consumen intentos del caller. No confunden la validación con la confirmación HITL: son fases distintas.
 
@@ -95,6 +95,14 @@ No se inventan causas adicionales de handoff.
 - después del despacho no se promete reversión;
 - no existe máximo aceptado de reintentos de confirmación; los tres intentos de identidad son una fase distinta y no se mezclan.
 
+## Fail-safe temporal: una acción mutable de AD por llamada
+
+**ACCEPTED (temporary fail-safe, removal condition = accepted external-operation correlation).** Hasta que exista correlación externa acreditada rige `ONE MUTATING AD ACTION PER CALL`, sólo para mutaciones AD (`UNLOCK_ACCOUNT`, `RESET_PASSWORD` con `action_effect = MUTATES_AD`). No es "una sola acción por llamada" ni "una sola gestión por llamada": guidance conversacional (VPN/VDI futura, `RESET GUIDED/UNDECIDED`, side questions, password repetition, voice recovery) queda fuera del presupuesto y puede aparecer antes, entre o después.
+
+- Una vez despachada una mutación AD (`AD mutation count = 1`), cualquier intento posterior de despachar `UNLOCK` o `RESET` produce 0 nuevo POST RD, 0 nueva operación mutable y `TRANSFER` con mensaje determinista seguro.
+- Se preservan goal/contexto para explicar el handoff, identity state e historial permitido. No se afirma que la acción previa falló, no se pide retry ni re-ejecución de la segunda acción.
+- Diseño: clasificación explícita `action_effect = MUTATES_AD | READ_ONLY | GUIDANCE` (función pura cerrada; sin FSM nueva). `RESET GUIDED/UNDECIDED` es guidance y no consume presupuesto; sólo `RESET AUTONOMOUS` y `UNLOCK` son despachables.
+
 ## RESET_PASSWORD
 
 El agente debe poder ofrecer dos vías:
@@ -109,6 +117,15 @@ El agente debe guiar al caller según el IOP vigente de cambio de contraseña, s
 
 Aclaración vigente: la referencia del IOP a "requiera desbloqueo de cuenta" no convierte por sí sola ese caso en handoff humano obligatorio. CU013/XCALLY satisface la atención de Mesa como atención automatizada para `UNLOCK_ACCOUNT`; cuando la operación soportada puede resolverse autónomamente, el flujo continúa con el desbloqueo automático de esta SPEC (identidad + confirmación HITL), y el handoff humano sólo aplica según las causas aceptadas en esta SPEC.
 
+### Modalidad de asistencia (ACCEPTED)
+
+`RESET_PASSWORD` distingue una modalidad durable del goal: `UNDECIDED` (aún no
+eligió; se ofrecen ambas vías sin capturar identidad), `GUIDED` (autoservicio
+guiado; sin challenge ni despacho) y `AUTONOMOUS` (el sistema ejecuta; requiere
+identidad válida y confirmación verbal específica de RESET). Reutilizar la
+identidad de una operación anterior no reutiliza su confirmación, y cambiar de
+modalidad invalida el challenge pendiente. `UNLOCK_ACCOUNT` no tiene modalidad.
+
 ### Acción directa
 
 La acción directa sólo puede solicitarse después de completar la validación positiva de identidad por DTMF y de la confirmación HITL verbal de esa acción concreta. Se ejecuta mediante:
@@ -119,7 +136,9 @@ CU013 ↔ XCALLY/Cally Square ↔ Orchestrator/TIVIT/AD
 
 El agente no debe afirmar que la contraseña fue restablecida ni que su entrega fue exitosa hasta recibir un resultado verificable del boundary autorizado.
 
-**ACCEPTED.** `reset confirmed` (resultado de AD/TIVIT) y `delivery confirmed` (estado de SendMail) son hechos separados; ninguno implica al otro y cada uno se comunica sólo con el estado recibido. El reset real para callers queda gated por SendMail validado: mientras SendMail esté Deferred, el reset directo no se declara completado para el caller sin su resultado de entrega.
+**ACCEPTED.** `reset confirmed` (resultado de AD/TIVIT), la presentación hablada de la contraseña (`PLAYBACK_RETURNED` o `PRESENTATION_FAILED_BEFORE_PLAYBACK`) y `delivery confirmed` (estado de SendMail) son hechos separados; ninguno implica al otro y cada uno se comunica sólo con el estado recibido. Un fallo de presentación antes del playback no cambia el resultado del reset, no repite el despacho, no crea una nueva operación y no promete correo. El reset real para callers queda gated por SendMail validado: mientras SendMail esté Deferred, el reset directo no se declara completado para el caller sin su resultado de entrega.
+
+**ACCEPTED (continuity).** Al confirmarse el reset, el goal queda resuelto y el runtime escucha; tras una presentación retornada o fallida la conversación continúa y sólo el cierre explícito del caller usa `COMPLETE`. Una operación resuelta no se redespacha.
 
 ## UNLOCK_ACCOUNT
 
@@ -128,6 +147,8 @@ No existe una vía de autoservicio guiado aceptada para desbloquear una cuenta.
 Después de capturar por DTMF el documento, completar el lookup `FOUND` + fecha de ingreso `DDMMYYYY`, obtener una validación positiva y obtener la confirmación verbal de esa acción concreta, el agente puede solicitar directamente el desbloqueo mediante XCALLY/Orchestrator. La respuesta al caller debe describir la acción y su resultado sin exponer nombres de servicios o componentes técnicos.
 
 La solicitud usa el comando externo observado `desbloqueio` mediante los bloques REST de Cally Square hacia Orchestrator/TIVIT/AD. La respuesta al caller deriva exclusivamente del resultado externo observado; ni una intención del caller ni una inferencia del LLM prueban el éxito.
+
+**ACCEPTED (continuity).** Al confirmarse el desbloqueo, el goal queda resuelto y el runtime comunica el éxito confirmado e invita a continuar en `LISTEN`: la operación está completa, la conversación no. El resultado se conserva para grounding y no se redespacha.
 
 ## Ticketing y Mesa de Servicio
 
@@ -221,33 +242,43 @@ Una afirmación del caller o del LLM no puede convertirse en resultado empresari
 
 La estrategia de idempotencia, correlación, polling, retries y resultados tardíos permanece experimental y se gestiona en [docs/gaps.md](../gaps.md). No se autorizan retries automáticos de acciones de cuenta hasta aceptar una política respaldada por evidencia.
 
-## Contraseña temporal y SendMail
+## Contraseña temporal y entrega por voz
 
-- Status: Deferred
-- Sequence: XCALLY voice baseline → AD/TIVIT integration → log-driven debugging/caller tests → SendMail
+- Entrega actual: **voz efímera** ([ADR-0012](../decisions/0012-use-ephemeral-voice-for-temporary-password.md)).
+- Email/SendMail: **superseded** como vía de entrega.
+- SMS: **DEFERRED**.
 
 La entrega aceptada es:
 
 ```text
 TIVIT/AD devuelve resultado
-→ XCALLY/Cally Square obtiene la contraseña cuando corresponda
-→ SendMail de Cally Square envía la contraseña
-→ CU013 recibe sólo el resultado/estado del envío
-→ el agente informa éxito o fallo al caller
+→ XCALLY/Cally Square obtiene la contraseña call-local
+→ /turns con temporary_password (transcript null en la primera vocalización)
+→ CU013 responde con el mensaje hablado y DELIVER_PASSWORD
+→ XCALLY TTS
+→ PASSWORD_PRESENTATION_RESULT (playback)
+→ LISTEN; repeticiones vía /turns con el mismo temporary_password
+→ el llamante indica que terminó (caller_finished) → LISTEN
 ```
 
-CU013 no implementará un servicio de correo propio.
+**ACCEPTED (ephemeral).** La contraseña temporal puede transitar efímeramente
+por XCALLY call-local, el request `/turns`, los objetos transitorios, el
+`GraphState`, Gemini (entrada/salida) y el mensaje HTTP de ese turno. Nunca
+debe persistirse en Firestore, `SessionRecord`, memoria durable o reciente,
+logs, métricas, artefactos de evaluación, fixtures, documentos, Git ni
+payloads de error. No existe caché entre turnos: XCALLY reenvía el secreto en
+cada turno de presentación y CU013 no lo conserva.
 
-La contraseña temporal nunca debe:
-
-- persistirse en Firestore;
-- enviarse al LLM;
-- registrarse en logs o telemetría;
-- conservarse en fixtures.
-
-**PROVISIONAL (presentation facts).** El boundary puede informar el hecho de presentación al llamante (`PASSWORD_PRESENTATION_RESULT`): reproducción devuelta y, cuando corresponda, si se solicitó email y su aceptación y entrega, inicialmente `UNKNOWN`. Es un hecho separado del resultado del reset y de la entrega SendMail: presentar la contraseña no equivale a entregarla, y el runtime no afirma envío ni entrega mientras la entrega siga `UNKNOWN`.
-
-El resultado exacto de SendMail permanece Deferred y fuera del alcance inmediato. No bloquea el baseline de voz XCALLY aislado ni la integración AD/TIVIT posterior.
+**ACCEPTED (lifecycle).** La primera vocalización no exige un
+`PasswordPresentation` previo: basta el reset confirmado y la presentación no
+finalizada. `PASSWORD_PRESENTATION_RESULT` reporta sólo el playback
+(`PLAYBACK_RETURNED` o `PRESENTATION_FAILED_BEFORE_PLAYBACK`); el fin lo decide
+el modelo (`caller_finished`) y se persiste como booleano no sensible. El
+playback es monótono: un fallo antes del playback puede evolucionar a returned
+y un returned no se degrada. Durante la presentación no se registra goal nuevo,
+no se abre challenge, no se autoriza despacho y no se re-despacha. Los campos
+de email del plano durable se conservan sólo para lectura y migración y no
+participan en ninguna decisión ni evento nuevo.
 
 ## Persistencia y concurrencia
 

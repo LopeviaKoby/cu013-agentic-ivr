@@ -279,16 +279,18 @@ def test_baseline_from_env_uses_the_active_defaults(
         "CU013_VERTEX_TIMEOUT_MS",
         "CU013_VERTEX_THINKING_LEVEL",
         "CU013_VERTEX_STRICT_PROC_OBS",
+        "CU013_VERTEX_MAX_OUTPUT_TOKENS",
     ):
         monkeypatch.delenv(var, raising=False)
     baseline = GeminiBaseline.from_env()
     assert baseline.provider == "vertex_ai"
     assert baseline.project == "tivit-cu013-prd"
-    assert baseline.location == "global"
+    assert baseline.location == "us"
     assert baseline.model == "gemini-3.5-flash-lite"
     assert baseline.api_version == "v1"
     assert baseline.thinking_level == "MINIMAL"
     assert baseline.strict_procedure_observation is True
+    assert baseline.max_output_tokens == 256
     assert baseline.timeout_ms == 30000
     assert baseline.attempts == 1
 
@@ -301,11 +303,13 @@ def test_baseline_from_env_reads_operational_overrides(
     monkeypatch.setenv("CU013_VERTEX_MODEL", "synthetic-model")
     monkeypatch.setenv("CU013_VERTEX_TIMEOUT_MS", "9000")
     monkeypatch.setenv("CU013_VERTEX_THINKING_LEVEL", "MINIMAL")
+    monkeypatch.setenv("CU013_VERTEX_MAX_OUTPUT_TOKENS", "256")
     baseline = GeminiBaseline.from_env()
     assert baseline.project == "synthetic-project"
     assert baseline.location == "synthetic-location"
     assert baseline.model == "synthetic-model"
     assert baseline.timeout_ms == 9000
+    assert baseline.max_output_tokens == 256
     assert baseline.thinking_level == "MINIMAL"
     assert baseline.attempts == 1
 
@@ -323,10 +327,11 @@ def test_active_conversation_baseline_is_explicit_and_reproducible() -> None:
 
     baseline = active_conversation_baseline()
     assert baseline.model == ACTIVE_CONVERSATION_MODEL == "gemini-3.5-flash-lite"
-    assert baseline.location == ACTIVE_MODEL_LOCATION == "global"
+    assert baseline.location == ACTIVE_MODEL_LOCATION == "us"
     assert baseline.api_version == ACTIVE_API_VERSION == "v1"
     assert baseline.thinking_level == ACTIVE_THINKING_LEVEL == "MINIMAL"
     assert baseline.strict_procedure_observation is True
+    assert baseline.max_output_tokens == 256
     assert baseline.timeout_ms == ACTIVE_TIMEOUT_MS == 30000
     assert baseline.attempts == ACTIVE_ATTEMPTS == 1
     # Gemini 3 request carries only the level, never a budget.
@@ -339,6 +344,7 @@ def test_active_conversation_baseline_is_explicit_and_reproducible() -> None:
     assert active_config.thinking_config is not None
     assert active_config.thinking_config.thinking_level == ThinkingLevel.MINIMAL
     assert active_config.thinking_config.thinking_budget is None
+    assert active_config.max_output_tokens == 256
 
 
 def test_thinking_level_selects_the_gemini3_path_without_budget() -> None:
@@ -498,6 +504,9 @@ def test_decision_contract_shape_unchanged() -> None:
         "message",
         "route",
         "goal",
+        "goal_focus",
+        "assistance_mode",
+        "password_presentation_finished",
         "confirmation_request",
         "confirmation_observation",
         "procedure_observation",

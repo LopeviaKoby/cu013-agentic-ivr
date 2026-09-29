@@ -58,7 +58,7 @@ def consolidate(
         dispatch=state["dispatch"],
         external_operation=state["external_operation"],
         polling=previous.polling,
-        password_presentation=previous.password_presentation,
+        password_presentation=state["password_presentation"],
         voice_retry_count=0,
         experimental_procedure=state["experimental_procedure"],
         experimental_suspended=state["experimental_suspended"],
@@ -100,15 +100,25 @@ class TurnService:
         turn: TurnInput,
         *,
         experimental: ExperimentalMemoryConfig | None = None,
+        include_semantic_obligation: bool = False,
     ) -> TurnResult:
         """Run one turn and return only after the consolidated save completes.
 
         ``experimental`` enables the Exp 0009 synthetic memory/progress lane;
         without it the turn is exactly the default no-recent-memory path.
+        ``include_semantic_obligation`` renders the ephemeral P1 derived
+        context for the candidate evaluation lane; the default baseline path
+        sends no additional context.
         """
         now = self._clock()
         record = await self._load(conversation_id, now=now)
-        state: GraphState = initial_graph_state(record, turn, now=now, experimental=experimental)
+        state: GraphState = initial_graph_state(
+            record,
+            turn,
+            now=now,
+            experimental=experimental,
+            include_semantic_obligation=include_semantic_obligation,
+        )
         final_state = await self._invoke_graph(state)
         record = consolidate(record, final_state, now=now)
         await self._save(record)

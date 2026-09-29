@@ -5,7 +5,7 @@ repository philosophy with objective, stable rules:
 
 - no canonical JSON manifests exist and no active doc links to them;
 - the effective baseline is derived from config/code with a runtime
-  fingerprint (descriptive names, global model location, MINIMAL,
+  fingerprint (descriptive names, us model location, MINIMAL,
   required procedure classification, three-pair window, no budget on
   Gemini 3);
 - no active imports or references to discarded providers;
@@ -172,7 +172,7 @@ def test_effective_baseline_matches_accepted_profile() -> None:
     baseline = active_conversation_baseline()
     assert baseline.provider == "vertex_ai"
     assert baseline.model == ACTIVE_CONVERSATION_MODEL == "gemini-3.5-flash-lite"
-    assert baseline.location == ACTIVE_MODEL_LOCATION == "global"
+    assert baseline.location == ACTIVE_MODEL_LOCATION == "us"
     assert baseline.thinking_level == ACTIVE_THINKING_LEVEL == "MINIMAL"
     assert baseline.strict_procedure_observation is True
     assert ACTIVE_RECENT_TURN_PAIRS == 3

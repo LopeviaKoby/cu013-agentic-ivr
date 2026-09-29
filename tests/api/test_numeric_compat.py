@@ -80,9 +80,6 @@ def _presentation_payload(**overrides: object) -> dict[str, object]:
         "action": "RESET_PASSWORD",
         "goal_revision": 1,
         "voice": "PLAYBACK_RETURNED",
-        "email_requested": 1,
-        "email_acceptance": "UNKNOWN",
-        "email_delivery": "UNKNOWN",
     }
     values.update(overrides)
     return values
@@ -115,9 +112,8 @@ def test_native_ints_pass_through_unchanged() -> None:
     error = _validate(_error_payload(goal_revision=1, poll_sequence=2))
     assert error.goal_revision == 1
     assert error.poll_sequence == 2
-    presentation = _validate(_presentation_payload(goal_revision=1, email_requested=0))
+    presentation = _validate(_presentation_payload(goal_revision=1))
     assert presentation.goal_revision == 1
-    assert presentation.email_requested == 0
 
 
 def test_canonical_decimal_strings_are_normalized_to_native_ints() -> None:
@@ -129,10 +125,9 @@ def test_canonical_decimal_strings_are_normalized_to_native_ints() -> None:
     error = _validate(_error_payload(goal_revision="0", poll_sequence="1"))
     assert type(error.goal_revision) is int
     assert type(error.poll_sequence) is int
-    presentation = _validate(_presentation_payload(goal_revision="1", email_requested="0"))
+    presentation = _validate(_presentation_payload(goal_revision="1"))
     assert type(presentation.goal_revision) is int
-    assert type(presentation.email_requested) is int
-    assert presentation.email_requested == 0
+    assert presentation.goal_revision == 1
 
 
 @pytest.mark.parametrize(
@@ -184,21 +179,10 @@ def test_non_canonical_poll_sequence_is_left_to_fail_closed(value: object) -> No
 
 
 @pytest.mark.parametrize(
-    "value",
-    ["", "01", " 1", "+1", "-1", "1.0", True, 1.0, "{MAIL_REQUESTED}"],
-)
-def test_non_canonical_email_requested_is_left_to_fail_closed(value: object) -> None:
-    with pytest.raises(ValidationError):
-        _validate(_presentation_payload(email_requested=value))
-
-
-@pytest.mark.parametrize(
     ("payload", "field"),
     [
         (_status_payload(poll_sequence="0"), "poll_sequence"),
         (_status_payload(goal_revision=-1), "goal_revision"),
-        (_presentation_payload(email_requested="2"), "email_requested"),
-        (_presentation_payload(email_requested=-1), "email_requested"),
     ],
 )
 def test_canonical_values_outside_the_field_limits_are_rejected(
@@ -252,15 +236,12 @@ def test_domain_models_reject_numeric_strings_without_the_boundary() -> None:
             model.model_validate(payload)
     with pytest.raises(ValidationError):
         AccountActionStatusV1Event.model_validate(_status_payload(poll_sequence="1"))
-    with pytest.raises(ValidationError):
-        PasswordPresentationResultEvent.model_validate(_presentation_payload(email_requested="1"))
 
 
 def test_boolean_is_never_accepted_as_a_number() -> None:
     for payload in (
         _status_payload(goal_revision=True),
         _status_payload(poll_sequence=True),
-        _presentation_payload(email_requested=True),
     ):
         with pytest.raises(ValidationError):
             _validate(payload)
@@ -316,30 +297,33 @@ async def test_canonical_dispatch_error_without_a_sequence_is_accepted(client, s
     assert response.json()["operation_state"] == "UNKNOWN"
 
 
-async def test_canonical_presentation_strings_persist_native_ints(client, store) -> None:
+async def test_canonical_presentation_string_persists_native_goal_revision(client, store) -> None:
     _seed_dispatched(store, action="RESET_PASSWORD", status="confirmed")
     response = await client.post(
         integration_events_url("conversation-1"),
-        json=_presentation_payload(goal_revision="1", email_requested="1"),
+        json=_presentation_payload(goal_revision="1"),
         headers=NEXT_STEP_HEADERS,
     )
     assert response.status_code == 200
     assert response.json()["next_step"] == "LISTEN"
     presentation = store.documents["conversation-1"]["password_presentation"]
-    assert presentation["email_requested"] == 1
-    assert type(presentation["email_requested"]) is int
     assert presentation["goal_revision"] == 1
+    assert type(presentation["goal_revision"]) is int
+    # The legacy email facts are never produced by the active event.
+    assert presentation["email_requested"] is None
+    assert presentation["caller_finished"] is False
 
 
-async def test_canonical_presentation_zero_string_is_accepted(client, store) -> None:
+async def test_presentation_event_rejects_legacy_email_fields(client, store) -> None:
     _seed_dispatched(store, action="RESET_PASSWORD", status="confirmed")
+    payload = _presentation_payload()
+    payload["email_requested"] = 1
     response = await client.post(
         integration_events_url("conversation-1"),
-        json=_presentation_payload(email_requested="0"),
+        json=payload,
         headers=NEXT_STEP_HEADERS,
     )
-    assert response.status_code == 200
-    assert store.documents["conversation-1"]["password_presentation"]["email_requested"] == 0
+    assert response.status_code == 422
 
 
 async def test_canonical_strings_on_an_unknown_session_reach_the_domain_guards(

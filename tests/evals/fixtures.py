@@ -12,7 +12,12 @@ from typing import Any
 
 from app.session.memory import ProcedureObservation
 from app.session.metrics import RecordingTurnMetrics
-from app.session.record import ConfirmationChallenge, ConversationGoal, ExternalOperation
+from app.session.record import (
+    AssistanceMode,
+    ConfirmationChallenge,
+    ConversationGoal,
+    ExternalOperation,
+)
 from app.session.turns import (
     Claim,
     ClaimKind,
@@ -50,6 +55,8 @@ class ScriptedModel:
         memory_context: str | None = None,
         procedure_current: str | None = None,
         state_projection: object | None = None,
+        delivery_secret: str | None = None,
+        semantic_obligation: str | None = None,
     ) -> ModelTurnDecision:
         self.calls.append(
             {
@@ -61,6 +68,7 @@ class ScriptedModel:
                 "memory_context": memory_context,
                 "procedure_current": procedure_current,
                 "state_projection": state_projection,
+                "semantic_obligation": semantic_obligation,
             }
         )
         item = self.script[min(len(self.calls) - 1, len(self.script) - 1)]
@@ -77,6 +85,7 @@ def make_decision(
     route: str = "CONTINUE",
     goal_intent: str | None = None,
     goal_action: str | None = None,
+    assistance_mode: str | None = None,
     confirmation_request: bool = False,
     confirmation_observation: str = "NONE",
     procedure_observation: str = "NONE",
@@ -91,6 +100,7 @@ def make_decision(
         message=message,
         route=Route(route),
         goal=goal,
+        assistance_mode=AssistanceMode(assistance_mode) if assistance_mode else None,
         confirmation_request=confirmation_request,
         confirmation_observation=ConfirmationObservation(confirmation_observation),
         procedure_observation=ProcedureObservation(procedure_observation),

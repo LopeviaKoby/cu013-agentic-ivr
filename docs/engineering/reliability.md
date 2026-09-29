@@ -40,11 +40,11 @@ El TTFT del modelo es una métrica diagnóstica; no equivale a first useful audi
 
 Estas invariantes complementan las transversales de la [SPEC del sistema](../specs/system.md); sus valores concretos viven allí o en la evidencia de integración:
 
-- Un timeout, silencio o ASR insuficiente de la confirmación verbal no equivale a autorización: invalida ese intento y obliga a re-prompt verbal, sin tocar la identidad validada ni consumir intentos de identidad.
+- Un timeout, silencio o ASR insuficiente de la confirmación verbal no equivale a autorización: invalida ese intento y obliga a re-prompt verbal, sin tocar la identidad validada ni consumir intentos de identidad. `NO_SPEECH`, `LOW_CONFIDENCE` y `TIMEOUT` usan mensajes deterministas distintos sin cambiar thresholds, y un fallo de voz durante `RESET AUTONOMOUS` invalida el challenge pero preserva `assistance_mode`.
 - Tras un despacho externo de resultado incierto, la verdad de la operación queda en un estado desconocido (`UNKNOWN`): no se declara éxito ni fracaso, no se repite el side effect automáticamente y un resultado tardío se reconcilia con la operación existente.
 - No existe replay automático de side effects desconocidos; la reconciliación requiere confirmación del boundary externo.
-- Una sola operación externa activa por conversación; el guard durable precede a todo side effect ([ADR-0010](../decisions/0010-durable-semantic-plan-separate-from-authorization.md)).
-- El timing exacto de voz (endpointing, barge-in, timeouts de confirmación en el canal XCALLY/ASR/TTS) sigue dependiendo de evidencia XCALLY: no se inventan valores de polling, retry ni deadline externos; los gaps XC-002 a XC-006 gobiernan su obtención.
+- Una sola operación externa activa por conversación; el guard durable precede a todo side effect ([ADR-0010](../decisions/0010-durable-semantic-plan-separate-from-authorization.md)). Temporalmente, una sola mutación AD por llamada ([ADR-0013](../decisions/0013-one-mutating-ad-action-per-call.md)).
+- El timing exacto de voz (endpointing, barge-in, timeouts de confirmación en el canal XCALLY/ASR/TTS) sigue dependiendo de evidencia XCALLY: no se inventan valores de polling, retry ni deadline externos; los gaps XC-002 a XC-006 gobiernan su obtención. CU013 no asume barge-in, full-duplex ni streaming; todo mensaje de espera comunica sólo hechos demostrables.
 
 ## Polling, presupuesto y feedback de espera
 

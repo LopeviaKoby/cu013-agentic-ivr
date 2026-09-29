@@ -500,3 +500,78 @@ async def test_token_breakdown_missing_buckets_never_become_zero() -> None:
     )
     assert result["buckets"] == {}
     assert result["missing"]
+
+
+async def test_harness_exposes_assistance_mode_and_transitions() -> None:
+    """D0/F0.4: the lab records the durable and proposed assistance mode and
+    the mode transition with no raw text."""
+    case = make_case(
+        case_id="post-unlock-reset-autonomous-after-options",
+        scenario_kind="sequence",
+        initial_state={
+            "identity_validated": True,
+            "conversation_goal": None,
+            "goal_revision": 0,
+            "confirmation": None,
+            "operation_action": None,
+            "pending_operation": None,
+        },
+        turns=[
+            {
+                "transcript": "tambien quiero cambiar mi contrasena",
+                "expect": {
+                    "goal": "RESET_PASSWORD",
+                    "goal_transition": "created",
+                    "assistance_mode": "UNDECIDED",
+                    "mode_transition": "created",
+                    "confirmation": "absent",
+                    "dispatch_count_unchanged": True,
+                },
+            },
+            {
+                "transcript": "hazlo tu por favor",
+                "expect": {
+                    "goal": "RESET_PASSWORD",
+                    "assistance_mode": "AUTONOMOUS",
+                    "mode_transition": "changed",
+                    "confirmation": "pending",
+                    "dispatch_count_unchanged": True,
+                },
+            },
+        ],
+        expected={
+            "route": "CONTINUE",
+            "conversation_goal": "RESET_PASSWORD",
+            "assistance_mode": "AUTONOMOUS",
+            "confirmation_state": "pending",
+            "dispatch_count": 0,
+        },
+    )
+    model = ScriptedModel(
+        [
+            make_decision(
+                goal_intent="REQUEST",
+                goal_action="RESET_PASSWORD",
+                assistance_mode="UNDECIDED",
+            ),
+            make_decision(
+                goal_intent="REQUEST",
+                goal_action="RESET_PASSWORD",
+                assistance_mode="AUTONOMOUS",
+                confirmation_request=True,
+            ),
+        ]
+    )
+    records = await replay_case(case, model)
+    assert records[0].classification == "PASS"
+    turns = records[0].turns
+    assert turns[0].proposed_assistance_mode == "UNDECIDED"
+    assert turns[0].mode_transition == "created"
+    assert turns[0].state_after.goal_assistance_mode == "UNDECIDED"
+    assert turns[1].proposed_assistance_mode == "AUTONOMOUS"
+    assert turns[1].mode_transition == "changed"
+    assert turns[1].state_after.goal_assistance_mode == "AUTONOMOUS"
+    payload = turns[1].to_dict()
+    assert payload["proposed_assistance_mode"] == "AUTONOMOUS"
+    assert payload["mode_transition"] == "changed"
+    assert payload["state_after"]["goal_assistance_mode"] == "AUTONOMOUS"

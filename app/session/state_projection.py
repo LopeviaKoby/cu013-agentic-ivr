@@ -22,24 +22,34 @@ from pydantic import BaseModel, ConfigDict
 
 from app.session.memory import ExperimentalProcedureState
 from app.session.record import (
+    Action,
     AuthorizedDispatch,
     ConfirmationChallenge,
     ConversationGoal,
     ExternalOperation,
     IdentityState,
     OperationStatus,
+    PasswordPresentation,
+    PlaybackVoice,
 )
 
 __all__ = [
     "IdentityStatus",
     "ModelStateProjection",
     "identity_status_for",
+    "presentation_is_active",
     "project_model_state",
     "projection_from_turn_inputs",
 ]
 
 ExternalOperationStatus = Literal["none", "pending", "unknown", "confirmed", "failed"]
 DeliveryStatusLiteral = Literal["none", "pending", "confirmed", "failed"]
+PresentationStatusLiteral = Literal[
+    "not_applicable",
+    "pending",
+    "returned",
+    "failed_before_playback",
+]
 
 
 class IdentityStatus(StrEnum):
@@ -68,7 +78,10 @@ class ModelStateProjection(BaseModel):
     external_action_allowed: bool
     external_success_claim_allowed: bool
     external_operation_status: ExternalOperationStatus
+    external_operation_action: str | None
     external_delivery_status: DeliveryStatusLiteral
+    external_presentation_status: PresentationStatusLiteral
+    password_presentation_active: bool
     procedure_id: str | None
     procedure_current: str | None
 
@@ -88,6 +101,58 @@ def _operation_is_active(operation: ExternalOperation | None) -> bool:
     return operation is not None and operation.is_active()
 
 
+def presentation_is_active(
+    operation: ExternalOperation | None,
+    presentation: PasswordPresentation | None,
+) -> bool:
+    """True while a confirmed reset still owes the spoken password.
+
+    The first vocalization is eligible before any presentation plane exists
+    (the playback event only arrives after the TTS), and the lifecycle stays
+    active until the caller explicitly says the dictation is finished.
+    """
+    if (
+        operation is None
+        or operation.action is not Action.RESET_PASSWORD
+        or operation.status is not OperationStatus.CONFIRMED
+    ):
+        return False
+    return presentation is None or not presentation.caller_finished
+
+
+def _dispatch_is_live(
+    dispatch: AuthorizedDispatch | None,
+    operation: ExternalOperation | None,
+) -> bool:
+    """True while the dispatch still authorizes an execution.
+
+    Once the operation it authorized reached a terminal result the durable
+    guard is kept only as correlation metadata (password presentation and late
+    results), never as a reusable execution authorization.
+    """
+    if dispatch is None:
+        return False
+    return operation is None or operation.is_active()
+
+
+def _presentation_status(
+    operation: ExternalOperation | None,
+    presentation: PasswordPresentation | None,
+) -> PresentationStatusLiteral:
+    """Voice-presentation truth of a confirmed reset, independent of delivery."""
+    if (
+        operation is None
+        or operation.action is not Action.RESET_PASSWORD
+        or operation.status is not OperationStatus.CONFIRMED
+    ):
+        return "not_applicable"
+    if presentation is None:
+        return "pending"
+    if presentation.voice is PlaybackVoice.PLAYBACK_RETURNED:
+        return "returned"
+    return "failed_before_playback"
+
+
 def project_model_state(
     *,
     goal: ConversationGoal | None,
@@ -95,6 +160,7 @@ def project_model_state(
     confirmation: ConfirmationChallenge | None,
     dispatch: AuthorizedDispatch | None,
     operation: ExternalOperation | None,
+    presentation: PasswordPresentation | None,
     procedure: ExperimentalProcedureState | None,
     now: datetime,
 ) -> ModelStateProjection:
@@ -105,7 +171,7 @@ def project_model_state(
         and identity_valid
         and not identity.requires_handoff()
         and confirmation is None
-        and dispatch is None
+        and not _dispatch_is_live(dispatch, operation)
         and not _operation_is_active(operation)
     )
     return ModelStateProjection(
@@ -114,16 +180,19 @@ def project_model_state(
         identity_status=identity_status_for(identity, now),
         confirmation_pending=confirmation is not None,
         execution_confirmation_allowed=confirmation_allowed,
-        external_action_allowed=dispatch is not None,
+        external_action_allowed=_dispatch_is_live(dispatch, operation),
         external_success_claim_allowed=(
             operation is not None and operation.status is OperationStatus.CONFIRMED
         ),
         external_operation_status=(operation.status.value if operation is not None else "none"),
+        external_operation_action=(operation.action.value if operation is not None else None),
         external_delivery_status=(
             operation.delivery.value
             if operation is not None and operation.delivery is not None
             else "none"
         ),
+        external_presentation_status=_presentation_status(operation, presentation),
+        password_presentation_active=presentation_is_active(operation, presentation),
         procedure_id=procedure.procedure_id if procedure is not None else None,
         procedure_current=procedure.current_step if procedure is not None else None,
     )
@@ -161,11 +230,16 @@ def projection_from_turn_inputs(
         external_operation_status=(
             external_operation.status.value if external_operation is not None else "none"
         ),
+        external_operation_action=(
+            external_operation.action.value if external_operation is not None else None
+        ),
         external_delivery_status=(
             external_operation.delivery.value
             if external_operation is not None and external_operation.delivery is not None
             else "none"
         ),
+        external_presentation_status="not_applicable",
+        password_presentation_active=False,
         procedure_id=None,
         procedure_current=procedure_current,
     )

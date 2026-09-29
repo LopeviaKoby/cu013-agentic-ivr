@@ -14,8 +14,11 @@ from app.session.outcome import NextStep
 from app.session.record import (
     IDENTITY_TTL,
     Action,
+    AssistanceMode,
     DeliveryStatus,
     OperationStatus,
+    PasswordPresentation,
+    PlaybackVoice,
 )
 from app.session.turns import (
     SAFE_FALLBACK_MESSAGE,
@@ -24,6 +27,7 @@ from app.session.turns import (
     ConfirmationObservation,
     ExternalEvent,
     ExternalEventKind,
+    GoalFocus,
     GoalIntent,
     GoalProposal,
     HandoffCause,
@@ -41,6 +45,22 @@ from tests.session.doubles import (
     make_operation,
     make_state,
 )
+
+
+def _presentation(
+    *,
+    voice: PlaybackVoice = PlaybackVoice.PLAYBACK_RETURNED,
+    caller_finished: bool = False,
+) -> PasswordPresentation:
+    """Synthetic presentation facts; never carries a password."""
+    return PasswordPresentation(
+        operation_id="operation-1",
+        action=Action.RESET_PASSWORD,
+        goal_revision=1,
+        voice=voice,
+        caller_finished=caller_finished,
+        presented_at=NOW,
+    )
 
 
 def assert_fallback(delta) -> None:  # type: ignore[no-untyped-def]
@@ -90,37 +110,72 @@ def test_ambiguous_intention_materializes_no_goal_and_listens() -> None:
     assert delta["outcome"].command is None
 
 
-def test_direct_reset_request_collects_identity() -> None:
+def test_direct_reset_request_offers_the_assistance_options_without_identity() -> None:
+    """A reset with no explicit mode is UNDECIDED: offer, listen, no capture.
+
+    The product contract registers the goal and asks the caller to choose
+    between GUIDED and AUTONOMOUS; it never forces identity capture merely
+    because the goal exists.
+    """
     delta = advance_turn(
         make_state(
             model_decision=make_decision(
                 route=Route.CONTINUE,
                 goal=GoalProposal(intent=GoalIntent.REQUEST, action=Action.RESET_PASSWORD),
+                goal_focus=GoalFocus.PROGRESS,
             )
         )
     )
     assert delta["goal"] is not None
     assert delta["goal"].action is Action.RESET_PASSWORD
     assert delta["goal"].revision == 1
+    assert delta["goal"].assistance_mode is AssistanceMode.UNDECIDED
+    assert delta["identity"].validated_at is None
     assert delta["confirmation"] is None
     assert delta["dispatch"] is None
     assert delta["outcome"] is not None
-    assert delta["outcome"].next_step is NextStep.COLLECT_IDENTITY
+    assert delta["outcome"].next_step is NextStep.LISTEN
 
 
-def test_side_question_does_not_erase_the_goal_and_still_requires_identity() -> None:
-    """A pending goal without authorization needs identity capture.
+def test_goal_progress_preserves_the_goal_and_requires_identity() -> None:
+    """A turn that advances the pending goal without authorization captures identity.
 
-    The owner precedence overrides the residual CONTINUE proposal: the model
-    message may answer the immediate need, but the runtime still asks XCALLY
-    for the capability the state requires.
+    The closed ``goal_focus`` signal overrides the residual CONTINUE proposal:
+    the model message may answer the immediate need, but the runtime still asks
+    XCALLY for the capability the state requires.
     """
     goal = make_goal(Action.UNLOCK_ACCOUNT)
-    delta = advance_turn(make_state(goal=goal, model_decision=make_decision(route=Route.CONTINUE)))
+    delta = advance_turn(
+        make_state(
+            goal=goal,
+            model_decision=make_decision(route=Route.CONTINUE, goal_focus=GoalFocus.PROGRESS),
+        )
+    )
     assert delta["goal"] == goal
     assert delta["outcome"] is not None
     assert delta["outcome"].message == "synthetic message"
     assert delta["outcome"].next_step is NextStep.COLLECT_IDENTITY
+
+
+def test_side_question_preserves_the_goal_and_listens() -> None:
+    """An off-topic/lateral turn never forces authorization by itself.
+
+    The goal stays pending for later, no identity capture is requested and the
+    caller keeps the conversation open.
+    """
+    goal = make_goal(Action.UNLOCK_ACCOUNT)
+    delta = advance_turn(
+        make_state(
+            goal=goal,
+            model_decision=make_decision(route=Route.CONTINUE, goal_focus=GoalFocus.SIDE),
+        )
+    )
+    assert delta["goal"] == goal
+    assert delta["identity"].validated_at is None
+    assert delta["dispatch"] is None
+    assert delta["outcome"] is not None
+    assert delta["outcome"].message == "synthetic message"
+    assert delta["outcome"].next_step is NextStep.LISTEN
 
 
 def test_reiterating_the_same_goal_does_not_bump_the_revision() -> None:
@@ -250,7 +305,8 @@ def test_expired_identity_requires_revalidation_and_blocks_dispatch() -> None:
             identity=make_identity(NOW - IDENTITY_TTL),
             confirmation=make_challenge(Action.UNLOCK_ACCOUNT, identity_validated_at=NOW),
             model_decision=make_decision(
-                confirmation_observation=ConfirmationObservation.AFFIRMATIVE
+                confirmation_observation=ConfirmationObservation.AFFIRMATIVE,
+                goal_focus=GoalFocus.PROGRESS,
             ),
         )
     )
@@ -284,7 +340,7 @@ def test_technical_identity_failure_does_not_consume_an_attempt() -> None:
             goal=make_goal(Action.UNLOCK_ACCOUNT),
             identity=make_identity(failures=1),
             identity_outcome=IdentityOutcome.TECHNICAL_FAILURE,
-            model_decision=make_decision(route=Route.CONTINUE),
+            model_decision=make_decision(route=Route.CONTINUE, goal_focus=GoalFocus.PROGRESS),
         )
     )
     assert delta["identity"].caller_failures == 1
@@ -309,7 +365,7 @@ def test_technical_identity_failure_never_escalates_by_itself() -> None:
     assert delta["outcome"].next_step is NextStep.COLLECT_IDENTITY
 
 
-def test_validation_replaces_the_authorization_without_losing_attempts() -> None:
+def test_validation_replaces_the_authorization_and_clears_the_failure_counter() -> None:
     delta = advance_turn(
         make_state(
             identity=make_identity(failures=1),
@@ -318,7 +374,9 @@ def test_validation_replaces_the_authorization_without_losing_attempts() -> None
         )
     )
     assert delta["identity"].validated_at == NOW
-    assert delta["identity"].caller_failures == 1
+    # A positive validation resolves the phase, so stale caller failures never
+    # carry over to a later, fresh attempt in the same call.
+    assert delta["identity"].caller_failures == 0
 
 
 def test_failed_attempt_never_downgrades_a_validated_identity() -> None:
@@ -525,7 +583,7 @@ def test_a_previous_affirmation_never_repeats_the_side_effect() -> None:
 def test_confirmation_challenge_is_only_opened_when_the_caller_is_eligible() -> None:
     eligible = advance_turn(
         make_state(
-            goal=make_goal(Action.RESET_PASSWORD),
+            goal=make_goal(Action.RESET_PASSWORD, assistance_mode=AssistanceMode.AUTONOMOUS),
             identity=make_identity(NOW),
             model_decision=make_decision(confirmation_request=True),
         )
@@ -597,7 +655,8 @@ def test_dispatch_without_identity_is_blocked_and_identity_is_requested() -> Non
             goal=make_goal(Action.UNLOCK_ACCOUNT),
             confirmation=make_challenge(Action.UNLOCK_ACCOUNT, identity_validated_at=NOW),
             model_decision=make_decision(
-                confirmation_observation=ConfirmationObservation.AFFIRMATIVE
+                confirmation_observation=ConfirmationObservation.AFFIRMATIVE,
+                goal_focus=GoalFocus.PROGRESS,
             ),
         )
     )
@@ -612,7 +671,7 @@ def test_dispatch_without_a_challenge_is_blocked() -> None:
     delta = advance_turn(
         make_state(
             goal=make_goal(Action.UNLOCK_ACCOUNT),
-            identity=make_identity(NOW),
+            identity=make_identity(),
             model_decision=make_decision(
                 confirmation_observation=ConfirmationObservation.AFFIRMATIVE
             ),
@@ -620,8 +679,12 @@ def test_dispatch_without_a_challenge_is_blocked() -> None:
     )
     assert delta["dispatch"] is None
     assert delta["external_operation"] is None
+    assert delta["confirmation"] is None
     assert delta["outcome"] is not None
-    assert delta["outcome"].violations == ()
+    # Without a valid identity the runtime cannot re-establish the challenge,
+    # so the affirmation is not evidence: it never announces an execution.
+    assert "affirmation without an active challenge" in delta["outcome"].violations
+    assert delta["outcome"].message == SAFE_FALLBACK_MESSAGE
 
 
 def test_dispatch_with_an_active_operation_is_blocked() -> None:
@@ -784,6 +847,7 @@ def test_delivery_is_a_separate_fact_from_the_reset_result() -> None:
     confirmed = advance_turn(
         make_state(
             external_operation=make_operation(Action.RESET_PASSWORD, OperationStatus.CONFIRMED),
+            password_presentation=_presentation(caller_finished=True),
             model_decision=make_decision(
                 route=Route.CONTINUE, claims=[{"kind": "DELIVERY_CONFIRMED"}]
             ),
@@ -797,6 +861,7 @@ def test_delivery_is_a_separate_fact_from_the_reset_result() -> None:
     delivered = advance_turn(
         make_state(
             external_operation=make_operation(Action.RESET_PASSWORD, OperationStatus.CONFIRMED),
+            password_presentation=_presentation(caller_finished=True),
             external_event=ExternalEvent(
                 kind=ExternalEventKind.DELIVERY,
                 operation_id="operation-1",
@@ -852,6 +917,7 @@ def test_invented_delivery_claim_is_rejected() -> None:
     delta = advance_turn(
         make_state(
             external_operation=make_operation(Action.RESET_PASSWORD, OperationStatus.CONFIRMED),
+            password_presentation=_presentation(caller_finished=True),
             model_decision=make_decision(
                 route=Route.COMPLETE, claims=[{"kind": "DELIVERY_CONFIRMED"}]
             ),
@@ -1018,14 +1084,44 @@ def test_complete_cannot_close_an_unfinished_operation() -> None:
     assert_fallback(delta)
 
 
-def test_complete_cannot_close_a_reset_without_delivery() -> None:
+def test_complete_cannot_close_a_reset_before_it_is_presented() -> None:
     delta = advance_turn(
         make_state(
             external_operation=make_operation(Action.RESET_PASSWORD, OperationStatus.CONFIRMED),
             model_decision=make_decision(route=Route.COMPLETE),
         )
     )
-    assert_fallback(delta)
+    # The presentation is still owed: the runtime keeps the lifecycle open and
+    # never closes the conversation on a COMPLETE proposal.
+    assert delta["outcome"] is not None
+    assert delta["outcome"].next_step is NextStep.LISTEN
+
+
+def test_complete_is_permitted_once_the_reset_password_was_presented() -> None:
+    delta = advance_turn(
+        make_state(
+            external_operation=make_operation(Action.RESET_PASSWORD, OperationStatus.CONFIRMED),
+            password_presentation=_presentation(caller_finished=True),
+            model_decision=make_decision(route=Route.COMPLETE),
+        )
+    )
+    assert delta["outcome"] is not None
+    assert delta["outcome"].next_step is NextStep.COMPLETE
+
+
+def test_complete_is_permitted_after_a_failed_playback() -> None:
+    delta = advance_turn(
+        make_state(
+            external_operation=make_operation(Action.RESET_PASSWORD, OperationStatus.CONFIRMED),
+            password_presentation=_presentation(
+                voice=PlaybackVoice.PRESENTATION_FAILED_BEFORE_PLAYBACK,
+                caller_finished=True,
+            ),
+            model_decision=make_decision(route=Route.COMPLETE),
+        )
+    )
+    assert delta["outcome"] is not None
+    assert delta["outcome"].next_step is NextStep.COMPLETE
 
 
 def test_complete_is_permitted_after_a_confirmed_unlock() -> None:

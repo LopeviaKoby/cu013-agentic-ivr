@@ -13,6 +13,7 @@ from app.session.feedback import PollingFeedbackRequest
 from app.session.outcome import NextStep
 from app.session.record import (
     Action,
+    AssistanceMode,
     AuthorizedDispatch,
     ConfirmationChallenge,
     ConversationGoal,
@@ -115,6 +116,8 @@ class FakeTurnModel:
         memory_context: str | None = None,
         procedure_current: str | None = None,
         state_projection: ModelStateProjection | None = None,
+        delivery_secret: str | None = None,
+        semantic_obligation: str | None = None,
     ) -> ModelTurnDecision:
         self.calls.append(
             {
@@ -126,6 +129,8 @@ class FakeTurnModel:
                 "memory_context": memory_context,
                 "procedure_current": procedure_current,
                 "state_projection": state_projection,
+                "delivery_secret": delivery_secret,
+                "semantic_obligation": semantic_obligation,
             }
         )
         if self.error is not None:
@@ -133,8 +138,15 @@ class FakeTurnModel:
         return self.decision
 
 
-def make_goal(action: Action, revision: int = 1) -> ConversationGoal:
-    return ConversationGoal(action=action, revision=revision)
+def make_goal(
+    action: Action,
+    revision: int = 1,
+    assistance_mode: AssistanceMode | None = None,
+) -> ConversationGoal:
+    """Build a goal fixture; a RESET goal always carries a mode like runtime does."""
+    if action is Action.RESET_PASSWORD and assistance_mode is None:
+        assistance_mode = AssistanceMode.UNDECIDED
+    return ConversationGoal(action=action, revision=revision, assistance_mode=assistance_mode)
 
 
 def make_identity(validated_at: datetime | None = None, *, failures: int = 0) -> IdentityState:
@@ -231,10 +243,13 @@ def make_state(**overrides: object) -> GraphState:
         "confirmation": None,
         "dispatch": None,
         "external_operation": None,
+        "password_presentation": None,
+        "temporary_password": None,
         "experimental_config": None,
         "experimental_procedure": None,
         "experimental_suspended": None,
         "experimental_window": (),
+        "include_semantic_obligation": False,
         "memory_render_ms": None,
         "memory_decode_ms": 0.0,
         "memory_encode_ms": None,

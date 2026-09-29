@@ -115,10 +115,17 @@ smoke alone.
     confounder. Never invent an SLO.
 12. **Perform the targeted spoken-quality review.** Changed/failing families
     and their controls, by case/turn ID, rated MEETS / CONCERN / NOT
-    EVIDENCED for relevance, voice brevity, answer-first clarity,
-    non-repetition, factual restraint, natural transition back to the active
-    goal and transfer wording. No LLM judge and no wording oracle; runtime
-    legality and structured business truth come first.
+    EVIDENCED for `BREVITY`, `END_FOCUS`, `ONE_PRIMARY_QUESTION`,
+    `CONTEXT_PRESERVATION`, `GRACEFUL_RECOVERY`, `TRUTHFULNESS`, `TONE_FIT`
+    and `NO_REDUNDANT_CONFIRMATION`, plus relevance, non-repetition, factual
+    restraint, natural transition back to the active goal and transfer
+    wording. Separate `SEMANTIC CORRECTNESS`, `RUNTIME LEGALITY/TRUTH` and
+    `SPOKEN UX`; spoken properties never authorize actions. No LLM judge and
+    no wording oracle; no regex of wording for semantics; runtime legality
+    and structured business truth come first. Design only for the real
+    half-duplex cascade (no barge-in, no streaming, no full-duplex); never
+    promise interruption. Prefer the minimal mechanism (small semantic
+    structure, pure function, narrow renderer or existing instruction).
 13. **Avoid phrase patches.** No case-specific prompt hacks, keyword lists or
     utterance matchers; a fix must restore the general property and keep the
     opposite controls passing.

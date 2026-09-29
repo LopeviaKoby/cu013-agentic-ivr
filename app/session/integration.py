@@ -62,8 +62,6 @@ from app.session.record import (
     AuthorizedDispatch,
     ConfirmationChallenge,
     ConversationGoal,
-    EmailAcceptance,
-    EmailDelivery,
     ExternalOperation,
     IdentityState,
     OperationStatus,
@@ -88,7 +86,7 @@ RESET_CONFIRMATION_MESSAGE = (
     "Gracias. Tu identidad quedó validada. ¿Confirmas que restablezcamos tu contraseña?"
 )
 
-UNLOCK_COMPLETED_MESSAGE = "El desbloqueo fue confirmado correctamente."
+UNLOCK_COMPLETED_MESSAGE = "El desbloqueo fue confirmado correctamente. ¿Necesitas algo más?"
 
 RESET_CONFIRMED_MESSAGE = (
     "El restablecimiento fue confirmado. La entrega de la contraseña todavía no está confirmada."
@@ -343,10 +341,11 @@ class AccountActionErrorV1Event(BaseModel):
 
 
 class PasswordPresentationResultEvent(BaseModel):
-    """Next-step-v1 password-presentation facts; the password never arrives.
+    """Next-step-v1 playback fact of a password presentation; no secret arrives.
 
-    ``email_requested`` is a strict 0/1 integer. Acceptance and delivery start
-    as UNKNOWN: no delivery claim is possible until real evidence exists.
+    Only the playback fact travels: the caller-finished lifecycle flag belongs
+    to the semantic turn and the legacy email facts are no longer part of the
+    active contract.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -355,10 +354,7 @@ class PasswordPresentationResultEvent(BaseModel):
     operation_id: str = Field(min_length=1)
     action: Literal[Action.RESET_PASSWORD]
     goal_revision: int = Field(strict=True, ge=0)
-    voice: Literal[PlaybackVoice.PLAYBACK_RETURNED]
-    email_requested: int = Field(strict=True, ge=0, le=1)
-    email_acceptance: Literal[EmailAcceptance.UNKNOWN]
-    email_delivery: Literal[EmailDelivery.UNKNOWN]
+    voice: PlaybackVoice
 
 
 IntegrationEvent = Annotated[
@@ -566,7 +562,8 @@ class IntegrationEventService:
         """Apply one identity outcome; a technical failure consumes nothing."""
         identity = record.identity
         if event.outcome is IdentityValidationOutcome.VALID:
-            validated = IdentityState(validated_at=now, caller_failures=identity.caller_failures)
+            # A positive validation resolves the phase and clears the counter.
+            validated = IdentityState(validated_at=now, caller_failures=0)
             # A new validation invalidates any challenge bound to an older one
             # and, when a supported goal is pending, opens the next one bound
             # to the action, revision and identity now in force.
@@ -812,7 +809,11 @@ class IntegrationEventService:
             if operation.status in {OperationStatus.PENDING, OperationStatus.UNKNOWN}:
                 updated = operation.model_copy(update={"status": OperationStatus.CONFIRMED})
                 updated_record = record.model_copy(
-                    update={"external_operation": updated, "updated_at": now}
+                    update={
+                        "external_operation": updated,
+                        "goal": None,
+                        "updated_at": now,
+                    }
                 )
                 return (
                     updated_record,
@@ -951,7 +952,11 @@ class IntegrationEventService:
             if operation.status in {OperationStatus.PENDING, OperationStatus.UNKNOWN}:
                 updated = operation.model_copy(update={"status": OperationStatus.CONFIRMED})
                 updated_record = record.model_copy(
-                    update={"external_operation": updated, "updated_at": now}
+                    update={
+                        "external_operation": updated,
+                        "goal": None,
+                        "updated_at": now,
+                    }
                 )
                 return (
                     updated_record,
@@ -1161,20 +1166,33 @@ class IntegrationEventService:
             action=event.action,
             goal_revision=event.goal_revision,
             voice=event.voice,
-            email_requested=event.email_requested,
-            email_acceptance=event.email_acceptance,
-            email_delivery=event.email_delivery,
             presented_at=now,
         )
         existing = record.password_presentation
         if existing is not None:
-            identical = (
-                existing.voice == candidate.voice
-                and existing.email_requested == candidate.email_requested
-                and existing.email_acceptance == candidate.email_acceptance
-                and existing.email_delivery == candidate.email_delivery
-            )
-            if identical:
+            if existing.voice is candidate.voice:
+                # Identical playback fact: an ACK that never re-speaks.
+                return (record, self._presentation_outcome(record, operation), False)
+            if (
+                existing.voice is PlaybackVoice.PRESENTATION_FAILED_BEFORE_PLAYBACK
+                and candidate.voice is PlaybackVoice.PLAYBACK_RETURNED
+            ):
+                # Playback truth is monotonic: a failure before playback may
+                # still be followed by a valid playback, never the reverse.
+                updated = record.model_copy(
+                    update={
+                        "password_presentation": existing.model_copy(
+                            update={"voice": candidate.voice}
+                        ),
+                        "updated_at": now,
+                    }
+                )
+                return (updated, self._presentation_outcome(updated, operation), True)
+            if (
+                existing.voice is PlaybackVoice.PLAYBACK_RETURNED
+                and candidate.voice is PlaybackVoice.PRESENTATION_FAILED_BEFORE_PLAYBACK
+            ):
+                # A late failure never degrades a returned playback.
                 return (record, self._presentation_outcome(record, operation), False)
             raise IntegrationEventRejected(RejectionReason.PASSWORD_PRESENTATION_CONFLICT)
         updated = record.model_copy(update={"password_presentation": candidate, "updated_at": now})
@@ -1244,11 +1262,16 @@ class IntegrationEventService:
         return OPERATION_FAILED_MESSAGE
 
     def _terminal_next_step(self, record: SessionRecord, operation: ExternalOperation) -> NextStep:
-        """Terminal projection: unlock completes, a reset needs presentation."""
+        """Terminal projection: an operation never closes the conversation.
+
+        A confirmed reset still owes the caller the spoken password, so it
+        asks for presentation until the presentation plane reports either a
+        returned or a failed playback. Every other terminal (unlock, failure,
+        reset already presented) resumes the conversation with ``LISTEN``:
+        the operation is complete, the conversation is not.
+        """
         if operation.status is OperationStatus.CONFIRMED:
-            if operation.action is Action.UNLOCK_ACCOUNT:
-                return NextStep.COMPLETE
-            if record.password_presentation is None:
+            if operation.action is Action.RESET_PASSWORD and record.password_presentation is None:
                 return NextStep.DELIVER_PASSWORD
             return NextStep.LISTEN
         return NextStep.LISTEN
@@ -1257,19 +1280,11 @@ class IntegrationEventService:
         self, record: SessionRecord, operation: ExternalOperation, *, speak: bool
     ) -> IntegrationOutcome:
         """Terminal directive; ``speak`` is False for already-delivered results."""
-        state = project_operation_state(operation)
-        if operation.status is OperationStatus.CONFIRMED:
-            if operation.action is Action.UNLOCK_ACCOUNT:
-                directive = IntegrationDirective.COMPLETE
-            else:
-                directive = IntegrationDirective.RESUME_CONVERSATION
-        else:
-            directive = IntegrationDirective.RESUME_CONVERSATION
         return IntegrationOutcome(
-            directive=directive,
+            directive=IntegrationDirective.RESUME_CONVERSATION,
             next_step=self._terminal_next_step(record, operation),
             message=self._terminal_message(operation) if speak else None,
-            operation_state=state,
+            operation_state=project_operation_state(operation),
         )
 
 

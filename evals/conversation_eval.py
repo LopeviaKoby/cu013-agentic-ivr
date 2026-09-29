@@ -93,6 +93,7 @@ from app.session.metrics import RecordingTurnMetrics
 from app.session.outcome import legacy_route_value
 from app.session.record import (
     Action,
+    AssistanceMode,
     AuthorizedDispatch,
     ConfirmationChallenge,
     ConversationGoal,
@@ -104,6 +105,7 @@ from app.session.record import (
     session_record_to_document,
 )
 from app.session.repository import SessionRepository
+from app.session.semantic_obligation import derive_semantic_obligation
 from app.session.service import TurnService, consolidate
 from app.session.state_projection import project_model_state
 from app.session.turns import (
@@ -139,8 +141,13 @@ from evals.conversation_lab import (
     TurnObservation,
     case_property_observations,
     case_property_verdicts,
+    challenge_presentation_coherent,
     classify_verdicts,
     corpus_digest,
+    derive_expected_response,
+    derive_message_source,
+    derive_override_reason,
+    derive_required_act,
     describe_failures,
     detect_executed_criticals,
     git_identity,
@@ -148,9 +155,11 @@ from evals.conversation_lab import (
     hash_files,
     hash_json,
     hash_text,
+    incoherent_challenge_critical,
     iter_trials,
     load_corpus,
     make_run_id,
+    recovery_observation_applies,
     sanitization_findings,
     summarize_tokens,
     summarize_values,
@@ -200,8 +209,28 @@ FAIL_LIKE = {
 def build_initial_record(case: dict[str, Any], now: datetime) -> SessionRecord:
     state = case["initial_state"]
     action_value = state.get("conversation_goal")
+    assistance_mode: AssistanceMode | None = None
+    if action_value == Action.RESET_PASSWORD.value:
+        # An explicit fixture mode wins; otherwise fixtures with autonomous
+        # evidence (an authorized confirmation or an existing operation) replay
+        # the autonomous path and the rest stay UNDECIDED, matching the
+        # migration inference.
+        declared = state.get("assistance_mode")
+        if declared is not None:
+            assistance_mode = AssistanceMode(declared)
+        else:
+            assistance_mode = (
+                AssistanceMode.AUTONOMOUS
+                if state.get("confirmation") in {"authorized", "pending"}
+                or state.get("pending_operation")
+                else AssistanceMode.UNDECIDED
+            )
     goal = (
-        ConversationGoal(action=Action(action_value), revision=int(state.get("goal_revision", 0)))
+        ConversationGoal(
+            action=Action(action_value),
+            revision=int(state.get("goal_revision", 0)),
+            assistance_mode=assistance_mode,
+        )
         if action_value
         else None
     )
@@ -226,10 +255,11 @@ def build_initial_record(case: dict[str, Any], now: datetime) -> SessionRecord:
             issued_at=now,
         )
     operation = None
-    if state.get("pending_operation") and goal is not None:
+    operation_action = state.get("operation_action")
+    if state.get("pending_operation") and (goal is not None or operation_action):
         operation = ExternalOperation(
             operation_id=OPERATION_ID,
-            action=goal.action,
+            action=goal.action if goal is not None else Action(operation_action),
             status=OperationStatus(state["pending_operation"]),
         )
     dispatch = None
@@ -301,6 +331,9 @@ def project_record(record: SessionRecord, now: datetime) -> StateProjection:
     return StateProjection(
         goal_action=goal.action.value if goal else None,
         goal_revision=goal.revision if goal else None,
+        goal_assistance_mode=(
+            goal.assistance_mode.value if goal and goal.assistance_mode is not None else None
+        ),
         identity_validated=identity.is_valid_at(now),
         identity_validated_at=identity.validated_at.isoformat() if identity.validated_at else None,
         identity_expires_at=(
@@ -358,6 +391,19 @@ def goal_transition(before: StateProjection, after: StateProjection) -> str:
     if after.goal_action is None:
         return "cleared"
     if before.goal_action == after.goal_action:
+        return "retained"
+    return "changed"
+
+
+def mode_transition(before: StateProjection, after: StateProjection) -> str:
+    """Assistance-mode lifecycle between two projections."""
+    if before.goal_assistance_mode is None and after.goal_assistance_mode is None:
+        return "none"
+    if before.goal_assistance_mode is None:
+        return "created"
+    if after.goal_assistance_mode is None:
+        return "cleared"
+    if before.goal_assistance_mode == after.goal_assistance_mode:
         return "retained"
     return "changed"
 
@@ -462,7 +508,9 @@ def _observe_turn(
     total_turn_ms: float,
     state_before: StateProjection,
     state_after: StateProjection,
+    record_before: SessionRecord,
     record_after: SessionRecord,
+    observed_at: datetime,
     dispatched: bool,
     dispatch_count_before: int,
     dispatch_count_after: int,
@@ -493,6 +541,89 @@ def _observe_turn(
         handoff_cause=handoff,
         duplicate_operation=duplicate_operation,
     )
+    # Caller-facing response plane: closed derivation from the selected
+    # outcome. Message text is compared transiently in memory to detect a
+    # substitution; only the closed provenance/override codes are stored.
+    message_overridden = (
+        decision is not None and outcome is not None and outcome.message != decision.message
+    )
+    outcome_exists = outcome is not None
+    next_step_value = outcome.next_step.value if outcome is not None else None
+    has_violations = bool(blocked)
+    challenge_present = state_after.challenge_id is not None
+    is_recovery = recovery_observation_applies(
+        observation=(decision.confirmation_observation.value if decision is not None else None),
+        before_challenge_id=state_before.challenge_id,
+        before_challenge_action=state_before.challenge_action,
+        before_goal_action=state_before.goal_action,
+        before_challenge_revision=state_before.challenge_goal_revision,
+        before_goal_revision=state_before.goal_revision,
+        before_challenge_identity_at=state_before.challenge_identity_validated_at,
+        before_identity_at=state_before.identity_validated_at,
+        event_kind=str(events[0]["event"]) if events else None,
+        challenge_present=challenge_present,
+        next_step=next_step_value,
+        has_violations=has_violations,
+    )
+    # Pre-turn P1 obligation, derived exactly like the candidate runtime
+    # input from durable state only — never from the outcome or the text.
+    input_obligation = derive_semantic_obligation(
+        goal=record_before.goal,
+        identity=record_before.identity,
+        confirmation=record_before.confirmation,
+        external_operation=record_before.external_operation,
+        password_presentation=record_before.password_presentation,
+        now=observed_at,
+    )
+    is_canonical_first = (
+        message_overridden
+        and state_before.challenge_id is None
+        and challenge_present
+        and next_step_value == "LISTEN"
+        and not has_violations
+        and not is_recovery
+    )
+    message_source = derive_message_source(
+        decision_exists=decision is not None,
+        outcome_exists=outcome_exists,
+        message_overridden=message_overridden,
+        confirmation_state=confirmation_state,
+        is_recovery=is_recovery,
+        is_canonical_first=is_canonical_first,
+    )
+    required_act = derive_required_act(
+        outcome_exists=outcome_exists,
+        next_step=next_step_value,
+        has_violations=has_violations,
+        challenge_present=challenge_present,
+        decision_request=(decision.confirmation_request if decision is not None else None),
+        is_recovery=is_recovery,
+    )
+    expected_response = derive_expected_response(
+        outcome_exists=outcome_exists,
+        required_act=required_act,
+        goal_action=state_after.goal_action,
+        assistance_mode=state_after.goal_assistance_mode,
+    )
+    override_reason = derive_override_reason(
+        message_overridden=message_overridden,
+        next_step=next_step_value,
+        has_violations=has_violations,
+        is_recovery=is_recovery,
+    )
+    coherent = challenge_presentation_coherent(
+        challenge_present=challenge_present,
+        confirmation_state=confirmation_state,
+        required_act=required_act,
+        challenge_action=state_after.challenge_action,
+        goal_action=state_after.goal_action,
+        challenge_revision=state_after.challenge_goal_revision,
+        goal_revision=state_after.goal_revision,
+    )
+    critical = sorted(
+        set(critical)
+        | set(incoherent_challenge_critical(challenge_present=challenge_present, coherent=coherent))
+    )
     return TurnObservation(
         turn_index=turn_position,
         input_id=(
@@ -508,6 +639,12 @@ def _observe_turn(
             if decision and decision.goal and decision.goal.action
             else None
         ),
+        proposed_assistance_mode=(
+            decision.assistance_mode.value
+            if decision and decision.assistance_mode is not None
+            else None
+        ),
+        mode_transition=mode_transition(state_before, state_after),
         proposed_confirmation_request=(decision.confirmation_request if decision else None),
         proposed_confirmation_observation=(
             decision.confirmation_observation.value if decision else None
@@ -533,6 +670,13 @@ def _observe_turn(
         dispatch_count_after=dispatch_count_after,
         critical_findings=critical,
         blocked_proposals=blocked,
+        model_input_obligation=input_obligation.expected_user_response.value,
+        message_source=message_source,
+        message_overridden=message_overridden,
+        override_reason=override_reason,
+        required_communicative_act=required_act,
+        expected_user_response=expected_response,
+        challenge_message_coherent=coherent,
         state_before=state_before,
         state_after=state_after,
         model_latency_ms=model_latency_ms,
@@ -586,8 +730,13 @@ async def replay_trial(
     *,
     now: datetime,
     experimental: ExperimentalMemoryConfig | None = None,
+    include_semantic_obligation: bool = False,
 ) -> TrialReplay:
-    """Replay one trial: one paraphrase turn or the whole intentional sequence."""
+    """Replay one trial: one paraphrase turn or the whole intentional sequence.
+
+    ``include_semantic_obligation`` renders the ephemeral P1 derived context
+    for the candidate lane; the baseline lane keeps it disabled.
+    """
     replay = TrialReplay()
     record = build_initial_record(case, now)
     selected = _selected_turns(case, turn_index)
@@ -638,7 +787,14 @@ async def replay_trial(
                 )
                 emitted = emitted_flag
             runtime_start = time.monotonic()
-            state = initial_graph_state(record, turn_input, now=now, experimental=experimental)
+            record_before = record
+            state = initial_graph_state(
+                record,
+                turn_input,
+                now=now,
+                experimental=experimental,
+                include_semantic_obligation=include_semantic_obligation,
+            )
             state["model_decision"] = decision
             if state["memory_render_ms"] is None:
                 state["memory_render_ms"] = render_ms
@@ -681,7 +837,9 @@ async def replay_trial(
                     total_turn_ms=total_latency,
                     state_before=state_before,
                     state_after=state_after,
+                    record_before=record_before,
                     record_after=record,
+                    observed_at=now,
                     dispatched=dispatched,
                     dispatch_count_before=dispatch_count - (1 if dispatched else 0),
                     dispatch_count_after=dispatch_count,
@@ -730,6 +888,7 @@ async def replay_trial_repository(
     *,
     now: datetime,
     experimental: ExperimentalMemoryConfig | None = None,
+    include_semantic_obligation: bool = False,
 ) -> TrialReplay:
     """Replay one trial through TurnService + repository (save/reload/restart).
 
@@ -762,13 +921,19 @@ async def replay_trial_repository(
             state_before = project_record(record, now)
             eligible_before = dispatch_eligible(state_before) if transcript is not None else False
             turn_start = time.monotonic()
+            record_before = record
             service = TurnService(
                 repository,
                 build_turn_graph(model),
                 metrics=metrics,
                 clock=lambda: now,
             )
-            result = await service.handle_turn(trial_id, turn_input, experimental=experimental)
+            result = await service.handle_turn(
+                trial_id,
+                turn_input,
+                experimental=experimental,
+                include_semantic_obligation=include_semantic_obligation,
+            )
             total_latency = (time.monotonic() - turn_start) * 1000.0
             record = result.record
             decision = result.decision
@@ -828,7 +993,9 @@ async def replay_trial_repository(
                     total_turn_ms=total_latency,
                     state_before=state_before,
                     state_after=state_after,
+                    record_before=record_before,
                     record_after=record,
+                    observed_at=now,
                     dispatched=dispatched,
                     dispatch_count_before=dispatch_count - (1 if dispatched else 0),
                     dispatch_count_after=dispatch_count,
@@ -1319,6 +1486,7 @@ async def token_composition_breakdown(
         confirmation=None,
         dispatch=None,
         operation=None,
+        presentation=None,
         procedure=None,
         now=now,
     )
@@ -1328,6 +1496,7 @@ async def token_composition_breakdown(
         confirmation=challenge,
         dispatch=None,
         operation=operation,
+        presentation=None,
         procedure=None,
         now=now,
     )
@@ -1403,6 +1572,7 @@ async def evaluate(
     now: datetime,
     experimental: ExperimentalMemoryConfig | None = None,
     lane: str = "direct",
+    include_semantic_obligation: bool = False,
 ) -> tuple[list[TrialRecord], list[dict[str, Any]]]:
     warmup_records = [
         await run_warmup(model, metrics, f"{WARMUP_INPUT_ID}-{index + 1}")
@@ -1422,6 +1592,7 @@ async def evaluate(
                         turn_index,
                         now=now,
                         experimental=experimental,
+                        include_semantic_obligation=include_semantic_obligation,
                     )
                 else:
                     replay = await replay_trial(
@@ -1432,6 +1603,7 @@ async def evaluate(
                         turn_index,
                         now=now,
                         experimental=experimental,
+                        include_semantic_obligation=include_semantic_obligation,
                     )
                 repetitions_list.append(
                     finalize_repetition(case, replay, repetition_id=repetition_id)
@@ -1824,6 +1996,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "5 only as the conditional follow-up the experiment defines)",
     )
     parser.add_argument(
+        "--semantic-obligation",
+        choices=["off", "p1"],
+        default="off",
+        help="P1 candidate lane: off (baseline, no derived context) or p1 "
+        "(render the ephemeral semantic-obligation block for the candidate)",
+    )
+    parser.add_argument(
         "--prompt-strategy",
         choices=list(PROMPT_POLICIES),
         default=DEFAULT_PROMPT_POLICY,
@@ -1908,6 +2087,7 @@ async def run(argv: list[str] | None = None) -> int:
             now=now,
             experimental=experimental,
             lane=args.lane,
+            include_semantic_obligation=(args.semantic_obligation == "p1"),
         )
         if args.token_breakdown:
             token_composition = await token_composition_breakdown(client, baseline, prompt_source)
@@ -1923,6 +2103,9 @@ async def run(argv: list[str] | None = None) -> int:
         prompt_source=prompt_source,
         harness_language=args.harness_language,
     )
+    # Declared paired variable for the P1 candidate lane; the comparator
+    # treats an undeclared difference here as incompatible evidence.
+    identity["semantic_obligation"] = args.semantic_obligation
     digest = variant_digest(identity)
     run_id = make_run_id("conversation-eval", at=started_at, digest=digest)
     baseline_id = args.baseline_id or digest

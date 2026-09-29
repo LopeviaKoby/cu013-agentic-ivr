@@ -25,3 +25,24 @@ Caller: "where did you say I should go in?"
 Decision: procedure_observation NONE (side question: it does not complete the
 step nor restart it); repeat the current step instruction.
 </ejemplo>
+
+<ejemplo>
+State: goal RESET_PASSWORD pending, identity not validated.
+Caller: "I want to reset my password"
+Decision: goal REQUEST + goal_focus PROGRESS (advances the supported goal); the
+runtime will ask for identity capture.
+</ejemplo>
+
+<ejemplo>
+State: goal UNLOCK_ACCOUNT pending, identity not validated.
+Caller: "what is the weather like today?"
+Decision: goal_focus SIDE (off-topic): answer briefly, create no goal, force
+neither identity nor action and preserve the goal.
+</ejemplo>
+
+<ejemplo>
+State: operation UNLOCK_ACCOUNT confirmed, no active goal.
+Caller: "no, nothing else, thanks"
+Decision: COMPLETE (conversational close); it neither repeats nor reactivates
+the operation.
+</ejemplo>
